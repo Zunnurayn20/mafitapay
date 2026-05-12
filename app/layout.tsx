@@ -1,0 +1,19 @@
+import type { Metadata } from 'next'
+import { AppBootstrap } from '@/components/app/AppBootstrap'
+import './globals.css'
+
+export const metadata: Metadata = {
+  title: 'MafitaPay — Digital Finance',
+  description: 'Secure NGN wallet, P2P trading, crypto, and bills — built for Nigerians.',
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <AppBootstrap />
+        {children}
+      </body>
+    </html>
+  )
+}

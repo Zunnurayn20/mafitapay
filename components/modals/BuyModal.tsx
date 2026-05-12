@@ -1,0 +1,394 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { Modal } from '@/components/ui/Modal'
+import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
+import { AssetLogo } from '@/components/ui/AssetLogo'
+import { PinPad } from '@/components/ui/PinPad'
+import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
+import { useCryptoAssets } from '@/lib/client/catalogs'
+import { getMinimumBuyNgn } from '@/lib/crypto-rules'
+import { useAppStore } from '@/store'
+import { fmtDate, formatCrypto, formatNGN, formatUSD, sleep } from '@/lib/utils'
+import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
+
+type Step = 'form' | 'pin' | 'processing' | 'success'
+type AmountMode = 'ngn' | 'usd' | 'asset'
+
+function getPricingBadgeTone(pricingSource?: CryptoAsset['pricingSource']) {
+  return pricingSource === 'live'
+    ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.1)] text-[var(--green2)]'
+    : pricingSource === 'backup'
+      ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]'
+      : 'border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] text-[var(--red2)]'
+}
+
+function getPricingSourceLabel(pricingSource?: CryptoAsset['pricingSource']) {
+  return pricingSource === 'live' ? 'Live Price' : pricingSource === 'backup' ? 'Cached Price' : 'Price Unavailable'
+}
+
+function getApproxUsdNgnRate(asset?: CryptoAsset) {
+  if (!asset) return 0
+  if (asset.marketPriceUsd && asset.marketPriceUsd > 0 && asset.marketRate > 0) {
+    return asset.marketRate / asset.marketPriceUsd
+  }
+  return 0
+}
+
+export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { refreshSession, showToast, modalData } = useAppStore()
+  const assets = useCryptoAssets()
+  const [step, setStep]       = useState<Step>('form')
+  const [pairId, setPairId]   = useState<CryptoPairId>('USDT_BSC')
+  const [amount, setAmount]   = useState('')
+  const [amountMode, setAmountMode] = useState<AmountMode>('ngn')
+  const [address, setAddress] = useState('')
+  const [ref, setRef]         = useState('')
+  const [quote, setQuote] = useState<CryptoQuote | null>(null)
+  const [pinVersion, setPinVersion] = useState(0)
+  const [quoteTimeLeft, setQuoteTimeLeft] = useState(0)
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+
+  const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
+  const asset = assets.find(a => a.id === pairId)
+    ?? (modalAsset?.id === pairId ? modalAsset : undefined)
+    ?? assets[0]
+  const rawAmount = parseFloat(amount) || 0
+  const usdNgnRate = getApproxUsdNgnRate(asset)
+  const amt = !asset ? 0 : amountMode === 'asset'
+    ? rawAmount * asset.buyRate
+    : amountMode === 'usd'
+      ? rawAmount * usdNgnRate
+      : rawAmount
+  const crypto = quote?.cryptoAmount ?? (asset ? (amountMode === 'asset' ? rawAmount : amt / asset.buyRate) : 0)
+  const fee   = 0
+  const minimumBuyNgn = asset ? getMinimumBuyNgn(asset.id) : 1000
+  const belowMinimum = amt > 0 && amt < minimumBuyNgn
+  const addressValidation = asset ? validateWalletAddressForPair(asset.id, address) : { valid: false, error: 'Destination wallet address is required.' }
+  const addressError = address.trim().length > 0 && !addressValidation.valid ? addressValidation.error : null
+
+  useEffect(() => {
+    if (!open) return
+    const presetPairId = typeof modalData.cryptoPairId === 'string' ? modalData.cryptoPairId : ''
+    if (presetPairId) {
+      setPairId(presetPairId as CryptoPairId)
+      return
+    }
+
+    if (modalAsset?.id) {
+      setPairId(modalAsset.id)
+      return
+    }
+
+    if (assets[0]?.id) {
+      setPairId(assets[0].id)
+    }
+  }, [assets, modalAsset, modalData, open])
+
+  useEffect(() => {
+    if (!quote || step !== 'pin') return
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((new Date(quote.expiresAt).getTime() - Date.now()) / 1000))
+      setQuoteTimeLeft(remaining)
+      if (remaining === 0) {
+        setQuote(null)
+        setStep('form')
+        showToast('Quote expired. Lock a new quote to continue.', 'error')
+      }
+    }
+
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [quote, showToast, step])
+
+  function handleClose() {
+    onClose()
+    setTimeout(() => { setStep('form'); setAmount(''); setAmountMode('ngn'); setAddress(''); setQuote(null); setPinVersion(0); setAvailabilityError(null) }, 400)
+  }
+
+  useEffect(() => {
+    if (step !== 'form') return
+    setAvailabilityError(null)
+  }, [amount, address, pairId, step])
+
+  async function runBuyPreflight() {
+    if (!asset) {
+      throw new Error('Asset is unavailable right now.')
+    }
+
+    const response = await fetch('/api/crypto', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        intent: 'preflight',
+        action: 'buy',
+        pairId: asset.id,
+        amount: amt,
+        walletAddress: address,
+      }),
+    })
+    const payload = await response.json()
+    if (!response.ok || payload.success === false) {
+      throw new Error(payload.error || 'This buy is temporarily unavailable.')
+    }
+  }
+
+  async function requestQuote() {
+    if (!amt || !address || !asset) {
+      showToast('Fill in all fields', 'error')
+      return
+    }
+    if (!addressValidation.valid) {
+      throw new Error(addressValidation.error || 'Destination wallet address is invalid.')
+    }
+
+    await runBuyPreflight()
+
+    const response = await fetch('/api/crypto', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        intent: 'quote',
+        action: 'buy',
+        pairId: asset.id,
+        amount: amt,
+        walletAddress: address,
+      }),
+    })
+    const payload = await response.json()
+    if (!response.ok || payload.success === false) {
+      throw new Error(payload.error || 'Quote request failed.')
+    }
+    setAvailabilityError(null)
+    setQuote(payload.data.quote)
+    setPinVersion(current => current + 1)
+    setStep('pin')
+  }
+
+  async function handlePin() {
+    setStep('processing')
+    await sleep(1200)
+
+    try {
+      if (!asset || !quote) {
+        throw new Error('Quote is missing. Refresh and try again.')
+      }
+      const response = await fetch('/api/crypto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          intent: 'execute',
+          action: 'buy',
+          pairId: asset.id,
+          amount: amt,
+          quoteId: quote.id,
+          walletAddress: address,
+        }),
+      })
+      const payload = await response.json()
+
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Buy order failed.')
+      }
+
+      await sleep(700)
+      setRef(payload.data.transaction.reference)
+      await refreshSession()
+      setStep('success')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Buy order failed.', 'error')
+      setPinVersion(current => current + 1)
+      setStep('pin')
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={handleClose} title={step === 'success' ? 'Order Placed!' : 'Buy Crypto'}>
+      {!asset && (
+        <div className="p-8 text-center">
+          <div className="spinner mx-auto mb-4" />
+          <div className="text-[12px] text-[var(--text)]">Loading asset data…</div>
+        </div>
+      )}
+
+      {asset && step === 'form' && (
+        <div className="p-6 flex flex-col gap-4">
+          <div>
+            <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Asset</div>
+            <div className="flex border border-[var(--border)] bg-[var(--clay2)] focus-within:border-[var(--gold)] transition-colors">
+              <div className="flex items-center gap-3 px-3 py-2.5 min-w-0 flex-1">
+                <AssetLogo
+                  src={asset.icon}
+                  alt={`${asset.symbol} logo`}
+                  fallback={asset.symbol.slice(0, 1)}
+                  className="flex h-9 w-9 items-center justify-center overflow-hidden bg-[rgba(79,70,229,.1)] flex-shrink-0"
+                  imgClassName="h-7 w-7 object-contain"
+                  textClassName="text-lg"
+                />
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold text-[var(--text)] truncate">{asset.name}</div>
+                  <div className="text-[8px] text-[var(--muted)]">{asset.symbol} · {asset.network}</div>
+                </div>
+              </div>
+              <select
+                value={pairId}
+                onChange={event => setPairId(event.target.value as CryptoPairId)}
+                className="border-l border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none min-w-[8.5rem] flex-shrink-0"
+              >
+                {assets.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.symbol} · {a.network}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between bg-[var(--clay)] border border-[var(--border)] p-3">
+            <div>
+              <div className="text-[7px] text-[var(--muted)] uppercase tracking-[1px]">Buy Rate</div>
+              <div className="text-[15px] font-bold font-mono text-[var(--gold2)]">
+                {asset.marketPriceUsd && asset.marketPriceUsd > 0
+                  ? `${formatUSD(asset.marketPriceUsd)} / ${asset.symbol} = ${formatNGN(asset.buyRate)}`
+                  : formatNGN(asset.buyRate)}
+              </div>
+            </div>
+            <div className={`text-[8px] font-bold border px-2.5 py-1 ${getPricingBadgeTone(asset.pricingSource)}`}>
+              {getPricingSourceLabel(asset.pricingSource)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)] mb-1.5">Amount</div>
+            <div className="flex border border-[var(--border)] bg-[var(--clay2)] focus-within:border-[var(--gold)] transition-colors">
+              <div className="flex items-center bg-[var(--clay2)] px-3 text-[var(--ngn)] font-display font-black text-lg flex-shrink-0">
+                {amountMode === 'ngn' ? '₦' : amountMode === 'usd' ? '$' : asset.symbol}
+              </div>
+              <input
+                type="number"
+                placeholder={`Min ${amountMode === 'asset'
+                  ? formatCrypto(minimumBuyNgn / asset.buyRate, asset.symbol)
+                  : amountMode === 'usd' && usdNgnRate > 0
+                    ? (minimumBuyNgn / usdNgnRate).toFixed(2)
+                    : '0.00'}`}
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                className="flex-1 bg-[var(--clay2)] text-[var(--text)] text-lg font-bold font-display px-3.5 py-3 border-none outline-none placeholder:text-[var(--muted)] min-w-0"
+              />
+              <select
+                value={amountMode}
+                onChange={event => setAmountMode(event.target.value as AmountMode)}
+                className="border-l border-[var(--border)] bg-[var(--clay)] px-3 py-3 text-[10px] font-bold tracking-[.8px] text-[var(--gold)] outline-none flex-shrink-0"
+              >
+                <option value="ngn">NGN</option>
+                <option value="usd">USD</option>
+                <option value="asset">{asset.symbol}</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between bg-[var(--clay)] border border-[var(--border)] px-3.5 py-2.5 mt-2">
+              <span className="text-[9px] text-[var(--muted)]">Estimated receive</span>
+              <span className="text-[14px] font-bold font-display text-[var(--text)]">{formatCrypto(crypto, asset.symbol)}</span>
+            </div>
+            <div className="mt-1.5 text-[9px] text-[var(--muted)]">
+              {amountMode === 'asset'
+                ? `Estimated NGN debit: ${formatNGN(amt)}`
+                : amountMode === 'usd'
+                  ? `Approximate NGN conversion: ${formatNGN(amt)}`
+                  : `Approximate USD value uses the current USD/NGN market snapshot.`}
+            </div>
+            {belowMinimum && (
+              <div className="mt-1 text-[9px] text-[var(--red2)]">
+                Minimum buy is {formatNGN(minimumBuyNgn)}.
+              </div>
+            )}
+          </div>
+          <div>
+            <Input label="Destination Wallet Address"
+              placeholder={asset ? getWalletAddressPlaceholder(asset.id) : 'Paste wallet address…'}
+              value={address} onChange={e => setAddress(e.target.value)}
+              className="text-[12px] font-mono" suffix="PASTE" />
+            <div className={`text-[9px] mt-1.5 ${addressError ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
+              {addressError ?? getWalletAddressHint(asset.id)}
+            </div>
+          </div>
+          <div className="bg-[var(--clay)] border border-[var(--border)] p-3 text-[11px]">
+            <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Embedded spread</span><span className="text-[var(--text)] font-mono">{(asset.buySpreadBps / 100).toFixed(2)}%</span></div>
+            <div className="flex justify-between py-1 font-bold"><span className="text-[var(--text2)]">Total NGN debit</span><span className="text-[var(--text)] font-mono">{formatNGN(amt + fee)}</span></div>
+          </div>
+          {availabilityError && (
+            <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[10px] text-[var(--text)]">
+              {availabilityError}
+            </div>
+          )}
+          <Button
+            onClick={() => void requestQuote().catch(error => {
+              const message = error instanceof Error ? error.message : 'Quote request failed.'
+              setAvailabilityError(message)
+              showToast(message, 'error')
+            })}
+            className="w-full py-3.5"
+            disabled={asset.baseExecutionEnabled !== true || belowMinimum || (address.trim().length > 0 && !addressValidation.valid)}
+          >
+            {asset.baseExecutionEnabled === true ? 'Buy' : 'In-App Execution Coming Later'}
+          </Button>
+          <div className="text-[9px] text-[var(--muted)]">
+            Wallet-funded execution is live only for supported in-app treasury pairs in this phase.
+          </div>
+        </div>
+      )}
+
+      {asset && step === 'pin' && (
+        <div className="p-5 space-y-4">
+          <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Execution Summary</div>
+                <div className="mt-2 text-[16px] font-display font-black text-[var(--text)]">
+                  {formatCrypto(crypto, asset.symbol)} <span className="text-[var(--gold2)]">·</span> {asset.network}
+                </div>
+                <div className="mt-1 text-[11px] text-[var(--text2)]">
+                  {formatNGN(amt + fee)} will be reserved from your wallet after PIN confirmation.
+                </div>
+                <div className="mt-3 inline-flex items-center border px-2.5 py-1 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--text)]">
+                  <span className={`mr-2 inline-block h-1.5 w-1.5 rounded-full ${asset.pricingSource === 'live' ? 'bg-[var(--green2)]' : asset.pricingSource === 'backup' ? 'bg-[var(--gold2)]' : 'bg-[var(--red2)]'}`} />
+                  {getPricingSourceLabel(asset.pricingSource)}
+                </div>
+              </div>
+              <div className="border border-[rgba(99,102,241,.25)] bg-[rgba(79,70,229,.08)] px-3 py-2 text-right">
+                <div className="text-[8px] uppercase tracking-[1px] text-[var(--muted)]">Quote Timer</div>
+                <div className="mt-1 font-mono text-[14px] font-bold text-[var(--gold2)]">
+                  {String(Math.floor(quoteTimeLeft / 60)).padStart(2, '0')}:{String(quoteTimeLeft % 60).padStart(2, '0')}
+                </div>
+              </div>
+            </div>
+            {quote && (
+              <div className="mt-3 text-[10px] text-[var(--muted)]">
+                Quote locked until {fmtDate(quote.expiresAt)}. Source: {getPricingSourceLabel(asset.pricingSource)}.
+              </div>
+            )}
+          </div>
+          <PinPad key={pinVersion} onComplete={handlePin} title="Confirm Buy Order" subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(amt + fee)} from your NGN balance`} />
+        </div>
+      )}
+
+      {asset && step === 'processing' && (
+        <div className="p-10 text-center"><div className="spinner mx-auto mb-4" /><div className="font-display font-bold text-[17px] text-[var(--text)]">Processing…</div><div className="text-[11px] text-[var(--muted)] mt-1">Submitting {asset.symbol} purchase and reserving your NGN balance.</div></div>
+      )}
+
+      {asset && step === 'success' && (
+        <div className="p-9 text-center flex flex-col items-center gap-4">
+          <div className="w-[72px] h-[72px] rounded-full bg-[rgba(46,170,92,.12)] border-2 border-[rgba(46,170,92,.3)] flex items-center justify-center text-[28px] animate-pop">✅</div>
+          <div className="font-display font-black text-[24px] text-[var(--text)]">Order Placed!</div>
+          <div className="text-[13px] text-[var(--text2)]">{formatCrypto(crypto, asset.symbol)} on {asset.network} has been booked. NGN funds are locked until fulfillment or failure.</div>
+          <div className="bg-[var(--clay)] border border-[var(--border)] p-3 w-full text-left">
+            <div className="text-[8px] text-[var(--muted)] uppercase tracking-[1px] mb-1">Transaction Reference</div>
+            <div className="text-[11px] text-[var(--gold2)] font-mono">{ref}</div>
+          </div>
+          <Button onClick={handleClose} className="w-full py-3">Done</Button>
+        </div>
+      )}
+    </Modal>
+  )
+}

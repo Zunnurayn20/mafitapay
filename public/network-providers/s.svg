@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Airtel">
+  <rect width="64" height="64" rx="16" fill="#ffffff"/>
+  <path d="M40 18c-9 0-17 6-17 14 0 5 3 10 8 13l4-5c-3-2-5-4-5-8 0-4 4-7 9-7 2 0 4 0 6 1l3-5c-2-2-5-3-8-3Z" fill="#ed1c24"/>
+  <path d="M19 46c7 2 14 2 25-1l-2-5c-7 2-13 2-20 0l-3 6Z" fill="#ed1c24"/>
+</svg>
