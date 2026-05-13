@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { toBlob, toPng } from 'html-to-image'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -7,7 +8,7 @@ import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
-import type { CryptoOrder, DepositIntent, LedgerEntry, PayoutRequest, ProviderEvent, Transaction } from '@/types'
+import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 const FILTERS = ['All','Deposits','Withdrawals','Bills','Crypto','P2P']
 
@@ -22,8 +23,63 @@ function formatPairLabel(pairId: string) {
 
 function formatCryptoQuantity(value: number) {
   if (!Number.isFinite(value)) return '0'
-  if (value >= 1) return value.toFixed(6).replace(/\.?0+$/, '')
-  return value.toFixed(8).replace(/\.?0+$/, '')
+  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
+  return value.toFixed(5).replace(/\.?0+$/, '')
+}
+
+function formatHistoryTitle(tx: Transaction, cryptoAsset?: { network?: string; symbol?: string }) {
+  if (!tx.type.startsWith('crypto')) {
+    switch (tx.type) {
+      case 'deposit':
+        return 'Bank Deposit'
+      case 'withdrawal':
+        return 'Bank Withdrawal'
+      case 'transfer_in':
+        return 'Funds Received'
+      case 'transfer_out':
+        return tx.metadata?.settlementKind === 'bank_transfer_out' ? 'Bank Transfer' : 'Internal Transfer'
+      case 'airtime':
+        return 'Airtime'
+      case 'data':
+        return 'Data'
+      case 'electric':
+        return 'Electricity'
+      case 'cable':
+        return 'Cable TV'
+      case 'education':
+        return 'Education'
+      case 'gas':
+        return 'Gas'
+      case 'insurance':
+        return 'Insurance'
+      case 'water':
+        return 'Water'
+      case 'referral_bonus':
+        return 'Referral Bonus'
+      case 'reward_bonus':
+        return 'Reward Bonus'
+      case 'p2p_deposit':
+        return 'P2P Deposit'
+      case 'p2p_withdrawal':
+        return 'P2P Withdrawal'
+      default:
+        return tx.description
+    }
+  }
+
+  const side = tx.type === 'crypto_sell' ? 'Sell' : 'Buy'
+  const amount =
+    typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
+      ? formatCryptoQuantity(tx.metadata.cryptoAmount)
+      : null
+  const symbol =
+    cryptoAsset?.symbol
+    || (typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : '')
+
+  const amountLabel = amount && symbol ? `${amount} ${symbol}` : ''
+  const providerLabel = tx.metadata?.provider === 'transak' ? ' via Transak' : ''
+
+  return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
 }
 
 function buildCryptoOrderProgress(order: CryptoOrder) {
@@ -99,6 +155,20 @@ function getCryptoSettlementLabel(order: CryptoOrder) {
   return 'Queued for execution'
 }
 
+function buildReceiptShareText(detail: {
+  transaction: Transaction
+  cryptoOrder: CryptoOrder | null
+}, cryptoAsset?: { symbol?: string; network?: string }) {
+  return [
+    'MafitaPay Receipt',
+    formatHistoryTitle(detail.transaction, cryptoAsset),
+    `Amount: ${formatNGN(detail.transaction.amount)}`,
+    `Status: ${detail.transaction.status}`,
+    `Reference: ${detail.transaction.reference}`,
+    `Date: ${fmtDate(detail.transaction.createdAt)}`,
+  ].join('\n')
+}
+
 export default function HistoryPage() {
   const { refreshSession, showToast, transactions } = useAppStore()
   const cryptoAssets = useCryptoAssets()
@@ -106,11 +176,10 @@ export default function HistoryPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const [exportingReceipt, setExportingReceipt] = useState(false)
   const [detail, setDetail] = useState<{
     transaction: Transaction
     cryptoOrder: CryptoOrder | null
-    ledgerEntries: LedgerEntry[]
-    providerEvents: ProviderEvent[]
     depositIntent: DepositIntent | null
     payoutRequest: PayoutRequest | null
     timeline: Array<{ label: string; at: string; tone: string }>
@@ -169,6 +238,151 @@ export default function HistoryPage() {
     }
   }
 
+  function closeDetail() {
+    setSelectedId(null)
+    setDetail(null)
+    setLoadingDetail(false)
+  }
+
+  async function shareReceipt() {
+    if (!detail) return
+    const pairId = typeof detail.transaction.metadata?.pairId === 'string' ? detail.transaction.metadata.pairId : ''
+    const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
+    const text = buildReceiptShareText(detail, cryptoAsset)
+
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({
+          title: 'MafitaPay Receipt',
+          text,
+        })
+        return
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        showToast('Receipt summary copied.')
+        return
+      }
+
+      showToast('Sharing is not available on this device.', 'error')
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      showToast(error instanceof Error ? error.message : 'Failed to share receipt.', 'error')
+    }
+  }
+
+  async function shareReceiptImage() {
+    if (!detail) return
+    const receiptElement = document.getElementById('history-receipt-sheet')
+    if (!receiptElement) {
+      showToast('Receipt is not ready yet.', 'error')
+      return
+    }
+
+    setExportingReceipt(true)
+    try {
+      const blob = await toBlob(receiptElement, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#f6efdd',
+      })
+      if (!blob) throw new Error('Failed to render receipt image.')
+
+      const fileName = `${detail.transaction.reference}.png`
+      const file = new File([blob], fileName, { type: 'image/png' })
+
+      if (
+        typeof navigator !== 'undefined'
+        && typeof navigator.share === 'function'
+        && typeof navigator.canShare === 'function'
+        && navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          title: 'MafitaPay Receipt',
+          files: [file],
+        })
+        return
+      }
+
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.click()
+      URL.revokeObjectURL(url)
+      showToast('Receipt image downloaded.')
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      showToast(error instanceof Error ? error.message : 'Failed to share receipt image.', 'error')
+    } finally {
+      setExportingReceipt(false)
+    }
+  }
+
+  async function downloadReceiptImage() {
+    if (!detail) return
+    const receiptElement = document.getElementById('history-receipt-sheet')
+    if (!receiptElement) {
+      showToast('Receipt is not ready yet.', 'error')
+      return
+    }
+
+    setExportingReceipt(true)
+    try {
+      const dataUrl = await toPng(receiptElement, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#f6efdd',
+      })
+      const link = document.createElement('a')
+      link.href = dataUrl
+      link.download = `${detail.transaction.reference}.png`
+      link.click()
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to download receipt image.', 'error')
+    } finally {
+      setExportingReceipt(false)
+    }
+  }
+
+  function downloadReceipt() {
+    if (!detail) return
+    const receiptElement = document.getElementById('history-receipt-sheet')
+    if (!receiptElement) {
+      showToast('Receipt is not ready yet.', 'error')
+      return
+    }
+
+    const popup = window.open('', '_blank', 'noopener,noreferrer,width=720,height=900')
+    if (!popup) {
+      showToast('Popup was blocked. Allow popups to download the receipt.', 'error')
+      return
+    }
+
+    popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MafitaPay Receipt</title>
+    <style>
+      body { margin: 0; padding: 24px; background: #f5efe2; font-family: Arial, sans-serif; color: #2c2418; }
+      .receipt-shell { max-width: 720px; margin: 0 auto; }
+      @media print {
+        body { padding: 0; background: #fff; }
+        .receipt-shell { max-width: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="receipt-shell">${receiptElement.outerHTML}</div>
+  </body>
+</html>`)
+    popup.document.close()
+    popup.focus()
+    popup.print()
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2.5 flex-wrap">
@@ -221,7 +435,7 @@ export default function HistoryPage() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="text-[13px] font-semibold text-[var(--text)]">{tx.description}</div>
+                      <div className="text-[13px] font-semibold text-[var(--text)]">{formatHistoryTitle(tx, cryptoAsset)}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[9px] text-[var(--muted)] font-mono">
                         {isPendingCryptoOrder && (
                           <span className="inline-flex items-center gap-1.5 border border-[rgba(99,102,241,.25)] bg-[rgba(79,70,229,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.6px] text-[var(--gold2)]">
@@ -272,38 +486,116 @@ export default function HistoryPage() {
           <div className="py-12 text-center text-[var(--muted)] text-[12px]">No transactions found for this filter.</div>
         )}
       </Card>
-      <Card className="p-5">
-        <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Transaction Detail</div>
+      <Card className="hidden overflow-hidden p-0 xl:block">
+        <div className="mx-auto w-full max-w-2xl xl:max-w-none">
+        <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--clay)] px-5 py-4 text-[11px] font-bold text-[var(--text)]">
+          <span>Transaction Detail</span>
+        </div>
         {!selectedId ? (
-          <div className="text-[11px] text-[var(--muted)]">Select a transaction to inspect its settlement summary.</div>
+          <div className="p-5 text-[11px] text-[var(--muted)]">Select a transaction to inspect its settlement summary.</div>
         ) : loadingDetail ? (
-          <div className="text-[11px] text-[var(--muted)]">Loading detail…</div>
+          <div className="p-5 text-[11px] text-[var(--muted)]">Loading detail…</div>
         ) : !detail ? (
-          <div className="text-[11px] text-[var(--muted)]">No detail available.</div>
+          <div className="p-5 text-[11px] text-[var(--muted)]">No detail available.</div>
         ) : (
-          <div className="space-y-4">
-            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="text-[12px] font-bold text-[var(--text)]">{detail.transaction.description}</div>
-              <div className="mt-1 text-[10px] text-[var(--muted)]">{detail.transaction.reference}</div>
-              <div className="mt-2 flex gap-2">
-                <Badge variant="pending">{detail.transaction.type.replace(/_/g, ' ')}</Badge>
-                <Badge variant={detail.transaction.status === 'success' ? 'success' : detail.transaction.status === 'failed' ? 'failed' : 'pending'}>
-                  {detail.transaction.status}
-                </Badge>
+          <div className="space-y-4 p-4">
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
+                {exportingReceipt ? 'Preparing…' : 'Share Image'}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
+                PNG
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
+                Share
+              </Button>
+              <Button size="sm" variant="secondary" onClick={downloadReceipt}>
+                PDF
+              </Button>
+            </div>
+            <div
+              id="history-receipt-sheet"
+              className="relative mt-3 overflow-hidden border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-5 text-[#2c2418] shadow-[0_18px_40px_rgba(0,0,0,.18)]"
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
+                style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+              />
+              <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
+              <div className="relative">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-[2px] text-[#8c6b31]">MafitaPay Receipt</div>
+                    <div className="mt-2 text-[18px] font-bold text-[#1f1a12]">
+                      {formatHistoryTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
+                        ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
+                        : undefined)}
+                    </div>
+                    <div className="mt-1 text-[11px] font-mono text-[#7c6a4b]">{detail.transaction.reference}</div>
+                  </div>
+                  <div className="rounded-full border border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.7)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[1px] text-[#8c6b31]">
+                    Official Copy
+                  </div>
+                </div>
+
+                <div className="mt-5 border-y border-dashed border-[rgba(140,107,49,.3)] py-4">
+                  <div className="text-[10px] font-bold uppercase tracking-[1.5px] text-[#8c6b31]">Amount</div>
+                  <div className={`mt-1 text-[28px] font-black tracking-[-0.02em] ${detail.transaction.amount > 0 ? 'text-[#227a45]' : 'text-[#1f1a12]'}`}>
+                    {detail.transaction.amount > 0 ? '+' : ''}{formatNGN(detail.transaction.amount)}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
+                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Recorded</div>
+                    <div className="mt-1 text-[11px] font-mono text-[#3a3123]">{fmtDate(detail.transaction.createdAt)}</div>
+                  </div>
+                  <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
+                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Status</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Badge variant="pending">{detail.transaction.type.replace(/_/g, ' ')}</Badge>
+                      <Badge variant={detail.transaction.status === 'success' ? 'success' : detail.transaction.status === 'failed' ? 'failed' : 'pending'}>
+                        {detail.transaction.status}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
+            {(detail.transaction.recipient || detail.transaction.narration) && (
+              <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
+                <div className="grid gap-3">
+                  {detail.transaction.recipient && (
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Recipient</div>
+                      <div className="mt-1 text-[11px] text-[var(--text)]">{detail.transaction.recipient}</div>
+                    </div>
+                  )}
+                  {detail.transaction.narration && (
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Narration</div>
+                      <div className="mt-1 text-[11px] text-[var(--text)]">{detail.transaction.narration}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {detail.timeline.length > 1 && (
             <div>
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Timeline</div>
-              <div className="space-y-2">
+              <div className="grid gap-2">
                 {detail.timeline.map((item, index) => (
-                  <div key={`${item.label}-${index}`} className="border border-[var(--border)] bg-[var(--clay)] p-3">
+                  <div key={`${item.label}-${index}`} className="flex items-center justify-between gap-3 border border-[var(--border)] bg-[var(--clay)] p-3">
                     <div className="text-[11px] font-bold text-[var(--text)]">{item.label}</div>
-                    <div className="mt-1 text-[10px] text-[var(--muted)]">{fmtDate(item.at)}</div>
+                    <div className="text-[10px] text-[var(--muted)]">{fmtDate(item.at)}</div>
                   </div>
                 ))}
               </div>
             </div>
+            )}
 
             {(detail.depositIntent || detail.payoutRequest) && (
               <div>
@@ -312,7 +604,6 @@ export default function HistoryPage() {
                   {detail.depositIntent ? (
                     <>
                       <div>Deposit intent · {detail.depositIntent.status.toUpperCase()}</div>
-                      <div className="mt-1">Gross: {formatNGN(detail.depositIntent.grossAmount)} · Net: {formatNGN(detail.depositIntent.netAmount)} · Fee: {formatNGN(detail.depositIntent.fee)}</div>
                       {detail.depositIntent.bankName && detail.depositIntent.accountNumber && (
                         <div className="mt-1">Funding account: {detail.depositIntent.bankName} · {detail.depositIntent.accountNumber}</div>
                       )}
@@ -323,7 +614,6 @@ export default function HistoryPage() {
                   ) : detail.payoutRequest ? (
                     <>
                       <div>Payout request · {detail.payoutRequest.status.toUpperCase()}</div>
-                      <div className="mt-1">Amount: {formatNGN(detail.payoutRequest.amount)}</div>
                       {detail.payoutRequest.beneficiary && <div className="mt-1">Beneficiary: {detail.payoutRequest.beneficiary}</div>}
                       {detail.payoutRequest.lastSyncAt && <div className="mt-1">Last sync: {fmtDate(detail.payoutRequest.lastSyncAt)}{detail.payoutRequest.lastSyncStatus ? ` · ${detail.payoutRequest.lastSyncStatus}` : ''}</div>}
                       {detail.payoutRequest.failureReason && <div className="mt-1 text-[var(--red2)]">Failure: {detail.payoutRequest.failureReason}</div>}
@@ -342,9 +632,9 @@ export default function HistoryPage() {
                     const settlementTone = getCryptoSettlementTone(detail.cryptoOrder)
                     const settlementLabel = getCryptoSettlementLabel(detail.cryptoOrder)
                     return (
-                      <div className="mb-4 border border-[var(--border)] bg-[rgba(79,70,229,.06)] p-3">
+                      <div className="border border-[var(--border)] bg-[rgba(79,70,229,.06)] p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Execution Progress</div>
+                          <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Execution</div>
                           <Badge
                             variant={
                               detail.cryptoOrder.status === 'fulfilled'
@@ -370,66 +660,22 @@ export default function HistoryPage() {
                         }`}>
                           {settlementLabel}
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                          {progress.steps.map(step => (
-                            <div
-                              key={step.key}
-                              className={`border px-3 py-2 text-[9px] font-bold uppercase tracking-[0.8px] ${
-                                progress.currentKey === step.key
-                                  ? 'border-[var(--gold)] bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'
-                                  : step.active
-                                    ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]'
-                                    : 'border-[var(--border)] bg-[var(--coal)] text-[var(--muted)]'
-                              }`}
-                            >
-                              {step.label}
+                        <div className="mt-3 space-y-1">
+                          <div>Wallet: <span className="font-mono text-[var(--text)]">{detail.cryptoOrder.walletAddress ? compactHash(detail.cryptoOrder.walletAddress, 10, 8) : detail.cryptoOrder.destinationLabel || detail.cryptoOrder.destinationType || 'Wallet delivery'}</span></div>
+                          {detail.cryptoOrder.destinationTxHash && (
+                            <div>Tx: <span className="font-mono text-[var(--text)]">{compactHash(detail.cryptoOrder.destinationTxHash)}</span></div>
+                          )}
+                          <div>Rate: <span className="text-[var(--text)]">{formatNGN(detail.cryptoOrder.unitRate)}</span></div>
+                          {(detail.cryptoOrder.exchange || detail.cryptoOrder.executionStatus) && (
+                            <div>
+                              {detail.cryptoOrder.executionStatus ? `Status: ${detail.cryptoOrder.executionStatus}` : 'Execution in progress'}
+                              {detail.cryptoOrder.exchange ? ` · Route: ${detail.cryptoOrder.exchange}` : ''}
                             </div>
-                          ))}
+                          )}
                         </div>
                       </div>
                     )
                   })()}
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="border border-[var(--border)] bg-[var(--coal)] p-3">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Order</div>
-                      <div className="mt-2 text-[11px] font-semibold text-[var(--text)]">
-                        {detail.cryptoOrder.side.toUpperCase()} · {formatPairLabel(detail.cryptoOrder.pairId)}
-                      </div>
-                      <div className="mt-1 text-[10px] text-[var(--text2)]">
-                        {formatNGN(detail.cryptoOrder.amountNgn)} for {formatCryptoQuantity(detail.cryptoOrder.cryptoAmount)}
-                      </div>
-                      <div className="mt-1 text-[10px] text-[var(--muted)]">
-                        Rate: {formatNGN(detail.cryptoOrder.unitRate)}
-                      </div>
-                    </div>
-                    <div className="border border-[var(--border)] bg-[var(--coal)] p-3">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Destination</div>
-                      <div className="mt-2 text-[11px] font-semibold text-[var(--text)]">
-                        {detail.cryptoOrder.walletAddress
-                          ? compactHash(detail.cryptoOrder.walletAddress, 10, 8)
-                          : detail.cryptoOrder.destinationLabel || detail.cryptoOrder.destinationType || 'Wallet delivery'}
-                      </div>
-                      {detail.cryptoOrder.walletAddress && (
-                        <div className="mt-1 break-all font-mono text-[10px] text-[var(--text2)]">
-                          {detail.cryptoOrder.walletAddress}
-                        </div>
-                      )}
-                      {detail.cryptoOrder.destinationTxHash && (
-                        <div className="mt-1 font-mono text-[10px] text-[var(--muted)]">
-                          Tx: {compactHash(detail.cryptoOrder.destinationTxHash)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {(detail.cryptoOrder.exchange || detail.cryptoOrder.executionStatus) && (
-                    <div className="mt-3 border border-[var(--border)] bg-[var(--coal)] p-3">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Execution</div>
-                      <div className="mt-2 text-[10px] text-[var(--text2)]">
-                        {detail.cryptoOrder.executionStatus ? `Status: ${detail.cryptoOrder.executionStatus}` : 'Execution in progress'}
-                        {detail.cryptoOrder.exchange ? ` · Route: ${detail.cryptoOrder.exchange}` : ''}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -448,57 +694,164 @@ export default function HistoryPage() {
                   {typeof detail.transaction.metadata?.providerName === 'string' && (
                     <div className="mt-1">Rail: {String(detail.transaction.metadata.providerName).toUpperCase()}</div>
                   )}
-                  <div className="mt-1">
-                    Charge: {formatNGN(Math.abs(detail.transaction.amount))}
-                    {typeof detail.transaction.metadata?.providerBaseAmount === 'number' && typeof detail.transaction.metadata?.platformFee === 'number' && Number(detail.transaction.metadata.platformFee) > 0
-                      ? ` · Provider: ${formatNGN(Number(detail.transaction.metadata.providerBaseAmount))} · Platform fee: ${formatNGN(Number(detail.transaction.metadata.platformFee))}`
-                      : ''}
-                  </div>
+                  {typeof detail.transaction.metadata?.platformFee === 'number' && Number(detail.transaction.metadata.platformFee) > 0 && (
+                    <div className="mt-1">Platform fee: {formatNGN(Number(detail.transaction.metadata.platformFee))}</div>
+                  )}
                 </div>
               </div>
             )}
-
-            <details className="border border-[var(--border)] bg-[var(--clay)] p-3">
-              <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">
-                Technical Details
-              </summary>
-              <div className="mt-3 space-y-4">
-                <div>
-                  <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Provider Events</div>
-                  <div className="space-y-2">
-                    {detail.providerEvents.length === 0 ? (
-                      <div className="text-[10px] text-[var(--muted)]">No provider events received.</div>
-                    ) : detail.providerEvents.map(item => (
-                      <div key={item.id} className="border border-[var(--border)] bg-[var(--coal)] p-3">
-                        <div className="text-[11px] font-bold text-[var(--text)]">{item.provider} · {item.status.toUpperCase()}</div>
-                        <div className="mt-1 text-[10px] text-[var(--muted)]">{item.externalEventId || 'No external event id'}</div>
-                        <div className="mt-1 text-[10px] text-[var(--muted)]">{fmtDate(item.createdAt)}</div>
-                        <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {item.retryCount ?? 0}</div>
-                        {item.failureReason && <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {item.failureReason}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Ledger Entries</div>
-                  <div className="space-y-2">
-                    {detail.ledgerEntries.length === 0 ? (
-                      <div className="text-[10px] text-[var(--muted)]">No ledger entries attached to this transaction.</div>
-                    ) : detail.ledgerEntries.map(item => (
-                      <div key={item.id} className="border border-[var(--border)] bg-[var(--coal)] p-3">
-                        <div className="text-[11px] font-bold text-[var(--text)]">{item.asset} · {item.account.toUpperCase()} · {item.direction.toUpperCase()} · {formatNGN(item.amount)}</div>
-                        <div className="mt-1 text-[10px] text-[var(--muted)]">{item.description || 'No description'}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </details>
           </div>
         )}
+        </div>
       </Card>
       </div>
+      {selectedId && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-[rgba(10,12,24,.92)] p-3 xl:hidden">
+          <Card className="mx-auto min-h-full w-full max-w-2xl overflow-hidden p-0">
+            <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--clay)] px-5 py-4 text-[11px] font-bold text-[var(--text)]">
+              <span>Transaction Detail</span>
+              <button
+                type="button"
+                onClick={closeDetail}
+                className="inline-flex h-8 items-center justify-center border border-[var(--border)] px-3 text-[10px] font-bold uppercase tracking-[1px] text-[var(--text2)]"
+              >
+                Close
+              </button>
+            </div>
+            {loadingDetail ? (
+              <div className="p-5 text-[11px] text-[var(--muted)]">Loading detail…</div>
+            ) : !detail ? (
+              <div className="p-5 text-[11px] text-[var(--muted)]">No detail available.</div>
+            ) : (
+              <div className="space-y-4 p-4">
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
+                    {exportingReceipt ? 'Preparing…' : 'Share Image'}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
+                    PNG
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
+                    Share
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={downloadReceipt}>
+                    PDF
+                  </Button>
+                </div>
+                <div
+                  id="history-receipt-sheet"
+                  className="relative mt-3 overflow-hidden border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-5 text-[#2c2418] shadow-[0_18px_40px_rgba(0,0,0,.18)]"
+                >
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
+                    style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+                  />
+                  <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
+                  <div className="relative">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[2px] text-[#8c6b31]">MafitaPay Receipt</div>
+                        <div className="mt-2 text-[18px] font-bold text-[#1f1a12]">
+                          {formatHistoryTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
+                            ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
+                            : undefined)}
+                        </div>
+                        <div className="mt-1 text-[11px] font-mono text-[#7c6a4b]">{detail.transaction.reference}</div>
+                      </div>
+                      <div className="rounded-full border border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.7)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[1px] text-[#8c6b31]">
+                        Official Copy
+                      </div>
+                    </div>
+
+                    <div className="mt-5 border-y border-dashed border-[rgba(140,107,49,.3)] py-4">
+                      <div className="text-[10px] font-bold uppercase tracking-[1.5px] text-[#8c6b31]">Amount</div>
+                      <div className={`mt-1 text-[28px] font-black tracking-[-0.02em] ${detail.transaction.amount > 0 ? 'text-[#227a45]' : 'text-[#1f1a12]'}`}>
+                        {detail.transaction.amount > 0 ? '+' : ''}{formatNGN(detail.transaction.amount)}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Recorded</div>
+                        <div className="mt-1 text-[11px] font-mono text-[#3a3123]">{fmtDate(detail.transaction.createdAt)}</div>
+                      </div>
+                      <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Status</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Badge variant="pending">{detail.transaction.type.replace(/_/g, ' ')}</Badge>
+                          <Badge variant={detail.transaction.status === 'success' ? 'success' : detail.transaction.status === 'failed' ? 'failed' : 'pending'}>
+                            {detail.transaction.status}
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {(detail.transaction.recipient || detail.transaction.narration) && (
+                  <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
+                    <div className="grid gap-3">
+                      {detail.transaction.recipient && (
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Recipient</div>
+                          <div className="mt-1 text-[11px] text-[var(--text)]">{detail.transaction.recipient}</div>
+                        </div>
+                      )}
+                      {detail.transaction.narration && (
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Narration</div>
+                          <div className="mt-1 text-[11px] text-[var(--text)]">{detail.transaction.narration}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {detail.timeline.length > 1 && (
+                  <div>
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Timeline</div>
+                    <div className="grid gap-2">
+                      {detail.timeline.map((item, index) => (
+                        <div key={`${item.label}-${index}`} className="flex items-center justify-between gap-3 border border-[var(--border)] bg-[var(--clay)] p-3">
+                          <div className="text-[11px] font-bold text-[var(--text)]">{item.label}</div>
+                          <div className="text-[10px] text-[var(--muted)]">{fmtDate(item.at)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(detail.depositIntent || detail.payoutRequest) && (
+                  <div>
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Settlement Record</div>
+                    <div className="border border-[var(--border)] bg-[var(--clay)] p-3 text-[10px] text-[var(--text2)]">
+                      {detail.depositIntent ? (
+                        <>
+                          <div>Deposit intent · {detail.depositIntent.status.toUpperCase()}</div>
+                          {detail.depositIntent.bankName && detail.depositIntent.accountNumber && (
+                            <div className="mt-1">Funding account: {detail.depositIntent.bankName} · {detail.depositIntent.accountNumber}</div>
+                          )}
+                          {detail.depositIntent.accountName && <div className="mt-1">Account label: {detail.depositIntent.accountName}</div>}
+                          {detail.depositIntent.expiresAt && <div className="mt-1">Expiry: {fmtDate(detail.depositIntent.expiresAt)}</div>}
+                          {detail.depositIntent.failureReason && <div className="mt-1 text-[var(--red2)]">Failure: {detail.depositIntent.failureReason}</div>}
+                        </>
+                      ) : detail.payoutRequest ? (
+                        <>
+                          <div>Payout request · {detail.payoutRequest.status.toUpperCase()}</div>
+                          {detail.payoutRequest.beneficiary && <div className="mt-1">Beneficiary: {detail.payoutRequest.beneficiary}</div>}
+                          {detail.payoutRequest.lastSyncAt && <div className="mt-1">Last sync: {fmtDate(detail.payoutRequest.lastSyncAt)}{detail.payoutRequest.lastSyncStatus ? ` · ${detail.payoutRequest.lastSyncStatus}` : ''}</div>}
+                          {detail.payoutRequest.failureReason && <div className="mt-1 text-[var(--red2)]">Failure: {detail.payoutRequest.failureReason}</div>}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

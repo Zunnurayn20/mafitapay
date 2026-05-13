@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { BadgeCheck } from 'lucide-react'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -8,7 +9,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { useAppStore } from '@/store'
 
 export default function KycPage() {
-  const { fundingAccountEligibility, kycSubmission, refreshSession, showToast, user } = useAppStore()
+  const { kycSubmission, refreshSession, showToast, user } = useAppStore()
   const [documentType, setDocumentType] = useState<'nin' | 'bvn' | 'passport' | 'drivers_license' | 'voters_card'>('nin')
   const [documentNumber, setDocumentNumber] = useState('')
   const [documentUrl, setDocumentUrl] = useState('')
@@ -31,21 +32,15 @@ export default function KycPage() {
 
   const kycCopy = user?.kycStatus === 'verified'
     ? {
-        badge: 'KYC VERIFIED',
-        badgeClass: 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.1)] text-[var(--green2)]',
         headline: 'Verification complete',
         body: 'Your account has full access to supported wallet and transfer limits.',
       }
     : user?.kycStatus === 'rejected'
       ? {
-          badge: 'KYC REJECTED',
-          badgeClass: 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.1)] text-[var(--red2)]',
           headline: 'Verification requires attention',
           body: 'Your last verification attempt was rejected. Upload a valid government ID to continue.',
         }
       : {
-          badge: 'KYC PENDING',
-          badgeClass: 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.1)] text-[var(--red2)]',
           headline: 'Verification required',
           body: 'Upload a valid government ID to unlock higher transaction limits and full P2P access.',
         }
@@ -111,41 +106,6 @@ export default function KycPage() {
   return (
     <div className="grid gap-6 xl:grid-cols-[1.05fr_.95fr]">
       <div className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>KYC Status</CardTitle>
-          </CardHeader>
-          <div className="p-6">
-            <div className={`inline-flex border px-2.5 py-1 text-[8px] font-bold tracking-wide ${kycCopy.badgeClass}`}>{kycCopy.badge}</div>
-            <div className="mt-4 text-[18px] font-black text-[var(--text)]">{kycCopy.headline}</div>
-            <div className="mt-2 text-[12px] leading-relaxed text-[var(--text2)]">{kycCopy.body}</div>
-            <div className="mt-3 text-[11px] text-[var(--muted)]">
-              Permanent funding accounts require an approved <span className="font-bold text-[var(--text)]">BVN</span> or <span className="font-bold text-[var(--text)]">NIN</span>. Other IDs can still verify the account, but they do not unlock static funding accounts.
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Funding Account Eligibility</div>
-          <div className={`border p-4 text-[11px] ${
-            fundingAccountEligibility.eligible || fundingAccountEligibility.hasPermanentAccount
-              ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)]'
-              : 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)]'
-          }`}>
-            <div className="font-bold text-[var(--text)]">
-              {fundingAccountEligibility.hasPermanentAccount
-                ? 'Permanent account assigned'
-                : fundingAccountEligibility.eligible
-                  ? 'Eligible for permanent account creation'
-                  : 'Not eligible yet'}
-            </div>
-            <div className="mt-1 text-[var(--text2)]">{fundingAccountEligibility.message}</div>
-            {fundingAccountEligibility.identityType && (
-              <div className="mt-2 text-[10px] text-[var(--muted)]">Identity type: {fundingAccountEligibility.identityType.toUpperCase()}</div>
-            )}
-          </div>
-        </Card>
-
         <Card className="p-6">
           <div className="mb-4 text-[11px] font-bold text-[var(--text)]">Unlocked Limits</div>
           <div className="space-y-3">
@@ -170,107 +130,152 @@ export default function KycPage() {
 
       <div>
         <Card className="p-6">
-          <div className="mb-4 text-[11px] font-bold text-[var(--text)]">Submit Verification Documents</div>
-          <div className="space-y-4">
-            {(uploadingDocument || refreshingKycState) && (
-              <div className="border border-[rgba(202,165,96,.2)] bg-[rgba(202,165,96,.08)] px-3 py-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
-                {uploadingDocument ? 'Uploading document…' : 'Refreshing verification state…'}
+          <div className="mb-4">
+            <div className="text-[18px] font-black text-[var(--text)]">{kycCopy.headline}</div>
+            <div className="mt-2 text-[12px] leading-relaxed text-[var(--text2)]">{kycCopy.body}</div>
+          </div>
+          {user?.kycStatus === 'verified' ? (
+            <div className="border border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-full border border-[rgba(46,170,92,.3)] bg-[rgba(46,170,92,.14)]">
+                  <BadgeCheck className="h-6 w-6 text-[var(--green2)]" />
+                </div>
+                <div>
+                  <div className="text-[13px] font-bold text-[var(--green2)]">KYC Verified</div>
+                  <div className="mt-1 text-[11px] text-[var(--text2)]">
+                    Your identity has been approved. No further document submission is required right now.
+                  </div>
+                </div>
               </div>
-            )}
-            <div>
-              <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Document Type</div>
-              <select
-                value={documentType}
-                onChange={event => setDocumentType(event.target.value as typeof documentType)}
-                disabled={uploadingDocument || submittingKyc || refreshingKycState}
-                className="w-full border border-[var(--border)] bg-[var(--clay2)] px-3.5 py-3 text-sm text-[var(--text)] outline-none transition-colors focus:border-[var(--gold)]"
-              >
-                <option value="nin">NIN</option>
-                <option value="bvn">BVN</option>
-                <option value="passport">Passport</option>
-                <option value="drivers_license">Driver License</option>
-                <option value="voters_card">Voter Card</option>
-              </select>
-            </div>
-
-            <Input
-              label="Document Number"
-              value={documentNumber}
-              onChange={event => setDocumentNumber(event.target.value)}
-              disabled={uploadingDocument || submittingKyc || refreshingKycState}
-              placeholder={documentType === 'bvn' || documentType === 'nin' ? '11 digits required' : undefined}
-            />
-            {kycSubmission?.documentNumber && (
-              <div className="text-[10px] text-[var(--muted)]">
-                Latest stored number: {kycSubmission.documentNumber}. Enter a fresh number only when resubmitting or changing documents.
-              </div>
-            )}
-            {(documentType === 'bvn' || documentType === 'nin') && (
-              <div className="text-[10px] text-[var(--muted)]">{documentType.toUpperCase()} must be exactly 11 digits.</div>
-            )}
-
-            <div>
-              <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">
-                Document Upload {uploadOptional ? '(Optional)' : ''}
-              </div>
-              <label className="flex cursor-pointer items-center justify-between gap-3 border border-dashed border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[11px] text-[var(--text2)]">
-                <span className="min-w-0 truncate">{documentName || 'Choose a PDF or image document'}</span>
-                <span className="border border-[var(--border)] px-2.5 py-1 text-[9px] font-bold text-[var(--gold2)]">{uploadingDocument ? 'UPLOADING…' : 'UPLOAD'}</span>
-                <input
-                  type="file"
-                  accept=".pdf,image/jpeg,image/png,image/webp"
-                  className="hidden"
-                  disabled={uploadingDocument || submittingKyc || refreshingKycState}
-                  onChange={event => {
-                    const file = event.target.files?.[0]
-                    if (file) void uploadDocument(file)
-                    event.target.value = ''
-                  }}
-                />
-              </label>
-              <div className="mt-2 text-[10px] text-[var(--muted)]">
-                {uploadOptional
-                  ? 'Optional for BVN/NIN. You can submit with just the number, or attach a document if you want.'
-                  : 'Required. Allowed: PDF, JPG, PNG, WEBP up to 5MB.'}
-                {fileSize ? ` Uploaded: ${(fileSize / 1024 / 1024).toFixed(2)}MB.` : ''}
-              </div>
-              {documentUrl && (
-                <a href={documentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[10px] font-bold text-[var(--gold2)] underline">
-                  View uploaded document
-                </a>
+              {kycSubmission && (
+                <div className="mt-4 border border-[rgba(46,170,92,.18)] bg-[rgba(13,13,20,.18)] p-4 text-[11px]">
+                  <div className="mb-1 font-bold text-[var(--text)]">Approved Identity</div>
+                  <div className="text-[var(--muted)]">
+                    {kycSubmission.documentType.toUpperCase()} · {kycSubmission.documentNumber}
+                  </div>
+                  {kycSubmission.documentName && (
+                    <a href={kycSubmission.documentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block font-bold text-[var(--gold2)] underline">
+                      {kycSubmission.documentName}
+                    </a>
+                  )}
+                </div>
               )}
             </div>
-
-            {kycSubmission && (
-              <div className="border border-[var(--border)] bg-[var(--clay)] p-4 text-[11px]">
-                <div className="mb-1 font-bold text-[var(--text)]">Latest Submission</div>
-                <div className="text-[var(--muted)]">
-                  {kycSubmission.documentType.toUpperCase()} · {kycSubmission.documentNumber} · {kycSubmission.status.toUpperCase()}
+          ) : (
+            <>
+              <div className="mb-5 border border-[var(--border)] bg-[var(--clay)] p-4">
+                <div className="text-[11px] font-bold text-[var(--text)]">What to submit</div>
+                <div className="mt-2 text-[11px] leading-relaxed text-[var(--text2)]">
+                  Submit a valid identity record to unlock higher limits and complete account verification.
                 </div>
-                {kycSubmission.documentName && (
-                  <a href={kycSubmission.documentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block font-bold text-[var(--gold2)] underline">
-                    {kycSubmission.documentName}
-                  </a>
-                )}
-                {kycSubmission.notes && (
-                  <div className="mt-2 text-[var(--red2)]">Review note: {kycSubmission.notes}</div>
-                )}
+                <div className="mt-3 space-y-2 text-[10px] text-[var(--muted)]">
+                  <div>BVN and NIN can be submitted with just the number. Document upload is optional.</div>
+                  <div>Passport, Driver License, and Voter Card require both the document number and an uploaded file.</div>
+                  <div>For permanent funding account eligibility, BVN or NIN is still the required identity path.</div>
+                </div>
               </div>
-            )}
-            {refreshingKycState && (
-              <div className="space-y-2 border border-[var(--border)] bg-[var(--clay)] p-4">
-                <Skeleton className="h-3 w-28" />
-                <Skeleton className="h-3 w-5/6" />
-                <Skeleton className="h-3 w-2/3" />
-              </div>
-            )}
-          </div>
+              <div className="space-y-4">
+                {(uploadingDocument || refreshingKycState) && (
+                  <div className="border border-[rgba(202,165,96,.2)] bg-[rgba(202,165,96,.08)] px-3 py-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
+                    {uploadingDocument ? 'Uploading document…' : 'Refreshing verification state…'}
+                  </div>
+                )}
+                <div>
+                  <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Document Type</div>
+                  <select
+                    value={documentType}
+                    onChange={event => setDocumentType(event.target.value as typeof documentType)}
+                    disabled={uploadingDocument || submittingKyc || refreshingKycState}
+                    className="w-full border border-[var(--border)] bg-[var(--clay2)] px-3.5 py-3 text-sm text-[var(--text)] outline-none transition-colors focus:border-[var(--gold)]"
+                  >
+                    <option value="nin">NIN</option>
+                    <option value="bvn">BVN</option>
+                    <option value="passport">Passport</option>
+                    <option value="drivers_license">Driver License</option>
+                    <option value="voters_card">Voter Card</option>
+                  </select>
+                </div>
 
-          <div className="mt-5">
-            <Button className="w-full py-3" onClick={submitKyc} loading={submittingKyc || refreshingKycState} disabled={uploadingDocument || refreshingKycState}>
-              {refreshingKycState ? 'Refreshing State…' : uploadingDocument ? 'Waiting for Upload…' : 'Submit KYC Documents'}
-            </Button>
-          </div>
+                <Input
+                  label="Document Number"
+                  value={documentNumber}
+                  onChange={event => setDocumentNumber(event.target.value)}
+                  disabled={uploadingDocument || submittingKyc || refreshingKycState}
+                  placeholder={documentType === 'bvn' || documentType === 'nin' ? '11 digits required' : undefined}
+                />
+                {kycSubmission?.documentNumber && (
+                  <div className="text-[10px] text-[var(--muted)]">
+                    Latest stored number: {kycSubmission.documentNumber}. Enter a fresh number only when resubmitting or changing documents.
+                  </div>
+                )}
+                {(documentType === 'bvn' || documentType === 'nin') && (
+                  <div className="text-[10px] text-[var(--muted)]">{documentType.toUpperCase()} must be exactly 11 digits.</div>
+                )}
+
+                <div>
+                  <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">
+                    Document Upload {uploadOptional ? '(Optional)' : ''}
+                  </div>
+                  <label className="flex cursor-pointer items-center justify-between gap-3 border border-dashed border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[11px] text-[var(--text2)]">
+                    <span className="min-w-0 truncate">{documentName || 'Choose a PDF or image document'}</span>
+                    <span className="border border-[var(--border)] px-2.5 py-1 text-[9px] font-bold text-[var(--gold2)]">{uploadingDocument ? 'UPLOADING…' : 'UPLOAD'}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={uploadingDocument || submittingKyc || refreshingKycState}
+                      onChange={event => {
+                        const file = event.target.files?.[0]
+                        if (file) void uploadDocument(file)
+                        event.target.value = ''
+                      }}
+                    />
+                  </label>
+                  <div className="mt-2 text-[10px] text-[var(--muted)]">
+                    {uploadOptional
+                      ? 'Optional for BVN/NIN. You can submit with just the number, or attach a document if you want.'
+                      : 'Required. Allowed: PDF, JPG, PNG, WEBP up to 5MB.'}
+                    {fileSize ? ` Uploaded: ${(fileSize / 1024 / 1024).toFixed(2)}MB.` : ''}
+                  </div>
+                  {documentUrl && (
+                    <a href={documentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[10px] font-bold text-[var(--gold2)] underline">
+                      View uploaded document
+                    </a>
+                  )}
+                </div>
+
+                {kycSubmission && (
+                  <div className="border border-[var(--border)] bg-[var(--clay)] p-4 text-[11px]">
+                    <div className="mb-1 font-bold text-[var(--text)]">Latest Submission</div>
+                    <div className="text-[var(--muted)]">
+                      {kycSubmission.documentType.toUpperCase()} · {kycSubmission.documentNumber} · {kycSubmission.status.toUpperCase()}
+                    </div>
+                    {kycSubmission.documentName && (
+                      <a href={kycSubmission.documentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block font-bold text-[var(--gold2)] underline">
+                        {kycSubmission.documentName}
+                      </a>
+                    )}
+                    {kycSubmission.notes && (
+                      <div className="mt-2 text-[var(--red2)]">Review note: {kycSubmission.notes}</div>
+                    )}
+                  </div>
+                )}
+                {refreshingKycState && (
+                  <div className="space-y-2 border border-[var(--border)] bg-[var(--clay)] p-4">
+                    <Skeleton className="h-3 w-28" />
+                    <Skeleton className="h-3 w-5/6" />
+                    <Skeleton className="h-3 w-2/3" />
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5">
+                <Button className="w-full py-3" onClick={submitKyc} loading={submittingKyc || refreshingKycState} disabled={uploadingDocument || refreshingKycState}>
+                  {refreshingKycState ? 'Refreshing State…' : uploadingDocument ? 'Waiting for Upload…' : 'Submit KYC Documents'}
+                </Button>
+              </div>
+            </>
+          )}
         </Card>
       </div>
     </div>

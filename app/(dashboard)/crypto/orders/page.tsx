@@ -19,14 +19,19 @@ function compactHash(value: string, head = 10, tail = 8) {
   return `${value.slice(0, head)}...${value.slice(-tail)}`
 }
 
-function formatPairLabel(pairId: string) {
-  return pairId.replace(/_/g, ' · ')
-}
-
 function formatCryptoQuantity(value: number) {
   if (!Number.isFinite(value)) return '0'
-  if (value >= 1) return value.toFixed(6).replace(/\.?0+$/, '')
-  return value.toFixed(8).replace(/\.?0+$/, '')
+  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
+  return value.toFixed(5).replace(/\.?0+$/, '')
+}
+
+function getOrderAssetSymbol(order: CryptoOrder) {
+  return String(order.pairId).split('_')[0] || 'Asset'
+}
+
+function formatOrderTitle(order: CryptoOrder) {
+  const side = order.side === 'sell' ? 'Sell' : 'Buy'
+  return `${side} ${formatCryptoQuantity(order.cryptoAmount)} ${getOrderAssetSymbol(order)}`
 }
 
 function getOrderStatusLabel(order: CryptoOrder) {
@@ -183,7 +188,7 @@ export default function CryptoOrdersPage() {
               <div key={order.id} className="flex flex-col gap-3 px-5 py-4 xl:grid xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] xl:items-center">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-[13px] font-bold text-[var(--text)]">{formatPairLabel(order.pairId)}</div>
+                    <div className="text-[13px] font-bold text-[var(--text)]">{formatOrderTitle(order)}</div>
                     <Badge variant={getOrderStatusTone(order)}>
                       {order.status}
                     </Badge>
@@ -204,7 +209,7 @@ export default function CryptoOrdersPage() {
                     )}
                   </div>
                   <div className="mt-2 text-[12px] font-semibold text-[var(--text)]">
-                    {formatNGN(order.amountNgn)} for {formatCryptoQuantity(order.cryptoAmount)}
+                    {formatNGN(order.amountNgn)}
                   </div>
                   <div className="mt-1 text-[10px] text-[var(--muted)]">
                     {fmtDate(order.createdAt)} · Rate {formatNGN(order.unitRate)}

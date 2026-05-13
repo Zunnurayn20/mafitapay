@@ -72,7 +72,7 @@ export async function POST(req: Request) {
       status: 'pending',
       amount: 0,
       fee: 0,
-      description: `${quoteData.asset.symbol} Buy via Transak (${quoteData.asset.network}) — ${formatCrypto(quoteData.quote.cryptoAmount, quoteData.asset.symbol)}`,
+      description: `Buy via Transak ${formatCrypto(quoteData.quote.cryptoAmount, quoteData.asset.symbol)}`,
       reference: partnerOrderId,
       createdAt: new Date().toISOString(),
       icon: '₿',

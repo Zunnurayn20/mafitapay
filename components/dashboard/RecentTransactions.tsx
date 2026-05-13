@@ -6,6 +6,67 @@ import { Badge } from '@/components/ui/Badge'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { fmtDate, formatNGN } from '@/lib/utils'
+import type { Transaction } from '@/types'
+
+function formatCryptoQuantity(value: number) {
+  if (!Number.isFinite(value)) return '0'
+  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
+  return value.toFixed(5).replace(/\.?0+$/, '')
+}
+
+function formatTransactionTitle(tx: Transaction, cryptoAsset?: { symbol?: string }) {
+  if (!tx.type.startsWith('crypto')) {
+    switch (tx.type) {
+      case 'deposit':
+        return 'Bank Deposit'
+      case 'withdrawal':
+        return 'Bank Withdrawal'
+      case 'transfer_in':
+        return 'Funds Received'
+      case 'transfer_out':
+        return tx.metadata?.settlementKind === 'bank_transfer_out' ? 'Bank Transfer' : 'Internal Transfer'
+      case 'airtime':
+        return 'Airtime'
+      case 'data':
+        return 'Data'
+      case 'electric':
+        return 'Electricity'
+      case 'cable':
+        return 'Cable TV'
+      case 'education':
+        return 'Education'
+      case 'gas':
+        return 'Gas'
+      case 'insurance':
+        return 'Insurance'
+      case 'water':
+        return 'Water'
+      case 'referral_bonus':
+        return 'Referral Bonus'
+      case 'reward_bonus':
+        return 'Reward Bonus'
+      case 'p2p_deposit':
+        return 'P2P Deposit'
+      case 'p2p_withdrawal':
+        return 'P2P Withdrawal'
+      default:
+        return tx.description
+    }
+  }
+
+  const side = tx.type === 'crypto_sell' ? 'Sell' : 'Buy'
+  const amount =
+    typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
+      ? formatCryptoQuantity(tx.metadata.cryptoAmount)
+      : null
+  const symbol =
+    cryptoAsset?.symbol
+    || (typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : '')
+  const amountLabel = amount && symbol ? `${amount} ${symbol}` : ''
+  const providerLabel = tx.metadata?.provider === 'transak' ? ' via Transak' : ''
+
+  return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
+}
 
 export function RecentTransactions() {
   const { transactions } = useAppStore()
@@ -49,7 +110,7 @@ export function RecentTransactions() {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="truncate text-[13px] font-semibold text-[var(--text)]">{tx.description}</div>
+                  <div className="truncate text-[13px] font-semibold text-[var(--text)]">{formatTransactionTitle(tx, cryptoAsset)}</div>
                   <Badge variant={statusVariant}>{tx.status}</Badge>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[9px] text-[var(--muted)] font-mono">

@@ -41,7 +41,7 @@ export async function GET(req: Request) {
     networkProviders = await listAmigoDataBundleNetworkProvidersSafe(networkProviders, { forceRefresh })
   }
 
-  const liveProviders = providers
+  const hydratedProviders = providers
     .map(item => ({
       ...item,
       isActive:
@@ -53,9 +53,8 @@ export async function GET(req: Request) {
           || (Array.isArray(item.billers) && item.billers.length > 0)
         ),
     }))
-    .filter(item => item.isActive !== false)
 
-  return NextResponse.json({ data: { providers: liveProviders, networkProviders }, success: true })
+  return NextResponse.json({ data: { providers: hydratedProviders, networkProviders }, success: true })
 }
 
 export async function POST(req: Request) {
