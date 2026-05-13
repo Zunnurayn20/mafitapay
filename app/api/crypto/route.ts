@@ -104,7 +104,6 @@ async function assertQuoteStillMatchesLiveMarket(asset: CryptoAsset, side: 'buy'
 
 export async function GET(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
-  void kickCryptoMarketRefresh()
   const { searchParams } = new URL(req.url)
   const forceRefresh = searchParams.get('refresh') === '1'
   const liveOnly = searchParams.get('strict') === '1'

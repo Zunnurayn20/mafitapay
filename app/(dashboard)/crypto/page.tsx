@@ -2,6 +2,7 @@
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { useCryptoAssets, useCryptoAssetsRefreshing } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN, formatPercentChange, formatUSDAdaptive, fmtDate } from '@/lib/utils'
@@ -17,6 +18,8 @@ export default function CryptoPage() {
     if ((!marketPriceUsd || marketPriceUsd <= 0) || pricingSource === 'safe') return 'Live unavailable'
     return formatUSDAdaptive(marketPriceUsd)
   }
+
+  const showMarketSkeleton = assets.length === 0 && refreshingAssets
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 border border-[var(--border)] bg-[var(--clay)] px-5 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
@@ -30,7 +33,13 @@ export default function CryptoPage() {
             )}
           </div>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {assets.map(a => (
+              {showMarketSkeleton ? Array.from({ length: 4 }).map((_, index) => (
+                <div key={`market-skeleton-${index}`} className="space-y-2">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-5 w-24" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              )) : assets.map(a => (
               <div key={a.id}>
                 <div className="text-[9px] text-[var(--muted)]">{a.symbol} · {a.network}</div>
                 <div className="text-[16px] font-bold font-mono text-[var(--text)]">
@@ -60,7 +69,20 @@ export default function CryptoPage() {
             <CardTitle>Assets</CardTitle>
             <div className="text-[8px] font-bold text-[var(--muted)] bg-[var(--clay)] border border-[var(--border)] px-2 py-1">Live when available</div>
           </CardHeader>
-          {assets.map(a => (
+          {showMarketSkeleton ? Array.from({ length: 6 }).map((_, index) => (
+            <div key={`asset-skeleton-${index}`} className="flex items-center gap-3 border-b border-[var(--border)] px-5 py-4 last:border-0">
+              <Skeleton className="h-14 w-14 flex-shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-24" />
+              </div>
+              <div className="mr-4 space-y-2 text-right">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="h-8 w-16" />
+            </div>
+          )) : assets.map(a => (
             <div key={a.id} className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)] last:border-0 hover:bg-[var(--clay)] transition-colors cursor-pointer" onClick={() => { setModalData({ cryptoAsset: a, cryptoPairId: a.id }); openModal('buy') }}>
               <AssetLogo
                 src={a.icon}

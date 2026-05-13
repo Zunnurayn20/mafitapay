@@ -203,7 +203,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       </Link>
                     </>
                   )}
-                  {activeNode.item.label !== 'Overview' && activeNode.item.href !== '/admin' && (
+                  {activeNode.item.label !== 'Overview' && (
                     <>
                       <span className="text-[var(--border2)]">/</span>
                       <span className="text-[var(--gold2)]">{activeNode.item.label}</span>

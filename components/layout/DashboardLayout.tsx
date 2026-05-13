@@ -11,6 +11,7 @@ import { AdminShell } from './AdminShell'
 import { Toast } from '@/components/ui/Toast'
 import { ModalManager } from '@/components/modals/ModalManager'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
+import { FullScreenAppLoading } from '@/components/ui/RouteLoading'
 
 const TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -31,10 +32,12 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, theme } = useAppStore()
+  const { authResolved, isAuthenticated, theme, user } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
   const isAdminRoute = pathname.startsWith('/admin')
+  const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
+  const isAdminUser = (user?.email ?? '').toLowerCase() === adminEmail
   const title = pathname.startsWith('/admin')
     ? 'Admin'
     : TITLES[pathname] ?? 'Dashboard'
@@ -50,7 +53,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return
-    void refreshCryptoAssets({ force: true, liveOnly: true })
+    void refreshCryptoAssets()
   }, [authResolved, isAuthenticated])
 
   useEffect(() => {
@@ -58,14 +61,70 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
     const interval = setInterval(() => {
       void refreshCryptoAssets()
-    }, 30_000)
+    }, 60_000)
 
     return () => {
       clearInterval(interval)
     }
   }, [authResolved, isAuthenticated])
 
-  if (!authResolved || !isAuthenticated) return null
+  useEffect(() => {
+    if (!authResolved || !isAuthenticated) return
+
+    const warmRoutes = [
+      '/dashboard',
+      '/history',
+      '/crypto',
+      '/crypto/orders',
+      '/bills',
+      '/p2p',
+      '/kyc',
+    ]
+
+    if (isAdminUser) {
+      warmRoutes.push('/admin', '/admin/operations/events', '/admin/health/providers')
+    }
+
+    const prefetch = () => {
+      for (const href of warmRoutes) {
+        router.prefetch(href)
+      }
+    }
+
+    const browser = globalThis as typeof globalThis & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+
+    let idleCallback: number | null = null
+    let timeoutHandle: ReturnType<typeof globalThis.setTimeout> | null = null
+
+    if (typeof browser.requestIdleCallback === 'function') {
+      idleCallback = browser.requestIdleCallback(prefetch, { timeout: 1200 })
+    } else {
+      timeoutHandle = globalThis.setTimeout(prefetch, 250)
+    }
+
+    return () => {
+      if (timeoutHandle !== null) {
+        globalThis.clearTimeout(timeoutHandle)
+      }
+      if (idleCallback !== null && typeof browser.cancelIdleCallback === 'function') {
+        browser.cancelIdleCallback(idleCallback)
+      }
+    }
+  }, [authResolved, isAuthenticated, isAdminUser, router])
+
+  if (!authResolved) {
+    return (
+      <FullScreenAppLoading
+        title="Restoring your session"
+        detail="Loading wallet, account state, and recent activity."
+      />
+    )
+  }
+
+  if (!isAuthenticated) return null
 
   return (
     <ErrorBoundary>

@@ -39,6 +39,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
     syncAllPendingPayouts,
     syncingAllPayouts,
     reloadSettlementQueues,
+    refreshingSettlementQueues,
     inspectReference,
     loadingReferenceCase,
     depositIntents,
@@ -55,6 +56,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
     providerEvents,
     providerDiagnosticsReport,
     refreshingProviderDiagnostics,
+    refreshingProviderEvents,
     reloadProviderDiagnosticsReport,
     requeueEvent,
     requeueingEventId,
@@ -282,7 +284,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             />
             <select
               value={settlementStatusFilter}
-              onChange={event => setSettlementStatusFilter(event.target.value)}
+              onChange={event => setSettlementStatusFilter(event.target.value as typeof settlementStatusFilter)}
               className="border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
             >
               <option value="all">All statuses</option>
@@ -296,11 +298,13 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               placeholder="Provider"
               className="w-36 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
             />
-            <Button variant="secondary" size="sm" onClick={() => void syncAllPendingPayouts()} disabled={syncingAllPayouts}>
+            <Button variant="secondary" size="sm" onClick={() => void syncAllPendingPayouts()} disabled={syncingAllPayouts || refreshingSettlementQueues}>
               {syncingAllPayouts ? 'Syncing Payouts…' : 'Sync Pending Payouts'}
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => void reloadSettlementQueues(settlementSearch, settlementStatusFilter, settlementProviderFilter)}>Search</Button>
-            <Button variant="secondary" size="sm" onClick={() => void inspectReference(settlementSearch)} disabled={loadingReferenceCase === settlementSearch.trim()}>
+            <Button variant="secondary" size="sm" onClick={() => void reloadSettlementQueues(settlementSearch, settlementStatusFilter, settlementProviderFilter)} disabled={refreshingSettlementQueues}>
+              {refreshingSettlementQueues ? 'Searching…' : 'Search'}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => void inspectReference(settlementSearch)} disabled={loadingReferenceCase === settlementSearch.trim() || refreshingSettlementQueues}>
               {loadingReferenceCase === settlementSearch.trim() && settlementSearch.trim() ? 'Opening…' : 'Open Case'}
             </Button>
           </div>
@@ -389,8 +393,8 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           <Button variant="secondary" size="sm" onClick={() => void Promise.all([
             reloadProviderEvents(providerEventStatusFilter, providerEventProviderFilter, settlementSearch),
             reloadProviderDiagnosticsReport(),
-          ])} disabled={refreshingProviderDiagnostics}>
-            {refreshingProviderDiagnostics ? 'Refreshing…' : 'Refresh'}
+          ])} disabled={refreshingProviderDiagnostics || refreshingProviderEvents}>
+            {refreshingProviderDiagnostics || refreshingProviderEvents ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
         {providerDiagnosticsReport && (
@@ -418,7 +422,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
         <div className="mb-4 flex gap-2">
             <select
               value={providerEventStatusFilter}
-              onChange={event => setProviderEventStatusFilter(event.target.value)}
+              onChange={event => setProviderEventStatusFilter(event.target.value as typeof providerEventStatusFilter)}
               className="border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
             >
               <option value="all">All statuses</option>
@@ -438,7 +442,9 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               placeholder="Reference"
               className="w-40 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
             />
-            <Button variant="secondary" size="sm" onClick={() => void reloadProviderEvents(providerEventStatusFilter, providerEventProviderFilter, settlementSearch)}>Filter</Button>
+            <Button variant="secondary" size="sm" onClick={() => void reloadProviderEvents(providerEventStatusFilter, providerEventProviderFilter, settlementSearch)} disabled={refreshingProviderEvents}>
+              {refreshingProviderEvents ? 'Filtering…' : 'Filter'}
+            </Button>
           </div>
           <div className="space-y-3">
             {providerEvents.length === 0 ? (

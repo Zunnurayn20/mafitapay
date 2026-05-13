@@ -4,8 +4,10 @@ import { BILL_PROVIDERS, CRYPTO_ASSETS, NETWORK_PROVIDERS, P2P_MERCHANTS } from 
 import type { BankDirectoryEntry, BillProvider, CryptoAsset, NetworkProvider, P2PMerchant } from '@/types'
 
 const CRYPTO_ASSETS_CACHE_KEY = 'mafitapay.cryptoAssets'
+const CRYPTO_ASSETS_CLIENT_REFRESH_TTL_MS = 45 * 1000
 let cryptoAssetsSnapshot: CryptoAsset[] = []
 let cryptoAssetsFetchPromise: Promise<void> | null = null
+let cryptoAssetsLastFetchedAt = 0
 const cryptoAssetListeners = new Set<(assets: CryptoAsset[]) => void>()
 let cryptoAssetsRefreshing = false
 const cryptoAssetRefreshListeners = new Set<(refreshing: boolean) => void>()
@@ -19,6 +21,12 @@ const networkProviderListeners = new Set<(providers: NetworkProvider[]) => void>
 const BILL_CATALOG_FORCE_REFRESH_DEBOUNCE_MS = 60 * 1000
 const BILL_PROVIDER_DISPLAY_ORDER = ['airtime', 'data', 'cable', 'electric', 'education', 'gas', 'insurance', 'water'] as const
 const HIDDEN_CRYPTO_PAIR_IDS = new Set<CryptoAsset['id']>(['USDC_SOLANA'])
+let p2pMerchantsSnapshot: P2PMerchant[] = P2P_MERCHANTS
+let p2pMerchantsFetchPromise: Promise<void> | null = null
+const p2pMerchantListeners = new Set<(merchants: P2PMerchant[]) => void>()
+const bankDirectorySnapshot = new Map<string, BankDirectoryEntry[]>()
+const bankDirectoryInflight = new Map<string, Promise<void>>()
+const bankDirectoryListeners = new Map<string, Set<(banks: BankDirectoryEntry[]) => void>>()
 
 function sortBillProviders(providers: BillProvider[]) {
   return [...providers].sort((a, b) => {
@@ -82,6 +90,7 @@ function emitCryptoAssets(nextAssets: CryptoAsset[]) {
   })
 
   cryptoAssetsSnapshot = withMovement
+  cryptoAssetsLastFetchedAt = Date.now()
   writeCachedCryptoAssets(withMovement)
   for (const listener of cryptoAssetListeners) {
     listener(withMovement)
@@ -105,6 +114,22 @@ function emitBillCatalog(nextProviders: BillProvider[], nextNetworkProviders: Ne
 
   for (const listener of networkProviderListeners) {
     listener(nextNetworkProviders)
+  }
+}
+
+function emitP2PMerchants(nextMerchants: P2PMerchant[]) {
+  p2pMerchantsSnapshot = nextMerchants
+  for (const listener of p2pMerchantListeners) {
+    listener(nextMerchants)
+  }
+}
+
+function emitBankDirectory(country: string, nextBanks: BankDirectoryEntry[]) {
+  bankDirectorySnapshot.set(country, nextBanks)
+  const listeners = bankDirectoryListeners.get(country)
+  if (!listeners) return
+  for (const listener of listeners) {
+    listener(nextBanks)
   }
 }
 
@@ -152,6 +177,9 @@ export async function refreshBillCatalog(options?: { force?: boolean }) {
 
 async function loadCryptoAssets(options?: { force?: boolean; liveOnly?: boolean }) {
   if (cryptoAssetsFetchPromise) return cryptoAssetsFetchPromise
+  if (!options?.force && cryptoAssetsSnapshot.length > 0 && Date.now() - cryptoAssetsLastFetchedAt < CRYPTO_ASSETS_CLIENT_REFRESH_TTL_MS) {
+    return
+  }
 
   emitCryptoAssetsRefreshing(true)
   const params = new URLSearchParams()
@@ -186,6 +214,50 @@ async function loadCryptoAssets(options?: { force?: boolean; liveOnly?: boolean 
     })
 
   return cryptoAssetsFetchPromise
+}
+
+async function loadP2PMerchants() {
+  if (p2pMerchantsFetchPromise) return p2pMerchantsFetchPromise
+
+  p2pMerchantsFetchPromise = fetch('/api/p2p', { credentials: 'include', cache: 'no-store' })
+    .then(async response => {
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Failed to load merchants.')
+      }
+      if (Array.isArray(payload.data) && payload.data.length > 0) {
+        emitP2PMerchants(payload.data as P2PMerchant[])
+      }
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      p2pMerchantsFetchPromise = null
+    })
+
+  return p2pMerchantsFetchPromise
+}
+
+async function loadBankDirectory(country: string) {
+  const existing = bankDirectoryInflight.get(country)
+  if (existing) return existing
+
+  const request = fetch(`/api/banks?country=${encodeURIComponent(country)}`, { credentials: 'include', cache: 'no-store' })
+    .then(async response => {
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Failed to load banks.')
+      }
+      if (Array.isArray(payload.data)) {
+        emitBankDirectory(country, payload.data as BankDirectoryEntry[])
+      }
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      bankDirectoryInflight.delete(country)
+    })
+
+  bankDirectoryInflight.set(country, request)
+  return request
 }
 
 export async function refreshCryptoAssets(input?: CryptoAsset[] | { force?: boolean; liveOnly?: boolean }) {
@@ -244,25 +316,13 @@ export function useCryptoAssetsRefreshing() {
 }
 
 export function useP2PMerchants() {
-  const [merchants, setMerchants] = useState<P2PMerchant[]>(P2P_MERCHANTS)
+  const [merchants, setMerchants] = useState<P2PMerchant[]>(p2pMerchantsSnapshot)
 
   useEffect(() => {
-    let active = true
-
-    void fetch('/api/p2p', { credentials: 'include', cache: 'no-store' })
-      .then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) {
-          throw new Error(payload.error || 'Failed to load merchants.')
-        }
-        if (active && Array.isArray(payload.data) && payload.data.length > 0) {
-          setMerchants(payload.data as P2PMerchant[])
-        }
-      })
-      .catch(() => undefined)
-
+    p2pMerchantListeners.add(setMerchants)
+    void loadP2PMerchants()
     return () => {
-      active = false
+      p2pMerchantListeners.delete(setMerchants)
     }
   }, [])
 
@@ -298,25 +358,23 @@ export function useNetworkProviders() {
 }
 
 export function useBankDirectory(country = 'NG') {
-  const [banks, setBanks] = useState<BankDirectoryEntry[]>([])
+  const [banks, setBanks] = useState<BankDirectoryEntry[]>(() => bankDirectorySnapshot.get(country) ?? [])
 
   useEffect(() => {
-    let active = true
-
-    void fetch(`/api/banks?country=${encodeURIComponent(country)}`, { credentials: 'include', cache: 'no-store' })
-      .then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) {
-          throw new Error(payload.error || 'Failed to load banks.')
-        }
-        if (active && Array.isArray(payload.data)) {
-          setBanks(payload.data as BankDirectoryEntry[])
-        }
-      })
-      .catch(() => undefined)
-
+    const listeners = bankDirectoryListeners.get(country) ?? new Set<(banks: BankDirectoryEntry[]) => void>()
+    listeners.add(setBanks)
+    bankDirectoryListeners.set(country, listeners)
+    if (bankDirectorySnapshot.has(country)) {
+      setBanks(bankDirectorySnapshot.get(country) ?? [])
+    }
+    void loadBankDirectory(country)
     return () => {
-      active = false
+      const current = bankDirectoryListeners.get(country)
+      if (!current) return
+      current.delete(setBanks)
+      if (current.size === 0) {
+        bankDirectoryListeners.delete(country)
+      }
     }
   }, [country])
 

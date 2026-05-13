@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { useAppStore } from '@/store'
 
 export default function KycPage() {
@@ -16,6 +17,7 @@ export default function KycPage() {
   const [fileSize, setFileSize] = useState<number | undefined>(undefined)
   const [uploadingDocument, setUploadingDocument] = useState(false)
   const [submittingKyc, setSubmittingKyc] = useState(false)
+  const [refreshingKycState, setRefreshingKycState] = useState(false)
   const uploadOptional = documentType === 'bvn' || documentType === 'nin'
 
   useEffect(() => {
@@ -67,11 +69,13 @@ export default function KycPage() {
         throw new Error(payload.error || 'KYC submission failed.')
       }
 
+      setRefreshingKycState(true)
       await refreshSession()
       showToast('KYC documents submitted for review.')
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'KYC submission failed.', 'error')
     } finally {
+      setRefreshingKycState(false)
       setSubmittingKyc(false)
     }
   }
@@ -168,11 +172,17 @@ export default function KycPage() {
         <Card className="p-6">
           <div className="mb-4 text-[11px] font-bold text-[var(--text)]">Submit Verification Documents</div>
           <div className="space-y-4">
+            {(uploadingDocument || refreshingKycState) && (
+              <div className="border border-[rgba(202,165,96,.2)] bg-[rgba(202,165,96,.08)] px-3 py-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
+                {uploadingDocument ? 'Uploading document…' : 'Refreshing verification state…'}
+              </div>
+            )}
             <div>
               <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Document Type</div>
               <select
                 value={documentType}
                 onChange={event => setDocumentType(event.target.value as typeof documentType)}
+                disabled={uploadingDocument || submittingKyc || refreshingKycState}
                 className="w-full border border-[var(--border)] bg-[var(--clay2)] px-3.5 py-3 text-sm text-[var(--text)] outline-none transition-colors focus:border-[var(--gold)]"
               >
                 <option value="nin">NIN</option>
@@ -187,6 +197,7 @@ export default function KycPage() {
               label="Document Number"
               value={documentNumber}
               onChange={event => setDocumentNumber(event.target.value)}
+              disabled={uploadingDocument || submittingKyc || refreshingKycState}
               placeholder={documentType === 'bvn' || documentType === 'nin' ? '11 digits required' : undefined}
             />
             {kycSubmission?.documentNumber && (
@@ -209,7 +220,7 @@ export default function KycPage() {
                   type="file"
                   accept=".pdf,image/jpeg,image/png,image/webp"
                   className="hidden"
-                  disabled={uploadingDocument}
+                  disabled={uploadingDocument || submittingKyc || refreshingKycState}
                   onChange={event => {
                     const file = event.target.files?.[0]
                     if (file) void uploadDocument(file)
@@ -246,11 +257,18 @@ export default function KycPage() {
                 )}
               </div>
             )}
+            {refreshingKycState && (
+              <div className="space-y-2 border border-[var(--border)] bg-[var(--clay)] p-4">
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-3 w-5/6" />
+                <Skeleton className="h-3 w-2/3" />
+              </div>
+            )}
           </div>
 
           <div className="mt-5">
-            <Button className="w-full py-3" onClick={submitKyc} disabled={submittingKyc || uploadingDocument}>
-              {submittingKyc ? 'Submitting…' : uploadingDocument ? 'Waiting for Upload…' : 'Submit KYC Documents'}
+            <Button className="w-full py-3" onClick={submitKyc} loading={submittingKyc || refreshingKycState} disabled={uploadingDocument || refreshingKycState}>
+              {refreshingKycState ? 'Refreshing State…' : uploadingDocument ? 'Waiting for Upload…' : 'Submit KYC Documents'}
             </Button>
           </div>
         </Card>

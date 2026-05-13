@@ -9,10 +9,7 @@ import { generateRef } from '@/lib/utils'
 import type { Transaction } from '@/types'
 
 export async function GET(req: Request) {
-  ensureCryptoMarketAutoRefreshScheduler()
-  void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
-  void kickPendingFlutterwaveBillSync()
   const user = await requireUser()
   if (!user) return unauthorized()
 
@@ -25,9 +22,20 @@ export async function GET(req: Request) {
   let providers = baseProviders
   let networkProviders = baseNetworkProviders
   if (isFlutterwaveBillsEnabled()) {
-    networkProviders = await listFlutterwaveDataBundleNetworkProviders(networkProviders, { forceRefresh })
-    providers = await listFlutterwaveCableBillProvidersSafe(providers, { forceRefresh })
-    providers = await listFlutterwaveElectricBillProvidersSafe(providers, { forceRefresh })
+    const [nextNetworkProviders, cableProviders, electricProviders] = await Promise.all([
+      listFlutterwaveDataBundleNetworkProviders(networkProviders, { forceRefresh }),
+      listFlutterwaveCableBillProvidersSafe(providers, { forceRefresh }),
+      listFlutterwaveElectricBillProvidersSafe(providers, { forceRefresh }),
+    ])
+    networkProviders = nextNetworkProviders
+
+    const cableById = new Map(cableProviders.map(provider => [provider.id, provider] as const))
+    const electricById = new Map(electricProviders.map(provider => [provider.id, provider] as const))
+    providers = providers.map(provider => {
+      if (provider.type === 'cable') return cableById.get(provider.id) ?? provider
+      if (provider.type === 'electric') return electricById.get(provider.id) ?? provider
+      return provider
+    })
   }
   if (isAmigoBillsEnabled()) {
     networkProviders = await listAmigoDataBundleNetworkProvidersSafe(networkProviders, { forceRefresh })

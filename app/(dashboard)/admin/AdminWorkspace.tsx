@@ -10,7 +10,7 @@ import { useAdminWorkspace } from './useAdminWorkspace'
 export { ADMIN_SECTIONS } from './admin-config'
 
 export function AdminWorkspace({ section, submodule }: { section: AdminSection; submodule?: AdminSubmodule }) {
-  const workspace = useAdminWorkspace()
+  const workspace = useAdminWorkspace(section, submodule)
 
   if (workspace.loading) {
     return <Card className="p-6 text-[12px] text-[var(--muted)]">Loading admin catalogs…</Card>

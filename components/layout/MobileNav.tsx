@@ -1,5 +1,6 @@
 'use client'
-import { useRouter, usePathname } from 'next/navigation'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { LayoutDashboard, ClipboardList, ArrowLeftRight, Zap, Receipt } from 'lucide-react'
 
 const TABS = [
@@ -12,7 +13,6 @@ const TABS = [
 
 export function MobileNav() {
   const pathname = usePathname()
-  const router = useRouter()
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--border)] bg-[var(--coal)] lg:hidden">
@@ -21,16 +21,17 @@ export function MobileNav() {
         {TABS.map(({ href, label, Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
-            <button
+            <Link
               key={href}
-              onClick={() => router.push(href)}
+              href={href}
+              prefetch
               className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${
                 active ? 'text-[var(--gold2)]' : 'text-[var(--muted)] hover:text-[var(--text2)]'
               }`}
             >
               <Icon size={18} />
               <span className="text-[9px] font-bold uppercase tracking-wide">{label}</span>
-            </button>
+            </Link>
           )
         })}
       </div>

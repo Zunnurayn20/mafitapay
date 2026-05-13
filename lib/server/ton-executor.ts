@@ -344,11 +344,13 @@ async function getTonClients() {
     }
   }
 
+  const httpAdapter = createTonHttpAdapter() as ConstructorParameters<typeof TonClient>[0]['httpAdapter']
+
   const tonClient = new TonClient({
     endpoint: config.rpcUrl,
     apiKey: config.apiKeyConfigured ? config.apiKey : undefined,
     timeout: 12_000,
-    httpAdapter: createTonHttpAdapter(),
+    httpAdapter,
   })
   const stonApiClient = new StonApiClient()
   const contract = tonClient.open(wallet)

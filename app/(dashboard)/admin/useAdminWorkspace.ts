@@ -19,6 +19,8 @@ import {
   REWARD_TRIGGER_OPTIONS,
   ROUTED_ADDRESS_FAMILY_OPTIONS,
   ROUTED_PROFILE_OPTIONS,
+  type AdminSection,
+  type AdminSubmodule,
   type AdminKey,
   type BillCatalogFilter,
   type CryptoCatalogFilter,
@@ -157,7 +159,18 @@ type CngnHealth = {
   warnings: string[]
 }
 
-export function useAdminWorkspace() {
+async function fetchAdminJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { credentials: 'include', cache: 'no-store' })
+  const payload = await response.json()
+  if (!response.ok || payload.success === false) {
+    const error = new Error(payload.error || 'Failed to load admin data.') as Error & { status?: number }
+    error.status = response.status
+    throw error
+  }
+  return payload.data as T
+}
+
+export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmodule) {
   const { showToast, user } = useAppStore()
   const [loading, setLoading] = useState(true)
   const [authorized, setAuthorized] = useState(true)
@@ -177,6 +190,8 @@ export function useAdminWorkspace() {
   const [rewardRuleReport, setRewardRuleReport] = useState<RewardRuleReport | null>(null)
   const [providerDiagnosticsReport, setProviderDiagnosticsReport] = useState<ProviderDiagnosticsReport | null>(null)
   const [refreshingProviderDiagnostics, setRefreshingProviderDiagnostics] = useState(false)
+  const [refreshingSettlementQueues, setRefreshingSettlementQueues] = useState(false)
+  const [refreshingProviderEvents, setRefreshingProviderEvents] = useState(false)
   const [billCatalogFilter, setBillCatalogFilter] = useState<BillCatalogFilter>('all')
   const [savingBillProviders, setSavingBillProviders] = useState(false)
   const [savingRewardRules, setSavingRewardRules] = useState(false)
@@ -218,8 +233,8 @@ export function useAdminWorkspace() {
     audience: RewardRule['audience']
     amountNgn: number
     requiresReferral: boolean
-    allowedTransactionTypes: string[]
-    excludedTransactionTypes: string[]
+    allowedTransactionTypes: Transaction['type'][]
+    excludedTransactionTypes: Transaction['type'][]
     dailyPayoutCapNgn: string
     manualApprovalRequired: boolean
     isActive: boolean
@@ -356,134 +371,22 @@ export function useAdminWorkspace() {
   useEffect(() => {
     let active = true
 
-    void Promise.all([
-      Promise.all(ADMIN_ENDPOINTS.map(async config => {
-        const response = await fetch(config.get, { credentials: 'include', cache: 'no-store' })
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) {
-          throw new Error(payload.error || 'Failed to load admin catalog.')
-        }
-        return [config.key, JSON.stringify(payload.data, null, 2)] as const
-      })),
-      fetch('/api/admin/kyc', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load KYC queue.')
-        return payload.data
-      }),
-      fetch('/api/admin/users', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load users.')
-        return payload.data
-      }),
-      fetch('/api/admin/audit-logs?limit=40', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load audit logs.')
-        return payload.data
-      }),
-      fetch('/api/admin/provider-events?limit=30', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load provider events.')
-        return payload.data
-      }),
-      fetch('/api/admin/provider-events/report', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load provider diagnostics.')
-        return payload.data
-      }),
-      fetch('/api/admin/transactions?limit=30', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load transactions.')
-        return payload.data
-      }),
-      fetch('/api/admin/deposit-intents?limit=20', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load deposit intents.')
-        return payload.data
-      }),
-      fetch('/api/admin/payout-requests?limit=20', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load payout requests.')
-        return payload.data
-      }),
-      fetch('/api/admin/flutterwave/health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load Flutterwave health.')
-        return payload.data
-      }),
-      fetch('/api/admin/flutterwave/bills-health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load Flutterwave bills health.')
-        return payload.data
-      }),
-      fetch('/api/admin/transak/health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load Transak health.')
-        return payload.data
-      }),
-      fetch('/api/admin/base/health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load Base executor health.')
-        return payload.data
-      }),
-      fetch('/api/admin/zerox/health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load 0x health.')
-        return payload.data
-      }),
-      fetch('/api/admin/crypto-market/health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load crypto market health.')
-        return payload.data
-      }),
-      fetch('/api/admin/base/treasury', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load Base treasury balances.')
-        return payload.data
-      }),
-      fetch('/api/admin/cngn/health', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load cNGN health.')
-        return payload.data
-      }),
-      fetch('/api/admin/crypto-assets', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load crypto pricing.')
-        return payload.data
-      }),
-      fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load crypto orders.')
-        return payload.data
-      }),
-      fetch('/api/admin/reward-rules/report?limit=20', { credentials: 'include', cache: 'no-store' }).then(async response => {
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Failed to load reward report.')
-        return payload.data
-      }),
-    ])
-      .then(([entries, kyc, loadedUsers, loadedAuditLogs, loadedProviderEvents, loadedProviderDiagnosticsReport, loadedTransactions, loadedDepositIntents, loadedPayoutRequests, loadedFlutterwaveHealth, loadedFlutterwaveBillsHealth, loadedTransakHealth, loadedBaseExecutorHealth, loadedZeroExHealth, loadedCryptoMarketHealth, loadedBaseTreasuryBalances, loadedCngnHealth, loadedCryptoPricing, loadedCryptoOrders, loadedRewardRuleReport]) => {
+    void (async () => {
+      if (section === 'catalogs') {
+        const [entries, loadedCryptoPricing] = await Promise.all([
+          Promise.all(ADMIN_ENDPOINTS.map(async config => {
+            const data = await fetchAdminJson<unknown>(config.get)
+            return [config.key, JSON.stringify(data, null, 2)] as const
+          })),
+          fetchAdminJson<CryptoAsset[]>('/api/admin/crypto-assets'),
+        ])
+
         if (!active) return
         setDrafts(current => {
           const next = { ...current }
           for (const [key, value] of entries) next[key] = value
           return next
         })
-        setKycItems(Array.isArray(kyc) ? kyc : [])
-        setUsers(Array.isArray(loadedUsers) ? loadedUsers : [])
-        setAuditLogs(Array.isArray(loadedAuditLogs) ? loadedAuditLogs : [])
-        setProviderEvents(Array.isArray(loadedProviderEvents) ? loadedProviderEvents : [])
-        setProviderDiagnosticsReport(loadedProviderDiagnosticsReport ?? null)
-        setTransactions(Array.isArray(loadedTransactions) ? loadedTransactions : [])
-        setDepositIntents(Array.isArray(loadedDepositIntents) ? loadedDepositIntents : [])
-        setPayoutRequests(Array.isArray(loadedPayoutRequests) ? loadedPayoutRequests : [])
-        setFlutterwaveHealth(loadedFlutterwaveHealth ?? null)
-        setFlutterwaveBillsHealth(loadedFlutterwaveBillsHealth ?? null)
-        setTransakHealth(loadedTransakHealth ?? null)
-        setBaseExecutorHealth(loadedBaseExecutorHealth ?? null)
-        setZeroExHealth(loadedZeroExHealth ?? null)
-        setCryptoMarketHealth(loadedCryptoMarketHealth ?? null)
-        setBaseTreasuryBalances(loadedBaseTreasuryBalances ?? null)
-        setCngnHealth(loadedCngnHealth ?? null)
         setCryptoPricing(Array.isArray(loadedCryptoPricing) ? loadedCryptoPricing : [])
         try {
           const parsedRewardRules = JSON.parse(entries.find(([key]) => key === 'rewardRules')?.[1] ?? '[]')
@@ -497,11 +400,75 @@ export function useAdminWorkspace() {
         } catch {
           setBillProviderCatalog([])
         }
+        return
+      }
+
+      if (section === 'users') {
+        const [kyc, loadedUsers, loadedAuditLogs] = await Promise.all([
+          fetchAdminJson<typeof kycItems>('/api/admin/kyc'),
+          fetchAdminJson<User[]>('/api/admin/users'),
+          fetchAdminJson<AuditLog[]>('/api/admin/audit-logs?limit=40'),
+        ])
+
+        if (!active) return
+        setKycItems(Array.isArray(kyc) ? kyc : [])
+        setUsers(Array.isArray(loadedUsers) ? loadedUsers : [])
+        setAuditLogs(Array.isArray(loadedAuditLogs) ? loadedAuditLogs : [])
+        return
+      }
+
+      if (section === 'operations') {
+        const [loadedProviderEvents, loadedProviderDiagnosticsReport, loadedTransactions, loadedDepositIntents, loadedPayoutRequests, loadedCryptoOrders] = await Promise.all([
+          fetchAdminJson<ProviderEvent[]>('/api/admin/provider-events?limit=30'),
+          fetchAdminJson<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
+          fetchAdminJson<Array<{ userId: string; transaction: Transaction }>>('/api/admin/transactions?limit=30'),
+          fetchAdminJson<DepositIntent[]>('/api/admin/deposit-intents?limit=20'),
+          fetchAdminJson<PayoutRequest[]>('/api/admin/payout-requests?limit=20'),
+          fetchAdminJson<CryptoOrder[]>('/api/admin/crypto-orders?status=pending&limit=20'),
+        ])
+
+        if (!active) return
+        setProviderEvents(Array.isArray(loadedProviderEvents) ? loadedProviderEvents : [])
+        setProviderDiagnosticsReport(loadedProviderDiagnosticsReport ?? null)
+        setTransactions(Array.isArray(loadedTransactions) ? loadedTransactions : [])
+        setDepositIntents(Array.isArray(loadedDepositIntents) ? loadedDepositIntents : [])
+        setPayoutRequests(Array.isArray(loadedPayoutRequests) ? loadedPayoutRequests : [])
         setCryptoOrders(Array.isArray(loadedCryptoOrders) ? loadedCryptoOrders : [])
-        setRewardRuleReport(loadedRewardRuleReport ?? null)
-      })
-      .catch(() => {
-        if (active) setAuthorized(false)
+        return
+      }
+
+      if (section === 'health') {
+        const [loadedProviderDiagnosticsReport, loadedFlutterwaveHealth, loadedFlutterwaveBillsHealth, loadedTransakHealth, loadedBaseExecutorHealth, loadedZeroExHealth, loadedCryptoMarketHealth, loadedBaseTreasuryBalances, loadedCngnHealth] = await Promise.all([
+          fetchAdminJson<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
+          fetchAdminJson<FlutterwaveHealth>('/api/admin/flutterwave/health'),
+          fetchAdminJson<FlutterwaveBillsHealth>('/api/admin/flutterwave/bills-health'),
+          fetchAdminJson<TransakHealth>('/api/admin/transak/health'),
+          fetchAdminJson<BaseExecutorHealth>('/api/admin/base/health'),
+          fetchAdminJson<ZeroExHealth>('/api/admin/zerox/health'),
+          fetchAdminJson<CryptoMarketHealth>('/api/admin/crypto-market/health'),
+          fetchAdminJson<BaseTreasuryBalances>('/api/admin/base/treasury'),
+          fetchAdminJson<CngnHealth>('/api/admin/cngn/health'),
+        ])
+
+        if (!active) return
+        setProviderDiagnosticsReport(loadedProviderDiagnosticsReport ?? null)
+        setFlutterwaveHealth(loadedFlutterwaveHealth ?? null)
+        setFlutterwaveBillsHealth(loadedFlutterwaveBillsHealth ?? null)
+        setTransakHealth(loadedTransakHealth ?? null)
+        setBaseExecutorHealth(loadedBaseExecutorHealth ?? null)
+        setZeroExHealth(loadedZeroExHealth ?? null)
+        setCryptoMarketHealth(loadedCryptoMarketHealth ?? null)
+        setBaseTreasuryBalances(loadedBaseTreasuryBalances ?? null)
+        setCngnHealth(loadedCngnHealth ?? null)
+      }
+    })()
+      .catch((error: unknown) => {
+        if (!active) return
+        if (typeof error === 'object' && error !== null && 'status' in error && ((((error as { status?: number }).status ?? 0) === 401) || (((error as { status?: number }).status ?? 0) === 403))) {
+          setAuthorized(false)
+          return
+        }
+        showToast(error instanceof Error ? error.message : 'Failed to load admin workspace.', 'error')
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -510,7 +477,7 @@ export function useAdminWorkspace() {
     return () => {
       active = false
     }
-  }, [])
+  }, [section, showToast])
 
   async function saveConfig(key: AdminKey) {
     const config = ADMIN_ENDPOINTS.find(item => item.key === key)
@@ -799,7 +766,7 @@ export function useAdminWorkspace() {
     }
   }
 
-  function toggleRewardTransactionType(current: string[], value: Transaction['type']) {
+  function toggleRewardTransactionType(current: Transaction['type'][], value: Transaction['type']): Transaction['type'][] {
     return current.includes(value) ? current.filter(item => item !== value) : [...current, value]
   }
 
@@ -1137,28 +1104,38 @@ export function useAdminWorkspace() {
   }
 
   async function reloadSettlementQueues(reference = settlementSearch, status = settlementStatusFilter, provider = settlementProviderFilter) {
-    const params = new URLSearchParams({ limit: '20' })
-    if (reference.trim()) params.set('reference', reference.trim())
-    if (status !== 'all') params.set('status', status)
-    if (provider.trim()) params.set('provider', provider.trim())
-    const query = `?${params.toString()}`
-    const [depositResponse, payoutResponse] = await Promise.all([
-      fetch(`/api/admin/deposit-intents${query}`, { credentials: 'include', cache: 'no-store' }),
-      fetch(`/api/admin/payout-requests${query}`, { credentials: 'include', cache: 'no-store' }),
-    ])
-    const [depositPayload, payoutPayload] = await Promise.all([depositResponse.json(), payoutResponse.json()])
-    if (depositResponse.ok && depositPayload.success !== false && Array.isArray(depositPayload.data)) setDepositIntents(depositPayload.data)
-    if (payoutResponse.ok && payoutPayload.success !== false && Array.isArray(payoutPayload.data)) setPayoutRequests(payoutPayload.data)
+    setRefreshingSettlementQueues(true)
+    try {
+      const params = new URLSearchParams({ limit: '20' })
+      if (reference.trim()) params.set('reference', reference.trim())
+      if (status !== 'all') params.set('status', status)
+      if (provider.trim()) params.set('provider', provider.trim())
+      const query = `?${params.toString()}`
+      const [depositResponse, payoutResponse] = await Promise.all([
+        fetch(`/api/admin/deposit-intents${query}`, { credentials: 'include', cache: 'no-store' }),
+        fetch(`/api/admin/payout-requests${query}`, { credentials: 'include', cache: 'no-store' }),
+      ])
+      const [depositPayload, payoutPayload] = await Promise.all([depositResponse.json(), payoutResponse.json()])
+      if (depositResponse.ok && depositPayload.success !== false && Array.isArray(depositPayload.data)) setDepositIntents(depositPayload.data)
+      if (payoutResponse.ok && payoutPayload.success !== false && Array.isArray(payoutPayload.data)) setPayoutRequests(payoutPayload.data)
+    } finally {
+      setRefreshingSettlementQueues(false)
+    }
   }
 
   async function reloadProviderEvents(status = providerEventStatusFilter, provider = providerEventProviderFilter, reference = settlementSearch) {
-    const params = new URLSearchParams({ limit: '30' })
-    if (status !== 'all') params.set('status', status)
-    if (provider.trim()) params.set('provider', provider.trim())
-    if (reference.trim()) params.set('reference', reference.trim())
-    const response = await fetch(`/api/admin/provider-events?${params.toString()}`, { credentials: 'include', cache: 'no-store' })
-    const payload = await response.json()
-    if (response.ok && payload.success !== false && Array.isArray(payload.data)) setProviderEvents(payload.data)
+    setRefreshingProviderEvents(true)
+    try {
+      const params = new URLSearchParams({ limit: '30' })
+      if (status !== 'all') params.set('status', status)
+      if (provider.trim()) params.set('provider', provider.trim())
+      if (reference.trim()) params.set('reference', reference.trim())
+      const response = await fetch(`/api/admin/provider-events?${params.toString()}`, { credentials: 'include', cache: 'no-store' })
+      const payload = await response.json()
+      if (response.ok && payload.success !== false && Array.isArray(payload.data)) setProviderEvents(payload.data)
+    } finally {
+      setRefreshingProviderEvents(false)
+    }
   }
 
   async function reloadProviderDiagnosticsReport() {
@@ -1387,6 +1364,8 @@ export function useAdminWorkspace() {
     rewardRuleReport,
     providerDiagnosticsReport,
     refreshingProviderDiagnostics,
+    refreshingSettlementQueues,
+    refreshingProviderEvents,
     billCatalogFilter,
     setBillCatalogFilter,
     savingBillProviders,

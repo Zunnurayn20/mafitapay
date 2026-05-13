@@ -13,7 +13,7 @@ export function AdminModuleIndex({
 }: {
   title: string
   description: string
-  items: AdminModuleIndexItem[]
+  items: readonly AdminModuleIndexItem[]
 }) {
   return (
     <div className="space-y-6">

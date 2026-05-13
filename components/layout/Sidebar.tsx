@@ -1,6 +1,7 @@
 'use client'
+import Link from 'next/link'
 import { useState } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/store'
 import {
   LayoutDashboard, ClipboardList, ArrowLeftRight, Zap,
@@ -30,7 +31,6 @@ const NAV = [
 
 export function Sidebar() {
   const pathname  = usePathname()
-  const router    = useRouter()
   const { user, wallet, logout, transactions } = useAppStore()
   const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
   const isAdmin = (user?.email ?? '').toLowerCase() === adminEmail
@@ -113,14 +113,15 @@ export function Sidebar() {
                 ? String(pendingTransactionCount)
                 : ''
               return (
-                <button
+                <Link
                   key={href}
+                  href={href}
+                  prefetch
                   onClick={() => {
                     if (href === '/history') acknowledgePendingTransactions()
-                    router.push(href)
                   }}
                   className={[
-                    'w-full flex items-center gap-3 px-5 py-2.5 text-[13px] font-semibold transition-all duration-150 border-none bg-transparent text-left group',
+                    'flex w-full items-center gap-3 border-none bg-transparent px-5 py-2.5 text-left text-[13px] font-semibold transition-all duration-150 group',
                     active
                       ? 'bg-[rgba(79,70,229,.12)] text-[var(--gold2)] border-r-[3px] border-r-[var(--gold)]'
                       : 'text-[var(--text2)] hover:bg-[var(--clay)] hover:text-[var(--text)]',
@@ -137,7 +138,7 @@ export function Sidebar() {
                     </span>
                   )}
                   {!badge && active && <ChevronRight size={12} className="text-[var(--gold2)] opacity-60" />}
-                </button>
+                </Link>
               )
             })}
           </div>

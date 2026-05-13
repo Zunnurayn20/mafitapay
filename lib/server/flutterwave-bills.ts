@@ -319,19 +319,19 @@ type FlutterwaveBiller = {
 async function getFlutterwaveBillersByCategory(category: string): Promise<FlutterwaveBiller[]> {
   const body = await flutterwaveRequest(`/bills/${encodeURIComponent(category)}/billers?country=NG`)
   const rows = Array.isArray(body.data) ? body.data : []
-  return rows
-    .map(row => {
-      if (!isRecord(row)) return null
-      const billerCode = readString(row.biller_code)
-      const name = readString(row.name)
-      if (!billerCode || !name) return null
-      return {
-        billerCode,
-        name,
-        shortName: readString(row.short_name) || undefined,
-      }
+  const billers: FlutterwaveBiller[] = []
+  for (const row of rows) {
+    if (!isRecord(row)) continue
+    const billerCode = readString(row.biller_code)
+    const name = readString(row.name)
+    if (!billerCode || !name) continue
+    billers.push({
+      billerCode,
+      name,
+      shortName: readString(row.short_name) || undefined,
     })
-    .filter((row): row is FlutterwaveBiller => Boolean(row))
+  }
+  return billers
 }
 
 function toCableCatalogItems(items: FlutterwaveBillItem[], accountLabel?: string): BillCatalogItem[] {
@@ -707,7 +707,7 @@ export async function createFlutterwaveBillPayment(input: {
     }
   }
 
-  let target: FlutterwaveBillItem
+  let target: FlutterwaveBillItem | undefined
   try {
     target = await resolveFlutterwaveBillTarget(input)
     if (input.type !== 'airtime' && input.type !== 'data') {

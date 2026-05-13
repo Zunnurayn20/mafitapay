@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { useAppStore } from '@/store'
@@ -8,6 +8,11 @@ import { fmtDate, formatNGN } from '@/lib/utils'
 import type { CryptoOrder } from '@/types'
 
 const STATUS_FILTERS = ['all', 'pending', 'fulfilled', 'failed', 'expired'] as const
+const ORDER_LIST_CACHE_TTL_MS = 5_000
+const ORDER_SYNC_POLL_MS = 15_000
+
+const orderListSnapshot = new Map<string, { data: CryptoOrder[]; fetchedAt: number }>()
+const orderListInflight = new Map<string, Promise<CryptoOrder[]>>()
 
 function compactHash(value: string, head = 10, tail = 8) {
   if (value.length <= head + tail + 3) return value
@@ -51,6 +56,41 @@ function isOrderStillProcessing(order: CryptoOrder) {
   return order.status === 'pending'
 }
 
+async function fetchCryptoOrders(status: (typeof STATUS_FILTERS)[number], force = false) {
+  const params = new URLSearchParams({ limit: '50' })
+  if (status !== 'all') params.set('status', status)
+  const key = params.toString()
+  const now = Date.now()
+
+  if (!force) {
+    const snapshot = orderListSnapshot.get(key)
+    if (snapshot && now - snapshot.fetchedAt < ORDER_LIST_CACHE_TTL_MS) {
+      return snapshot.data
+    }
+  }
+
+  const existing = orderListInflight.get(key)
+  if (existing) return existing
+
+  const request = fetch(`/api/crypto/orders?${key}`, {
+    credentials: 'include',
+    cache: 'no-store',
+  }).then(async response => {
+    const payload = await response.json()
+    if (!response.ok || payload.success === false) {
+      throw new Error(payload.error || 'Failed to load crypto orders.')
+    }
+    const nextOrders = Array.isArray(payload.data) ? payload.data as CryptoOrder[] : []
+    orderListSnapshot.set(key, { data: nextOrders, fetchedAt: Date.now() })
+    return nextOrders
+  }).finally(() => {
+    orderListInflight.delete(key)
+  })
+
+  orderListInflight.set(key, request)
+  return request
+}
+
 export default function CryptoOrdersPage() {
   const { showToast } = useAppStore()
   const [orders, setOrders] = useState<CryptoOrder[]>([])
@@ -58,65 +98,60 @@ export default function CryptoOrdersPage() {
   const [status, setStatus] = useState<(typeof STATUS_FILTERS)[number]>('all')
   const [syncingPending, setSyncingPending] = useState(false)
 
-  const load = useCallback(async (nextStatus = status) => {
-    setLoading(true)
+  const load = useCallback(async (nextStatus: (typeof STATUS_FILTERS)[number], options?: { background?: boolean; force?: boolean }) => {
+    if (!options?.background) setLoading(true)
     try {
-      const params = new URLSearchParams({ limit: '50' })
-      if (nextStatus !== 'all') params.set('status', nextStatus)
-      const response = await fetch(`/api/crypto/orders?${params.toString()}`, {
-        credentials: 'include',
-        cache: 'no-store',
-      })
-      const payload = await response.json()
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || 'Failed to load crypto orders.')
-      }
-      setOrders(Array.isArray(payload.data) ? payload.data : [])
+      const nextOrders = await fetchCryptoOrders(nextStatus, options?.force === true)
+      setOrders(nextOrders)
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Failed to load crypto orders.', 'error')
     } finally {
-      setLoading(false)
+      if (!options?.background) setLoading(false)
     }
-  }, [showToast, status])
+  }, [showToast])
 
   useEffect(() => {
     void load(status)
   }, [load, status])
 
-  useEffect(() => {
-    const pendingBaseOrders = orders.filter(order =>
-      order.status === 'pending'
-      && (order.executionRail === 'base_legacy' || order.executionRail === 'base_treasury' || order.executionRail === 'bsc_treasury' || order.executionRail === 'routed_treasury' || order.executionRail === 'sui_treasury' || order.executionRail === 'near_intents')
-      && order.executionStatus === 'broadcasted'
-      && !(order.executionRail === 'near_intents' && order.providerStatus === 'SUCCESS:AWAITING_NATIVE_PAYOUT')
-      && !(order.executionRail === 'sui_treasury' && order.providerStatus === 'DONE:AWAITING_SUI_PAYOUT')
-    )
+  const pendingSyncOrders = useMemo(() => orders.filter(order =>
+    order.status === 'pending'
+    && (order.executionRail === 'base_legacy' || order.executionRail === 'base_treasury' || order.executionRail === 'bsc_treasury' || order.executionRail === 'routed_treasury' || order.executionRail === 'sui_treasury' || order.executionRail === 'near_intents')
+    && order.executionStatus === 'broadcasted'
+    && !(order.executionRail === 'near_intents' && order.providerStatus === 'SUCCESS:AWAITING_NATIVE_PAYOUT')
+    && !(order.executionRail === 'sui_treasury' && order.providerStatus === 'DONE:AWAITING_SUI_PAYOUT')
+  ), [orders])
 
-    if (pendingBaseOrders.length === 0) return
+  useEffect(() => {
+    if (pendingSyncOrders.length === 0) return
     if (syncingPending) return
 
     let active = true
-    setSyncingPending(true)
-
-    void (async () => {
-      for (const order of pendingBaseOrders) {
-        if (!active) return
-        await fetch(`/api/crypto/orders/${encodeURIComponent(order.id)}/sync`, {
-          method: 'POST',
-          credentials: 'include',
-        })
-      }
-    })().then(async () => {
+    const timer = globalThis.setTimeout(() => {
       if (!active) return
-      await load(status)
-    }).finally(() => {
-      if (active) setSyncingPending(false)
-    })
+      setSyncingPending(true)
+
+      void (async () => {
+        for (const order of pendingSyncOrders) {
+          if (!active) return
+          await fetch(`/api/crypto/orders/${encodeURIComponent(order.id)}/sync`, {
+            method: 'POST',
+            credentials: 'include',
+          })
+        }
+      })().then(async () => {
+        if (!active) return
+        await load(status, { background: true, force: true })
+      }).finally(() => {
+        if (active) setSyncingPending(false)
+      })
+    }, ORDER_SYNC_POLL_MS)
 
     return () => {
       active = false
+      globalThis.clearTimeout(timer)
     }
-  }, [load, orders, status, syncingPending])
+  }, [load, pendingSyncOrders, status, syncingPending])
 
   return (
     <div className="space-y-5">

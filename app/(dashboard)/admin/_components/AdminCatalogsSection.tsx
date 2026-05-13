@@ -206,7 +206,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               <select
                 value={newCryptoAsset.executionRail}
                 onChange={event => setNewCryptoAsset(current => {
-                  const nextRail = event.target.value
+                  const nextRail = event.target.value as typeof current.executionRail
                   if (nextRail !== 'routed_treasury') {
                     return {
                       ...current,
@@ -290,7 +290,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     Address Family
                     <select
                       value={newCryptoAsset.routedAddressFamily}
-                      onChange={event => setNewCryptoAsset(current => ({ ...current, routedAddressFamily: event.target.value, routedProfile: 'custom' }))}
+                      onChange={event => setNewCryptoAsset(current => ({
+                        ...current,
+                        routedAddressFamily: event.target.value as typeof current.routedAddressFamily,
+                        routedProfile: 'custom',
+                      }))}
                       className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                     >
                       <option value="">Select family</option>
@@ -501,7 +505,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   <select
                     value={item.executionRail ?? ''}
                     onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? (() => {
-                      const nextRail = event.target.value || undefined
+                      const nextRail = (event.target.value || undefined) as typeof asset.executionRail
                       if (nextRail !== 'routed_treasury') {
                         return {
                           ...asset,
@@ -617,13 +621,16 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                           className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                         />
                       </label>
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Address Family
-                        <select
-                          value={item.routedAddressFamily ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedAddressFamily: event.target.value || undefined } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        >
+                        <label className="text-[10px] text-[var(--muted)]">
+                          Address Family
+                          <select
+                            value={item.routedAddressFamily ?? ''}
+                            onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
+                              ...asset,
+                              routedAddressFamily: (event.target.value || undefined) as typeof asset.routedAddressFamily,
+                            } : asset))}
+                            className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                          >
                           <option value="">Select family</option>
                           {ROUTED_ADDRESS_FAMILY_OPTIONS.map((option: string) => (
                             <option key={option} value={option}>{option}</option>
@@ -852,7 +859,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </label>
             <label className="text-[10px] text-[var(--muted)]">
               Kind
-              <select value={newRewardRule.kind} onChange={event => setNewRewardRule(current => ({ ...current, kind: event.target.value }))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
+              <select value={newRewardRule.kind} onChange={event => setNewRewardRule(current => ({ ...current, kind: event.target.value as typeof current.kind }))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
                 {REWARD_KIND_OPTIONS.map((option: string) => <option key={option} value={option}>{option}</option>)}
               </select>
             </label>
@@ -862,7 +869,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 value={newRewardRule.triggerEvent}
                 onChange={event => setNewRewardRule(current => ({
                   ...current,
-                  triggerEvent: event.target.value,
+                  triggerEvent: event.target.value as typeof current.triggerEvent,
                   allowedTransactionTypes: event.target.value === 'user_signup' ? [] : current.allowedTransactionTypes,
                   excludedTransactionTypes: event.target.value === 'user_signup' ? [] : current.excludedTransactionTypes,
                 }))}
@@ -879,7 +886,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 value={newRewardRule.audience}
                 onChange={event => setNewRewardRule(current => ({
                   ...current,
-                  audience: event.target.value,
+                  audience: event.target.value as typeof current.audience,
                   requiresReferral: event.target.value === 'inviter' ? true : current.requiresReferral,
                 }))}
                 className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
@@ -917,7 +924,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               <div>
                 <div className="text-[10px] font-bold text-[var(--muted)]">Allowed Transaction Types</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {REWARD_TRANSACTION_TYPE_OPTIONS.map((option: string) => (
+                  {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                     <label key={`draft-allow-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">
                       <input type="checkbox" checked={newRewardRule.allowedTransactionTypes.includes(option)} onChange={() => setNewRewardRule(current => ({ ...current, allowedTransactionTypes: toggleRewardTransactionType(current.allowedTransactionTypes, option) }))} />
                       {option}
@@ -928,7 +935,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               <div>
                 <div className="text-[10px] font-bold text-[var(--muted)]">Excluded Transaction Types</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {REWARD_TRANSACTION_TYPE_OPTIONS.map((option: string) => (
+                  {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                     <label key={`draft-exclude-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">
                       <input type="checkbox" checked={newRewardRule.excludedTransactionTypes.includes(option)} onChange={() => setNewRewardRule(current => ({ ...current, excludedTransactionTypes: toggleRewardTransactionType(current.excludedTransactionTypes, option) }))} />
                       {option}
@@ -962,19 +969,19 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
                   Kind
-                  <select value={rule.kind} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, kind: event.target.value } : item))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
+                  <select value={rule.kind} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, kind: event.target.value as typeof item.kind } : item))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
                     {REWARD_KIND_OPTIONS.map((option: string) => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
                   Trigger
-                  <select value={rule.triggerEvent} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, triggerEvent: event.target.value, allowedTransactionTypes: event.target.value === 'user_signup' ? undefined : item.allowedTransactionTypes, excludedTransactionTypes: event.target.value === 'user_signup' ? undefined : item.excludedTransactionTypes } : item))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
+                  <select value={rule.triggerEvent} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, triggerEvent: event.target.value as typeof item.triggerEvent, allowedTransactionTypes: event.target.value === 'user_signup' ? undefined : item.allowedTransactionTypes, excludedTransactionTypes: event.target.value === 'user_signup' ? undefined : item.excludedTransactionTypes } : item))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
                     {REWARD_TRIGGER_OPTIONS.map((option: string) => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
                   Audience
-                  <select value={rule.audience} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, audience: event.target.value, requiresReferral: event.target.value === 'inviter' ? true : item.requiresReferral } : item))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
+                  <select value={rule.audience} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, audience: event.target.value as typeof item.audience, requiresReferral: event.target.value === 'inviter' ? true : item.requiresReferral } : item))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
                     {REWARD_AUDIENCE_OPTIONS.map((option: string) => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </label>
@@ -1004,7 +1011,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   <div>
                     <div className="text-[10px] font-bold text-[var(--muted)]">Allowed Transaction Types</div>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {REWARD_TRANSACTION_TYPE_OPTIONS.map((option: string) => (
+                      {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                         <label key={`${rule.id}-allow-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">
                           <input type="checkbox" checked={(rule.allowedTransactionTypes ?? []).includes(option)} onChange={() => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, allowedTransactionTypes: toggleRewardTransactionType(item.allowedTransactionTypes ?? [], option) } : item))} />
                           {option}
@@ -1015,7 +1022,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   <div>
                     <div className="text-[10px] font-bold text-[var(--muted)]">Excluded Transaction Types</div>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {REWARD_TRANSACTION_TYPE_OPTIONS.map((option: string) => (
+                      {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                         <label key={`${rule.id}-exclude-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">
                           <input type="checkbox" checked={(rule.excludedTransactionTypes ?? []).includes(option)} onChange={() => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, excludedTransactionTypes: toggleRewardTransactionType(item.excludedTransactionTypes ?? [], option) } : item))} />
                           {option}
@@ -1064,8 +1071,16 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </label>
             <label className="text-[10px] text-[var(--muted)]">
               Service Type
-              <select value={newBillProvider.type} onChange={event => { const nextType = event.target.value; setNewBillProvider(current => ({ ...current, type: nextType, icon: current.icon || BILL_ICON_SUGGESTIONS[nextType] || '', requiresNetwork: nextType === 'airtime' || nextType === 'data' })) }} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
-                {BILL_PROVIDER_TYPES.map((type: string) => <option key={type} value={type}>{type}</option>)}
+              <select value={newBillProvider.type} onChange={event => {
+                const nextType = event.target.value as typeof newBillProvider.type
+                setNewBillProvider(current => ({
+                  ...current,
+                  type: nextType,
+                  icon: current.icon || BILL_ICON_SUGGESTIONS[nextType] || '',
+                  requiresNetwork: nextType === 'airtime' || nextType === 'data',
+                }))
+              }} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none">
+                {BILL_PROVIDER_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
               </select>
             </label>
             <label className="text-[10px] text-[var(--muted)]">
@@ -1177,7 +1192,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             <div className="mb-3 text-[11px] font-bold text-[var(--text)]">{config.title}</div>
             <textarea
               value={drafts[config.key]}
-              onChange={event => setDrafts((current: Record<string, string>) => ({ ...current, [config.key]: event.target.value }))}
+              onChange={event => setDrafts(current => ({ ...current, [config.key]: event.target.value }))}
               className="min-h-[22rem] w-full border border-[var(--border)] bg-[var(--clay)] p-3 font-mono text-[10px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
               spellCheck={false}
             />
