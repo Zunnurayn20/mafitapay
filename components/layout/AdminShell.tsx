@@ -86,10 +86,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             mode === 'desktop' ? 'px-2 py-1.5' : 'px-3 py-2'
           }`}
         >
-          <div className="text-[9px] font-bold uppercase tracking-[1.5px] text-[var(--muted)]">
+          <div className="text-[9px] font-bold uppercase tracking-[1.5px] text-[var(--text2)]">
             {group.label}
           </div>
-          <div className="text-[var(--muted)]">
+          <div className="text-[var(--text2)]">
             {openGroups[group.label] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </div>
         </button>
@@ -126,7 +126,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       {item.label}
                     </div>
                   </div>
-                  <div className={`mt-1 text-[10px] leading-relaxed text-[var(--muted)] ${isOverview ? '' : 'pl-3.5'}`}>
+                  <div className={`mt-1 text-[10px] leading-relaxed text-[var(--text2)] ${isOverview ? '' : 'pl-3.5'}`}>
                     {item.description}
                   </div>
                 </div>
@@ -139,9 +139,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--coal)]">
+    <div className="min-h-screen bg-[var(--bg)]">
       <div className="grid min-h-screen lg:grid-cols-[19rem_minmax(0,1fr)]">
-        <aside className="hidden border-r border-[var(--border)] bg-[linear-gradient(180deg,#0f1118_0%,#121620_100%)] lg:flex lg:min-h-screen lg:flex-col">
+        <aside className="sticky top-0 hidden h-screen overflow-hidden border-r border-[var(--border)] bg-[linear-gradient(180deg,var(--panel)_0%,var(--clay)_100%)] lg:flex lg:flex-col">
           <div className="border-b border-[var(--border)] px-5 py-5">
             <div className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,.06)] bg-[rgba(255,255,255,.02)]">
@@ -153,17 +153,17 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               </div>
               <div className="min-w-0">
                 <div className="font-display text-lg font-black text-[var(--text)]">MafitaPay</div>
-                <div className="mt-0.5 text-[8px] uppercase tracking-[1.8px] text-[var(--muted)]">Site Administration</div>
+                <div className="mt-0.5 text-[8px] uppercase tracking-[1.8px] text-[var(--text2)]">Site Administration</div>
               </div>
             </div>
           </div>
 
           <div className="border-b border-[var(--border)] px-5 py-4">
             <div className="text-[12px] font-bold text-[var(--text)]">{user?.name || 'Administrator'}</div>
-            <div className="mt-1 text-[10px] text-[var(--muted)]">{user?.email || 'admin@mafitapay.ng'}</div>
+            <div className="mt-1 text-[10px] text-[var(--text2)]">{user?.email || 'admin@mafitapay.ng'}</div>
           </div>
 
-          <nav className="flex-1 overflow-y-auto px-3 py-4">
+          <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4" style={{ scrollbarWidth: 'thin' }}>
             {renderNavTree('desktop')}
           </nav>
 
@@ -186,7 +186,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div className="min-w-0">
-          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[rgba(13,13,20,.94)] backdrop-blur-xl">
+          <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[color:color-mix(in_srgb,var(--bg)_92%,transparent)] backdrop-blur-xl">
             <div className="flex min-h-16 items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
               <div className="min-w-0">
                 <div className="text-[10px] font-bold uppercase tracking-[1.4px] text-[var(--muted)]">Admin Workspace</div>
@@ -194,7 +194,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   <Link href="/admin" className="transition-colors hover:text-[var(--text)]">Administration</Link>
                   {activeNode.groupLabel !== 'Administration' && (
                     <>
-                      <span className="text-[var(--border2)]">/</span>
+                  <span className="text-[var(--text2)]">/</span>
                       <Link
                         href={activeNode.item.href.split('/').slice(0, 3).join('/') || '/admin'}
                         className="transition-colors hover:text-[var(--text)]"
@@ -205,13 +205,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   )}
                   {activeNode.item.label !== 'Overview' && (
                     <>
-                      <span className="text-[var(--border2)]">/</span>
+                      <span className="text-[var(--text2)]">/</span>
                       <span className="text-[var(--gold2)]">{activeNode.item.label}</span>
                     </>
                   )}
                 </div>
                 <div className="mt-1 truncate font-display text-[18px] font-black text-[var(--text)]">{getAdminTitle(pathname)}</div>
-                <div className="mt-1 max-w-2xl truncate text-[11px] text-[var(--muted)]">{activeNode.item.description}</div>
+                <div className="mt-1 max-w-2xl truncate text-[11px] text-[var(--text2)]">{activeNode.item.description}</div>
               </div>
               <div className="lg:hidden">
                 <div className="flex items-center gap-2">
@@ -233,8 +233,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             {mobileMenuOpen && (
-              <div className="border-t border-[var(--border)] px-4 py-4 sm:px-6 lg:hidden">
-                <div className="mb-4 flex items-center gap-3 border border-[var(--border)] bg-[rgba(255,255,255,.02)] px-3 py-3">
+              <div className="max-h-[calc(100vh-4rem)] overflow-y-auto border-t border-[var(--border)] px-4 py-4 sm:px-6 lg:hidden" style={{ scrollbarWidth: 'thin' }}>
+                <div className="mb-4 flex items-center gap-3 border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
                   <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,.06)] bg-[rgba(255,255,255,.02)]">
                     <img
                       src="/mafitapay-logo.jpg"
@@ -244,7 +244,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   </div>
                   <div className="min-w-0">
                     <div className="text-[11px] font-bold text-[var(--text)]">{user?.name || 'Administrator'}</div>
-                    <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{user?.email || 'admin@mafitapay.ng'}</div>
+                    <div className="mt-1 truncate text-[10px] text-[var(--text2)]">{user?.email || 'admin@mafitapay.ng'}</div>
                   </div>
                 </div>
                 <nav className="space-y-4">
@@ -272,13 +272,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
           <main className="px-4 py-6 sm:px-6 lg:px-8">
             <div className="mx-auto w-full max-w-7xl space-y-4">
-              <section className="sticky top-[73px] z-20 border border-[var(--border)] bg-[rgba(16,18,26,.9)] px-4 py-3 backdrop-blur-xl">
+              <section className="sticky top-[73px] z-20 border border-[var(--border)] bg-[color:color-mix(in_srgb,var(--panel)_90%,transparent)] px-4 py-3 backdrop-blur-xl">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-[10px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">{activeNode.groupLabel}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-[1.2px] text-[var(--text2)]">{activeNode.groupLabel}</div>
                     <div className="mt-1 truncate text-[13px] font-bold text-[var(--text)]">{activeNode.item.label}</div>
                   </div>
-                  <div className="max-w-xl text-right text-[10px] leading-relaxed text-[var(--muted)]">
+                  <div className="max-w-xl text-right text-[10px] leading-relaxed text-[var(--text2)]">
                     {activeNode.item.description}
                   </div>
                 </div>

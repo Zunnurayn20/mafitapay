@@ -4,48 +4,56 @@
   --font-sans: 'DM Sans', 'Segoe UI', sans-serif;
   --font-display: 'Georgia', 'Times New Roman', serif;
   --font-mono: 'Space Mono', 'SFMono-Regular', 'Menlo', monospace;
-  --char: #0d0d14;
-  --coal: #13131f;
-  --clay: #1a1a2e;
-  --clay2: #22223a;
-  --border: #2e2e4a;
-  --border2: #3d3d60;
-  --gold: #4f46e5;
-  --gold2: #818cf8;
-  --terra: #4338ca;
-  --terra2: #6366f1;
+  --char: #100d0a;
+  --coal: #18130f;
+  --clay: #221b15;
+  --clay2: #2c241c;
+  --border: #3f3428;
+  --border2: #564637;
+  --gold: #caa560;
+  --gold2: #e0c48a;
+  --terra: #8c6b31;
+  --terra2: #b98a43;
   --green: #2eaa5c;
   --green2: #48cc78;
   --red: #c4341a;
   --red2: #e05030;
-  --purple: #7b45d0;
-  --text: #e8e8f0;
-  --text2: #9898c0;
-  --muted: #60607a;
-  --muted2: #2e2e4a;
+  --purple: #9a7440;
+  --text: #f0e8dd;
+  --text2: #c5b7a3;
+  --muted: #8d7b66;
+  --muted2: #3f3428;
   --ngn: #48cc78;
-  --ank1: #4338ca;
-  --ank2: #4f46e5;
+  --ank1: #8c6b31;
+  --ank2: #caa560;
   --ank3: #2eaa5c;
   --ank4: #0d0d14;
   --ank5: #c4341a;
-  --page-bg: #080810;
+  --page-bg: #0c0907;
 }
 
 [data-theme="light"] {
-  --char: #f0f0f8;
+  --char: #f6f1ea;
   --coal: #ffffff;
-  --clay: #eaeaf4;
-  --clay2: #e0e0ee;
-  --border: #c8c8e0;
-  --border2: #a8a8cc;
-  --text: #0d0d1e;
-  --text2: #3a3a6a;
-  --muted: #7070a0;
-  --muted2: #c8c8e0;
+  --clay: #f2ebdf;
+  --clay2: #e9dfcf;
+  --border: #d8cbb6;
+  --border2: #bca88b;
+  --gold: #b98a43;
+  --gold2: #8c6b31;
+  --terra: #9a7440;
+  --terra2: #caa560;
+  --text: #241b13;
+  --text2: #5c4630;
+  --muted: #8e765c;
+  --muted2: #d8cbb6;
   --ngn: #1e8a44;
+  --ank1: #9a7440;
+  --ank2: #caa560;
+  --ank3: #2eaa5c;
   --ank4: #f0f0f8;
-  --page-bg: #e8e8f5;
+  --ank5: #c4341a;
+  --page-bg: #f4ede2;
 }
 
 * {
@@ -77,8 +85,8 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background-image:
-    repeating-linear-gradient(45deg, rgba(79, 70, 229, 0.05) 0, rgba(79, 70, 229, 0.05) 1px, transparent 0, transparent 50%),
-    repeating-linear-gradient(-45deg, rgba(67, 56, 202, 0.05) 0, rgba(67, 56, 202, 0.05) 1px, transparent 0, transparent 50%);
+    repeating-linear-gradient(45deg, rgba(202, 165, 96, 0.05) 0, rgba(202, 165, 96, 0.05) 1px, transparent 0, transparent 50%),
+    repeating-linear-gradient(-45deg, rgba(140, 107, 49, 0.05) 0, rgba(140, 107, 49, 0.05) 1px, transparent 0, transparent 50%);
   background-size: 20px 20px;
 }
 
@@ -180,7 +188,7 @@ body::before {
 .spinner {
   width: 44px;
   height: 44px;
-  border: 3px solid rgba(79, 70, 229, 0.2);
+  border: 3px solid rgba(202, 165, 96, 0.2);
   border-top-color: var(--gold);
   border-radius: 9999px;
   animation: spin 0.8s linear infinite;

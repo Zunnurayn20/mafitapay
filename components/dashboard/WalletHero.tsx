@@ -26,7 +26,30 @@ export function WalletHero() {
       className="p-5 sm:p-6 lg:p-7"
       accent="repeating-linear-gradient(90deg,var(--gold) 0,var(--gold) 10px,var(--terra) 10px,var(--terra) 18px,var(--green) 18px,var(--green) 26px,var(--char) 26px,var(--char) 30px)"
     >
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-[0.28]"
+        style={{
+          backgroundImage: `
+            radial-gradient(circle at 18px 18px, rgba(224,196,138,0.22) 0 2px, transparent 2px),
+            linear-gradient(135deg, transparent 0 40%, rgba(202,165,96,0.18) 40% 44%, transparent 44% 56%, rgba(202,165,96,0.18) 56% 60%, transparent 60% 100%),
+            linear-gradient(45deg, transparent 0 40%, rgba(140,107,49,0.14) 40% 44%, transparent 44% 56%, rgba(140,107,49,0.14) 56% 60%, transparent 60% 100%)
+          `,
+          backgroundSize: '28px 28px, 72px 72px, 72px 72px',
+          backgroundPosition: '0 0, 0 0, 36px 36px',
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 right-[-2rem] w-44 bg-center bg-no-repeat opacity-[0.14]"
+        style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-24 opacity-[0.3]"
+        style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(202,165,96,0.14) 100%)' }}
+      />
+      <div className="relative z-[1] grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0">
           <div className="mb-2 text-[8px] font-bold uppercase tracking-[1.5px] text-[var(--muted)]">NGN Balance</div>
           <div className="mb-3 flex flex-wrap items-end gap-2">
@@ -77,7 +100,7 @@ export function WalletHero() {
         </div>
       </div>
 
-      <div className="mt-6 hidden xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-3 xl:border xl:border-[var(--border)] xl:bg-[var(--clay)] xl:px-4 xl:py-4">
+      <div className="relative z-[1] mt-6 hidden xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-3 xl:border xl:border-[var(--border)] xl:bg-[var(--clay)] xl:px-4 xl:py-4">
         <div className="min-w-0">
           <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Permanent Funding Account</div>
           <div className="mt-1 font-mono text-[15px] font-bold tracking-[2px] text-[var(--text2)]">

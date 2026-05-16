@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { access, mkdir, readFile } from 'node:fs/promises'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'node:crypto'
 import path from 'node:path'
@@ -837,7 +838,7 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
     symbol: row.symbol as CryptoAsset['symbol'],
     name: row.name,
     network: row.network as CryptoAsset['network'],
-    icon: row.icon,
+    icon: resolveCryptoAssetIcon(row.icon),
     marketSourceId: row.market_source_id ?? getDefaultCryptoMarketSourceId(row.symbol),
     marketSnapshotSource: (row.market_price_source as CryptoAsset['marketSnapshotSource'] | null) ?? 'seed',
     marketPriceUsd: row.market_price_usd == null ? undefined : Number(row.market_price_usd),
@@ -876,6 +877,34 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
     maxQuoteDriftPercent: row.max_quote_drift_percent == null ? undefined : Number(row.max_quote_drift_percent),
     change24h: Number(row.change_24h),
   }
+}
+
+function resolveCryptoAssetIcon(icon: string) {
+  const explicitReplacements: Record<string, string> = {
+    '/crypto-assets/eth.png': '/crypto-assets/eth-base.png',
+    '/crypto-assets/ton.svg': '/crypto-assets/ton.png',
+    '/crypto-assets/sui.svg': '/crypto-assets/sui.png',
+    '/crypto-assets/near.svg': '/crypto-assets/near.png',
+  }
+
+  const explicit = explicitReplacements[icon]
+  if (explicit) {
+    const explicitPublicPath = path.join(process.cwd(), 'public', explicit.replace(/^\/+/, ''))
+    if (existsSync(explicitPublicPath)) return explicit
+  }
+
+  if (!icon.startsWith('/crypto-assets/')) return icon
+  if (!icon.endsWith('.svg')) return icon
+
+  const parsed = path.parse(icon)
+  for (const ext of ['.png', '.jpg', '.jpeg', '.webp']) {
+    const candidatePublicPath = path.join(process.cwd(), 'public', parsed.dir.replace(/^\/+/, ''), `${parsed.name}${ext}`)
+    if (existsSync(candidatePublicPath)) {
+      return `${parsed.dir}/${parsed.name}${ext}`
+    }
+  }
+
+  return icon
 }
 
 function mapCryptoQuoteRow(row: CryptoQuoteRow): CryptoQuote {

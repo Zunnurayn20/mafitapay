@@ -1,14 +1,23 @@
 'use client'
 
+import { useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
+import { Modal } from '@/components/ui/Modal'
 import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
 
 export function AdminCatalogsSection({ workspace, submodule }: { workspace: AdminWorkspaceState; submodule?: AdminSubmodule }) {
+  const [showNewAssetForm, setShowNewAssetForm] = useState(false)
+  const [showNewAssetAdvanced, setShowNewAssetAdvanced] = useState(false)
+  const [selectedCryptoAssetId, setSelectedCryptoAssetId] = useState<string | null>(null)
+  const [showNewRewardRuleForm, setShowNewRewardRuleForm] = useState(false)
+  const [selectedRewardRuleId, setSelectedRewardRuleId] = useState<string | null>(null)
+  const [showNewBillProviderForm, setShowNewBillProviderForm] = useState(false)
+  const [selectedBillProviderId, setSelectedBillProviderId] = useState<string | null>(null)
   const {
     CRYPTO_NETWORK_OPTIONS,
     CRYPTO_EXECUTION_RAIL_OPTIONS,
@@ -72,6 +81,9 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
   const showRewards = !submodule || submodule === 'rewards'
   const showBills = !submodule || submodule === 'bills'
   const showRaw = !submodule || submodule === 'raw'
+  const selectedCryptoAsset = visibleCryptoPricing.find(item => item.id === selectedCryptoAssetId) ?? null
+  const selectedRewardRule = rewardRules.find(rule => rule.id === selectedRewardRuleId) ?? null
+  const selectedBillProvider = visibleBillProviders.find(provider => provider.id === selectedBillProviderId) ?? null
 
   return (
     <>
@@ -83,13 +95,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
       </Card>}
 
       {showAssets && <Card className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="text-[11px] font-bold text-[var(--text)]">Crypto Pricing Control</div>
             <div className="mt-1 text-[10px] text-[var(--muted)]">Manage per-pair market rates, spreads, quote TTL, and activation without editing raw JSON.</div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1">
               {(['all', 'active', 'archived'] as const).map(filter => (
                 <button
                   key={filter}
@@ -105,14 +117,44 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </button>
               ))}
             </div>
-            <Button onClick={() => void saveCryptoPricing()} disabled={savingCryptoPricing}>
-              {savingCryptoPricing ? 'Saving…' : 'Save Crypto Pricing'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={showNewAssetForm ? 'secondary' : 'primary'}
+                onClick={() => setShowNewAssetForm(current => !current)}
+              >
+                {showNewAssetForm ? 'Close New Pair' : 'New Pair'}
+              </Button>
+              <Button onClick={() => void saveCryptoPricing()} disabled={savingCryptoPricing}>
+                {savingCryptoPricing ? 'Saving…' : 'Save Crypto Pricing'}
+              </Button>
+            </div>
           </div>
         </div>
-        <div className="mb-5 border border-[var(--border)] bg-[var(--coal)] p-4">
-          <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
-          <div className="mt-1 text-[10px] text-[var(--muted)]">Fill the business fields below. Live market price comes from the configured feed. Admin only controls spread.</div>
+        {!showNewAssetForm && (
+          <div className="mb-5 border border-[var(--border)] bg-[var(--coal)] px-4 py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Open the pair form only when you need to create a new executable or catalog asset.</div>
+              </div>
+              <Button onClick={() => setShowNewAssetForm(true)}>Open Pair Form</Button>
+            </div>
+          </div>
+        )}
+        {showNewAssetForm && <div className="mb-5 border border-[var(--border)] bg-[var(--coal)] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
+              <div className="mt-1 text-[10px] text-[var(--muted)]">Fill the primary listing fields first. Advanced execution and routing settings stay collapsed until needed.</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNewAssetAdvanced(current => !current)}
+              className="border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[10px] font-bold text-[var(--text)]"
+            >
+              {showNewAssetAdvanced ? 'Hide Advanced' : 'Show Advanced'}
+            </button>
+          </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="text-[10px] text-[var(--muted)]">
               Symbol
@@ -230,6 +272,35 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               </select>
             </label>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <AssetLogo
+              src={newCryptoAsset.icon}
+              alt={`${newCryptoAsset.symbol || 'Asset'} logo preview`}
+              fallback={(newCryptoAsset.symbol || 'A').slice(0, 1)}
+              className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--clay)]"
+              imgClassName="h-8 w-8 object-contain"
+              textClassName="text-lg font-bold text-[var(--gold2)]"
+            />
+            <label className="inline-flex cursor-pointer items-center gap-2 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[10px] font-bold text-[var(--text)]">
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={event => {
+                  const file = event.target.files?.[0]
+                  if (file) void uploadCryptoLogo(file, { draft: true, symbol: newCryptoAsset.symbol.trim().toUpperCase() })
+                  event.currentTarget.value = ''
+                }}
+              />
+              {uploadingCryptoLogoId === 'draft' ? 'Uploading…' : 'Upload Logo'}
+            </label>
+            <div className="text-[10px] text-[var(--muted)]">
+              Pair ID
+              <div className="mt-1 font-mono text-[11px] text-[var(--text)]">
+                {buildCryptoPairId(newCryptoAsset.symbol || 'TOKEN', newCryptoAsset.network)}
+              </div>
+            </div>
+          </div>
           {newCryptoAsset.executionRail === 'routed_treasury' && (
             <>
               <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -330,61 +401,88 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               )}
             </>
           )}
-          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div className="text-[10px] text-[var(--muted)]">
-              Generated Pair ID
-              <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 font-mono text-[11px] text-[var(--text)]">
-                {buildCryptoPairId(newCryptoAsset.symbol || 'TOKEN', newCryptoAsset.network)}
+          {showNewAssetAdvanced && (
+            <>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <label className="text-[10px] text-[var(--muted)]">
+                  Live Price Feed ID
+                  <input
+                    type="text"
+                    value={newCryptoAsset.marketSourceId}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, marketSourceId: event.target.value }))}
+                    placeholder="tether, usd-coin, ethereum…"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Buy Spread (bps)
+                  <input
+                    type="number"
+                    min={0}
+                    value={newCryptoAsset.buySpreadBps}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, buySpreadBps: Number(event.target.value) }))}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Sell Spread (bps)
+                  <input
+                    type="number"
+                    min={0}
+                    value={newCryptoAsset.sellSpreadBps}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, sellSpreadBps: Number(event.target.value) }))}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Quote Validity (sec)
+                  <input
+                    type="number"
+                    min={30}
+                    value={newCryptoAsset.quoteTtlSeconds}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, quoteTtlSeconds: Number(event.target.value) }))}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)] md:col-span-2 xl:col-span-4">
+                  Logo Path / URL
+                  <input
+                    type="text"
+                    value={newCryptoAsset.icon}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, icon: event.target.value }))}
+                    placeholder="/crypto-assets/usdt.png or https://…"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
               </div>
-            </div>
-            <div className="text-[10px] text-[var(--muted)]">
-              Live Market Price
-              <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
-                {draftMarketRatePreview > 0
-                  ? `₦${draftMarketRatePreview.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
-                  : 'Will resolve after save'}
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="text-[10px] text-[var(--muted)]">
+                  Live Market Price
+                  <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
+                    {draftMarketRatePreview > 0
+                      ? `₦${draftMarketRatePreview.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
+                      : 'Will resolve after save'}
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--muted)]">
+                  Derived Buy Rate
+                  <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
+                    {draftMarketRatePreview > 0
+                      ? `₦${computeBuyRate(draftMarketRatePreview, newCryptoAsset.buySpreadBps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
+                      : 'Will resolve after save'}
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--muted)]">
+                  Derived Sell Rate
+                  <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
+                    {draftMarketRatePreview > 0
+                      ? `₦${computeSellRate(draftMarketRatePreview, newCryptoAsset.sellSpreadBps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
+                      : 'Will resolve after save'}
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="text-[10px] text-[var(--muted)]">
-              Derived Buy Rate
-              <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
-                {draftMarketRatePreview > 0
-                  ? `₦${computeBuyRate(draftMarketRatePreview, newCryptoAsset.buySpreadBps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
-                  : 'Will resolve after save'}
-              </div>
-            </div>
-            <div className="text-[10px] text-[var(--muted)]">
-              Derived Sell Rate
-              <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
-                {draftMarketRatePreview > 0
-                  ? `₦${computeSellRate(draftMarketRatePreview, newCryptoAsset.sellSpreadBps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
-                  : 'Will resolve after save'}
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <AssetLogo
-              src={newCryptoAsset.icon}
-              alt={`${newCryptoAsset.symbol || 'Asset'} logo preview`}
-              fallback={(newCryptoAsset.symbol || 'A').slice(0, 1)}
-              className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--clay)]"
-              imgClassName="h-8 w-8 object-contain"
-              textClassName="text-lg font-bold text-[var(--gold2)]"
-            />
-            <label className="inline-flex cursor-pointer items-center gap-2 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[10px] font-bold text-[var(--text)]">
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                onChange={event => {
-                  const file = event.target.files?.[0]
-                  if (file) void uploadCryptoLogo(file, { draft: true, symbol: newCryptoAsset.symbol.trim().toUpperCase() })
-                  event.currentTarget.value = ''
-                }}
-              />
-              {uploadingCryptoLogoId === 'draft' ? 'Uploading…' : 'Upload Logo'}
-            </label>
-          </div>
+            </>
+          )}
           <div className="mt-4 flex flex-wrap gap-4 text-[10px] text-[var(--muted)]">
             <label className="flex items-center gap-2">
               <input
@@ -411,14 +509,58 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               Treasury Execution Enabled
             </label>
           </div>
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={addCryptoAssetDraft}>Add Pair To Draft</Button>
+            <Button variant="secondary" onClick={() => setShowNewAssetForm(false)}>Close</Button>
           </div>
-        </div>
-        <div className="grid gap-4 xl:grid-cols-2">
+        </div>}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {visibleCryptoPricing.map(item => (
-            <div key={item.id} className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="flex items-center justify-between gap-3">
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setSelectedCryptoAssetId(item.id)}
+              className={`flex min-h-[88px] items-center justify-between gap-3 border p-3 text-left transition-all ${
+                selectedCryptoAssetId === item.id
+                  ? 'border-[var(--gold)] bg-[rgba(202,165,96,.08)]'
+                  : 'border-[var(--border)] bg-[var(--clay)] hover:border-[var(--border2)]'
+              }`}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <AssetLogo
+                  src={item.icon}
+                  alt={`${item.symbol} logo preview`}
+                  fallback={item.symbol.slice(0, 1)}
+                  className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--coal)]"
+                  imgClassName="h-7 w-7 object-contain"
+                  textClassName="text-base font-bold text-[var(--gold2)]"
+                />
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-bold text-[var(--text)]">{item.id}</div>
+                  <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{item.name} · {item.network}</div>
+                </div>
+              </div>
+              <div className="flex flex-shrink-0 flex-col items-end gap-1">
+                <span className={`border px-2 py-1 text-[8px] font-bold uppercase tracking-[.8px] ${item.isActive === false ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]'}`}>
+                  {item.isActive === false ? 'Archived' : 'Active'}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+        <Modal
+          open={Boolean(selectedCryptoAsset)}
+          onClose={() => setSelectedCryptoAssetId(null)}
+          title={selectedCryptoAsset ? selectedCryptoAsset.id : 'Asset Editor'}
+          subtitle={selectedCryptoAsset ? `${selectedCryptoAsset.name} · ${selectedCryptoAsset.network}` : undefined}
+          size="lg"
+          className="max-w-4xl"
+        >
+        {selectedCryptoAsset && (() => {
+          const item = selectedCryptoAsset
+          return (
+            <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <AssetLogo
                     src={item.icon}
@@ -433,7 +575,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     <div className="mt-1 text-[10px] text-[var(--muted)]">{item.name} · {item.symbol} · {item.network}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <label className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
                     <input
                       type="checkbox"
@@ -595,42 +737,23 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       <label className="text-[10px] text-[var(--muted)]">
                         Routed Chain ID
-                        <input
-                          type="text"
-                          value={item.routedToChain ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToChain: event.target.value } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        />
+                        <input type="text" value={item.routedToChain ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToChain: event.target.value } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
                       </label>
                       <label className="text-[10px] text-[var(--muted)]">
                         Routed Token
-                        <input
-                          type="text"
-                          value={item.routedToToken ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToToken: event.target.value } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        />
+                        <input type="text" value={item.routedToToken ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToToken: event.target.value } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
                       </label>
                       <label className="text-[10px] text-[var(--muted)]">
                         Routed Decimals
-                        <input
-                          type="number"
-                          min={0}
-                          value={item.routedDecimals ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedDecimals: parseOptionalNumber(event.target.value) } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        />
+                        <input type="number" min={0} value={item.routedDecimals ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedDecimals: parseOptionalNumber(event.target.value) } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
                       </label>
-                        <label className="text-[10px] text-[var(--muted)]">
-                          Address Family
-                          <select
-                            value={item.routedAddressFamily ?? ''}
-                            onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
-                              ...asset,
-                              routedAddressFamily: (event.target.value || undefined) as typeof asset.routedAddressFamily,
-                            } : asset))}
-                            className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                          >
+                      <label className="text-[10px] text-[var(--muted)]">
+                        Address Family
+                        <select
+                          value={item.routedAddressFamily ?? ''}
+                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedAddressFamily: (event.target.value || undefined) as typeof asset.routedAddressFamily } : asset))}
+                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                        >
                           <option value="">Select family</option>
                           {ROUTED_ADDRESS_FAMILY_OPTIONS.map((option: string) => (
                             <option key={option} value={option}>{option}</option>
@@ -639,24 +762,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                       </label>
                       <label className="text-[10px] text-[var(--muted)]">
                         Minimum Buy (NGN)
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.minimumBuyNgn ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, minimumBuyNgn: parseOptionalNumber(event.target.value) } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        />
+                        <input type="number" min={1} value={item.minimumBuyNgn ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, minimumBuyNgn: parseOptionalNumber(event.target.value) } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
                       </label>
                       <label className="text-[10px] text-[var(--muted)]">
                         Max Quote Drift (%)
-                        <input
-                          type="number"
-                          min={0.01}
-                          step="0.01"
-                          value={item.maxQuoteDriftPercent ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, maxQuoteDriftPercent: parseOptionalNumber(event.target.value) } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        />
+                        <input type="number" min={0.01} step="0.01" value={item.maxQuoteDriftPercent ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, maxQuoteDriftPercent: parseOptionalNumber(event.target.value) } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
                       </label>
                     </div>
                   )}
@@ -709,8 +819,14 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </span>
               </div>
             </div>
-          ))}
-        </div>
+          )
+        })()}
+        </Modal>
+        {!selectedCryptoAsset && visibleCryptoPricing.length > 0 && (
+          <div className="mt-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">
+            Select any asset tile to open its editor.
+          </div>
+        )}
         {visibleCryptoPricing.length === 0 && (
           <div className="mt-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">
             No crypto pairs match the current filter.
@@ -723,6 +839,17 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
           <div>
             <div className="text-[11px] font-bold text-[var(--text)]">Reward Rules</div>
             <div className="mt-1 text-[10px] text-[var(--muted)]">Control referral and bonus payouts from admin. The engine currently supports signup rewards and first successful transaction rewards.</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant={showNewRewardRuleForm ? 'secondary' : 'primary'}
+              onClick={() => setShowNewRewardRuleForm(current => !current)}
+            >
+              {showNewRewardRuleForm ? 'Close New Rule' : 'New Rule'}
+            </Button>
+            <Button onClick={() => void saveRewardRuleCatalog()} disabled={savingRewardRules}>
+              {savingRewardRules ? 'Saving…' : 'Save Reward Rules'}
+            </Button>
           </div>
         </div>
         <div className="mb-4 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
@@ -846,7 +973,12 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             )}
           </div>
         </div>
-        <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
+        {!showNewRewardRuleForm && (
+          <div className="mb-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">
+            Open the rule form only when you need to add a new reward rule.
+          </div>
+        )}
+        {showNewRewardRuleForm && <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
           <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Add Reward Rule</div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="text-[10px] text-[var(--muted)]">
@@ -946,12 +1078,54 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </div>
           )}
           <div className="mt-4">
-            <Button variant="secondary" onClick={addRewardRuleDraft}>Add Rule To Draft</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={addRewardRuleDraft}>Add Rule To Draft</Button>
+              <Button variant="secondary" onClick={() => setShowNewRewardRuleForm(false)}>Close</Button>
+            </div>
           </div>
-        </div>
-        <div className="mt-4 grid gap-4">
+        </div>}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {rewardRules.map(rule => (
-            <div key={rule.id} className="border border-[var(--border)] bg-[var(--clay)] p-4">
+            <button
+              key={rule.id}
+              type="button"
+              onClick={() => setSelectedRewardRuleId(rule.id)}
+              className={`border p-4 text-left transition-all ${
+                selectedRewardRuleId === rule.id
+                  ? 'border-[var(--gold)] bg-[rgba(202,165,96,.08)]'
+                  : 'border-[var(--border)] bg-[var(--clay)] hover:border-[var(--border2)]'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-[12px] font-bold text-[var(--text)]">{rule.name}</div>
+                  <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{rule.id} · {rule.kind} · {rule.triggerEvent}</div>
+                  <div className="mt-2 text-[10px] text-[var(--text2)]">₦{rule.amountNgn.toLocaleString('en-NG')} · {rule.audience}</div>
+                </div>
+                <span className={`border px-2 py-1 text-[8px] font-bold uppercase tracking-[.8px] ${rule.isActive === false ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]'}`}>
+                  {rule.isActive === false ? 'Inactive' : 'Active'}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[8px] text-[var(--muted)]">
+                {rule.requiresReferral === true && <span className="border border-[var(--border)] px-2 py-1">Referral</span>}
+                {rule.manualApprovalRequired === true && <span className="border border-[var(--border)] px-2 py-1">Manual Review</span>}
+                {rule.dailyPayoutCapNgn ? <span className="border border-[var(--border)] px-2 py-1">Cap ₦{rule.dailyPayoutCapNgn.toLocaleString('en-NG')}</span> : null}
+              </div>
+            </button>
+          ))}
+        </div>
+        <Modal
+          open={Boolean(selectedRewardRule)}
+          onClose={() => setSelectedRewardRuleId(null)}
+          title={selectedRewardRule ? selectedRewardRule.name : 'Reward Rule Editor'}
+          subtitle={selectedRewardRule ? `${selectedRewardRule.id} · ${selectedRewardRule.kind} · ${selectedRewardRule.triggerEvent}` : undefined}
+          size="lg"
+          className="max-w-4xl"
+        >
+        {selectedRewardRule && (() => {
+          const rule = selectedRewardRule
+          return (
+            <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[12px] font-bold text-[var(--text)]">{rule.name}</div>
@@ -1033,32 +1207,42 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </div>
               )}
             </div>
-          ))}
-        </div>
+          )
+        })()}
+        </Modal>
         {rewardRules.length === 0 && (
           <div className="mt-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">
             No reward rules configured yet.
           </div>
         )}
-        <div className="mt-4">
-          <Button onClick={() => void saveRewardRuleCatalog()} disabled={savingRewardRules}>
-            {savingRewardRules ? 'Saving…' : 'Save Reward Rules'}
-          </Button>
-        </div>
       </Card>}
 
       {showBills && <Card className="p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="text-[11px] font-bold text-[var(--text)]">Bill Providers</div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {(['all', 'active', 'archived'] as const).map(filter => (
               <button key={filter} type="button" onClick={() => setBillCatalogFilter(filter)} className={`border px-3 py-1.5 text-[9px] font-bold uppercase tracking-[1px] ${billCatalogFilter === filter ? 'border-[var(--gold)] bg-[rgba(202,165,96,.12)] text-[var(--gold2)]' : 'border-[var(--border)] bg-[var(--clay)] text-[var(--muted)]'}`}>
                 {filter}
               </button>
             ))}
+            <Button
+              variant={showNewBillProviderForm ? 'secondary' : 'primary'}
+              onClick={() => setShowNewBillProviderForm(current => !current)}
+            >
+              {showNewBillProviderForm ? 'Close New Service' : 'New Service'}
+            </Button>
+            <Button onClick={() => void saveBillProviderCatalog()} disabled={savingBillProviders}>
+              {savingBillProviders ? 'Saving…' : 'Save Bill Providers'}
+            </Button>
           </div>
         </div>
-        <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
+        {!showNewBillProviderForm && (
+          <div className="mb-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">
+            Open the service form only when you need to add a new bill provider.
+          </div>
+        )}
+        {showNewBillProviderForm && <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
           <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Add Bill Service</div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="text-[10px] text-[var(--muted)]">
@@ -1116,12 +1300,53 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             <label className="flex items-center gap-2"><input type="checkbox" checked={newBillProvider.isActive} onChange={event => setNewBillProvider(current => ({ ...current, isActive: event.target.checked }))} />Active</label>
           </div>
           <div className="mt-4">
-            <Button variant="secondary" onClick={addBillProviderDraft}>Add Service To Draft</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={addBillProviderDraft}>Add Service To Draft</Button>
+              <Button variant="secondary" onClick={() => setShowNewBillProviderForm(false)}>Close</Button>
+            </div>
           </div>
-        </div>
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        </div>}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {visibleBillProviders.map(item => (
-            <div key={item.id} className="border border-[var(--border)] bg-[var(--clay)] p-4">
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setSelectedBillProviderId(item.id)}
+              className={`border p-4 text-left transition-all ${
+                selectedBillProviderId === item.id
+                  ? 'border-[var(--gold)] bg-[rgba(202,165,96,.08)]'
+                  : 'border-[var(--border)] bg-[var(--clay)] hover:border-[var(--border2)]'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-[12px] font-bold text-[var(--text)]">{item.name}</div>
+                  <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{item.id} · {item.type}</div>
+                  <div className="mt-2 text-[10px] text-[var(--text2)]">₦{(item.minAmount ?? 0).toLocaleString('en-NG')} - ₦{(item.maxAmount ?? 0).toLocaleString('en-NG')}</div>
+                </div>
+                <span className={`border px-2 py-1 text-[8px] font-bold uppercase tracking-[.8px] ${item.isActive === false ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]'}`}>
+                  {item.isActive === false ? 'Archived' : 'Active'}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[8px] text-[var(--muted)]">
+                {item.requiresNetwork === true && <span className="border border-[var(--border)] px-2 py-1">Network</span>}
+                {item.requiresAccount !== false && <span className="border border-[var(--border)] px-2 py-1">Account</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+        <Modal
+          open={Boolean(selectedBillProvider)}
+          onClose={() => setSelectedBillProviderId(null)}
+          title={selectedBillProvider ? selectedBillProvider.name : 'Bill Provider Editor'}
+          subtitle={selectedBillProvider ? `${selectedBillProvider.id} · ${selectedBillProvider.type}` : undefined}
+          size="lg"
+          className="max-w-4xl"
+        >
+        {selectedBillProvider && (() => {
+          const item = selectedBillProvider
+          return (
+            <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[12px] font-bold text-[var(--text)]">{item.name}</div>
@@ -1172,18 +1397,14 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 <label className="flex items-center gap-2"><input type="checkbox" checked={item.requiresAccount !== false} onChange={event => setBillProviderCatalog(current => current.map(provider => provider.id === item.id ? { ...provider, requiresAccount: event.target.checked } : provider))} />Requires Account</label>
               </div>
             </div>
-          ))}
-        </div>
+          )
+        })()}
+        </Modal>
         {visibleBillProviders.length === 0 && (
           <div className="mt-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">
             No bill services match the current filter.
           </div>
         )}
-        <div className="mt-4">
-          <Button onClick={() => void saveBillProviderCatalog()} disabled={savingBillProviders}>
-            {savingBillProviders ? 'Saving…' : 'Save Bill Providers'}
-          </Button>
-        </div>
       </Card>}
 
       {showRaw && <div className="grid gap-6 xl:grid-cols-2">

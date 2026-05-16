@@ -6,10 +6,11 @@ import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
 
 export default function SecurityPage() {
-  const { currentSessionToken, fundingAccountEligibility, logout, refreshSession, securitySettings, sessions, showToast, user } = useAppStore()
+  const { currentSessionToken, logout, refreshSession, securitySettings, sessions, showToast, user } = useAppStore()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [changingPassword, setChangingPassword] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
   const [revokingToken, setRevokingToken] = useState<string | null>(null)
   const [revokingOthers, setRevokingOthers] = useState(false)
@@ -152,7 +153,7 @@ export default function SecurityPage() {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="max-w-3xl">
       <div>
         <Card className="mb-4">
           <CardHeader><CardTitle>Authentication</CardTitle></CardHeader>
@@ -197,17 +198,36 @@ export default function SecurityPage() {
         </Card>
 
         <Card className="p-6">
-          <div className="mb-4 text-[11px] font-bold text-[var(--text)]">Change Password</div>
-          <div className="space-y-4">
-            <Input label="Current Password" type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} />
-            <Input label="New Password" type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
-            <Input label="Confirm New Password" type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} />
-          </div>
-          <div className="mt-5">
-            <Button className="w-full py-3" onClick={changePassword} disabled={savingPassword}>
-              {savingPassword ? 'Updating…' : 'Update Password'}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-bold text-[var(--text)]">Change Password</div>
+              <div className="mt-1 text-[10px] text-[var(--muted)]">
+                Open only when you need to update your login password.
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant={changingPassword ? 'secondary' : 'primary'}
+              onClick={() => setChangingPassword(current => !current)}
+            >
+              {changingPassword ? 'Close' : 'Change'}
             </Button>
           </div>
+
+          {changingPassword ? (
+            <>
+              <div className="mt-5 space-y-4">
+                <Input label="Current Password" type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} />
+                <Input label="New Password" type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
+                <Input label="Confirm New Password" type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} />
+              </div>
+              <div className="mt-5">
+                <Button className="w-full py-3" onClick={changePassword} disabled={savingPassword}>
+                  {savingPassword ? 'Updating…' : 'Update Password'}
+                </Button>
+              </div>
+            </>
+          ) : null}
         </Card>
 
         <Card className="mt-4">
@@ -241,60 +261,7 @@ export default function SecurityPage() {
             </div>
           ))}
         </Card>
-      </div>
-
-      <div>
-        <Card className="mb-4">
-          <CardHeader><CardTitle>Transaction Limits</CardTitle></CardHeader>
-          <div className="p-5">
-            {[
-              { label: 'Daily Transfers', val: user?.tier === 'verified' ? '₦250,000 / ₦1,000,000' : '₦50,000 / ₦500,000', pct: user?.tier === 'verified' ? 25 : 10, color: 'var(--gold)' },
-              { label: 'P2P Deposits', val: user?.kycStatus === 'verified' ? '₦100,000 / ₦2,000,000' : '₦25,000 / ₦1,000,000', pct: user?.kycStatus === 'verified' ? 5 : 2.5, color: 'var(--green)' },
-              { label: 'Crypto Volume', val: user?.kycStatus === 'verified' ? '₦150,000 / ₦1,000,000' : '₦76,000 / ₦500,000', pct: user?.kycStatus === 'verified' ? 15 : 7.6, color: 'var(--purple)' },
-            ].map(limit => (
-              <div key={limit.label} className="mb-5 last:mb-0">
-                <div className="mb-1.5 flex justify-between text-[11px]"><span className="text-[var(--muted)]">{limit.label}</span><span className="font-bold text-[var(--text)]">{limit.val}</span></div>
-                <div className="h-1.5 border border-[var(--border)] bg-[var(--clay2)]">
-                  <div className="h-full" style={{ width: `${limit.pct}%`, background: limit.color }} />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="px-5 pb-5">
-            <div className="mb-3 text-[10px] text-[var(--muted)]">Complete KYC to unlock higher limits</div>
-            <Button size="sm" onClick={() => { window.location.href = '/kyc' }}>Upload ID →</Button>
-          </div>
-        </Card>
-
-        <Card className="mb-4">
-          <CardHeader><CardTitle>Funding Account Access</CardTitle></CardHeader>
-          <div className="p-5">
-            <div className={`border p-4 text-[11px] ${
-              fundingAccountEligibility.eligible || fundingAccountEligibility.hasPermanentAccount
-                ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)]'
-                : 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)]'
-            }`}>
-              <div className="font-bold text-[var(--text)]">
-                {fundingAccountEligibility.hasPermanentAccount
-                  ? 'Permanent account active'
-                  : fundingAccountEligibility.eligible
-                    ? 'Ready for permanent funding account'
-                    : 'Permanent account locked'}
-              </div>
-              <div className="mt-1 text-[var(--text2)]">{fundingAccountEligibility.message}</div>
-              {fundingAccountEligibility.identityType && (
-                <div className="mt-2 text-[10px] text-[var(--muted)]">Required identity: {fundingAccountEligibility.identityType.toUpperCase()}</div>
-              )}
-            </div>
-            {!fundingAccountEligibility.eligible && !fundingAccountEligibility.hasPermanentAccount && (
-              <div className="mt-3">
-                <Button size="sm" onClick={() => { window.location.href = '/kyc' }}>Go To BVN/NIN KYC →</Button>
-              </div>
-            )}
-          </div>
-        </Card>
-
-        <Card className="border-[rgba(196,52,26,.2)] bg-[rgba(196,52,26,.02)] p-5">
+        <Card className="mt-4 border-[rgba(196,52,26,.2)] bg-[rgba(196,52,26,.02)] p-5">
           <div className="mb-3 text-[11px] font-bold text-[var(--red2)]">Danger Zone</div>
           <div className="flex flex-col gap-2">
             <Button variant="danger" className="w-full py-2.5 text-[11px]" onClick={deactivateAccount} disabled={deactivating || user?.accountStatus === 'deactivated'}>

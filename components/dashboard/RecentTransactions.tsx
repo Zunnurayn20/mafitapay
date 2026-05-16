@@ -75,7 +75,7 @@ export function RecentTransactions() {
   const recent = transactions.slice(0, 5)
 
   return (
-    <Card>
+    <Card pattern="soft">
       <CardHeader>
         <CardTitle>Recent Transactions</CardTitle>
         <CardAction onClick={() => router.push('/history')}>View All →</CardAction>

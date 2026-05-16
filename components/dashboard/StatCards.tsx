@@ -56,7 +56,7 @@ export function StatCards() {
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
       {stats.map(s => (
-        <Card key={s.label} className="p-5" accent={s.color}>
+        <Card key={s.label} className="p-5" accent={s.color} pattern="strong">
           <div className="text-[8px] font-bold uppercase tracking-[1.3px] text-[var(--muted)] mb-2">{s.label}</div>
           <div className="font-display font-black text-[26px] text-[var(--text)] leading-none mb-1.5">{s.value}</div>
           <div className="text-[10px]" style={{ color: s.subColor }}>{s.sub}</div>

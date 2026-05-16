@@ -1,11 +1,19 @@
 'use client'
 
+import { useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
 
 export function AdminOperationsSection({ workspace, submodule }: { workspace: AdminWorkspaceState; submodule?: AdminSubmodule }) {
+  const [selectedCryptoOrderId, setSelectedCryptoOrderId] = useState<string | null>(null)
+  const [selectedSettlementReference, setSelectedSettlementReference] = useState<string | null>(null)
+  const [selectedProviderEventId, setSelectedProviderEventId] = useState<string | null>(null)
+  const [showWebhookTester, setShowWebhookTester] = useState(false)
+  const [showLedgerTools, setShowLedgerTools] = useState(false)
+  const [showReferenceSupport, setShowReferenceSupport] = useState(false)
   const {
     cryptoOrders,
     syncAllBaseReceipts,
@@ -70,6 +78,38 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const showSettlements = !submodule || submodule === 'settlements'
   const showEvents = !submodule || submodule === 'events'
   const showSupport = !submodule || submodule === 'support'
+  const selectedCryptoOrder = cryptoOrders.find(item => item.id === selectedCryptoOrderId) ?? null
+  const selectedSettlement = [...depositIntents, ...payoutRequests].find(item => item.reference === selectedSettlementReference) ?? null
+  const selectedProviderEvent = providerEvents.find(item => item.id === selectedProviderEventId) ?? null
+  const supportCards = [
+    {
+      key: 'webhook',
+      label: 'Webhook Acceptance Test',
+      summary: 'Replay a real or simulated Flutterwave payload through the settlement handler.',
+      countLabel: webhookTestResult ? `Last run: HTTP ${webhookTestResult.status || 'n/a'}` : 'Ready',
+      open: showWebhookTester,
+      onToggle: () => setShowWebhookTester(current => !current),
+      actionLabel: showWebhookTester ? 'Hide Tool' : 'Open Tool',
+    },
+    {
+      key: 'ledger',
+      label: 'Transaction Ledger Trace',
+      summary: 'Inspect wallet entries and balance movements behind a specific transaction.',
+      countLabel: `${transactions.length} transaction${transactions.length === 1 ? '' : 's'}`,
+      open: showLedgerTools,
+      onToggle: () => setShowLedgerTools(current => !current),
+      actionLabel: showLedgerTools ? 'Hide Tool' : 'Open Tool',
+    },
+    {
+      key: 'reference',
+      label: 'Reference Support View',
+      summary: 'Inspect linked transaction, provider records, events, and audit trail for a reference.',
+      countLabel: referenceCase ? `Open case: ${referenceCase.reference}` : 'No case open',
+      open: showReferenceSupport,
+      onToggle: () => setShowReferenceSupport(current => !current),
+      actionLabel: showReferenceSupport ? 'Hide Tool' : 'Open Tool',
+    },
+  ] as const
 
   return (
     <>
@@ -80,11 +120,16 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             {syncingAllBaseReceipts ? 'Scanning Base…' : 'Sync All Base Receipts'}
           </Button>
         </div>
-        <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {cryptoOrders.length === 0 ? (
             <div className="text-[11px] text-[var(--muted)]">No pending crypto orders.</div>
           ) : cryptoOrders.map(item => (
-            <div key={item.id} className="border border-[var(--border)] bg-[var(--clay)] p-4">
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setSelectedCryptoOrderId(item.id)}
+              className="border border-[var(--border)] bg-[var(--clay)] p-4 text-left transition-all hover:border-[var(--border2)]"
+            >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-[12px] font-bold text-[var(--text)]">{item.pairId}</div>
@@ -105,62 +150,93 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                   {item.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {item.providerStatus}</div>}
                   {item.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {item.providerReference}</div>}
                 </div>
-                <div className="flex gap-2">
-                  {(item.executionRail === 'base_legacy' || item.executionRail === 'base_treasury') && item.pairId === 'ETH_BASE' && item.executionStatus !== 'broadcasted' && (
-                    <Button size="sm" variant="secondary" onClick={() => void executeZeroExSwap(item.id)} disabled={broadcastingCryptoOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {broadcastingCryptoOrderId === item.id ? 'Swapping…' : 'Swap via 0x'}
-                    </Button>
-                  )}
-                  {item.executionRail === 'routed_treasury' && item.executionStatus !== 'broadcasted' && (
-                    <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(item.id)} disabled={broadcastingCryptoOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {broadcastingCryptoOrderId === item.id ? 'Routing…' : 'Route via LI.FI'}
-                    </Button>
-                  )}
-                  {item.executionRail === 'sui_treasury' && item.executionStatus !== 'broadcasted' && (
-                    <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(item.id)} disabled={broadcastingCryptoOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {broadcastingCryptoOrderId === item.id ? 'Routing…' : 'Route to Sui Treasury'}
-                    </Button>
-                  )}
-                  {item.executionRail === 'near_intents' && item.executionStatus !== 'broadcasted' && (
-                    <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(item.id)} disabled={broadcastingCryptoOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {broadcastingCryptoOrderId === item.id ? 'Routing…' : 'Route via NEAR Intents'}
-                    </Button>
-                  )}
-                  {(item.executionRail === 'base_legacy' || item.executionRail === 'base_treasury' || item.executionRail === 'bsc_treasury') && item.provider !== '0x' && item.executionStatus !== 'broadcasted' && (
-                    <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(item.id)} disabled={broadcastingCryptoOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {broadcastingCryptoOrderId === item.id ? 'Broadcasting…' : 'Broadcast Delivery'}
-                    </Button>
-                  )}
-                  {(item.executionRail === 'base_legacy' || item.executionRail === 'base_treasury' || item.executionRail === 'bsc_treasury' || item.executionRail === 'routed_treasury' || item.executionRail === 'sui_treasury' || item.executionRail === 'near_intents') && item.executionStatus === 'broadcasted' && (item.destinationTxHash || typeof item.providerPayload?.swapTxHash === 'string' || typeof item.providerPayload?.sendingTxHash === 'string' || typeof item.providerPayload?.originTxHash === 'string') && (
-                    <Button size="sm" variant="secondary" onClick={() => void syncBaseReceipt(item.id)} disabled={syncingBaseReceiptOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {syncingBaseReceiptOrderId === item.id ? 'Syncing…' : 'Sync Receipt'}
-                    </Button>
-                  )}
-                  {(item.executionRail === 'base_legacy' || item.executionRail === 'base_treasury' || item.executionRail === 'bsc_treasury' || item.executionRail === 'routed_treasury' || item.executionRail === 'sui_treasury' || item.executionRail === 'near_intents') && item.executionStatus !== 'broadcasted' && (
-                    <Button size="sm" variant="secondary" onClick={() => void updateCryptoExecution(item.id, 'broadcasted')} disabled={updatingCryptoExecutionId === item.id || resolvingCryptoOrderId === item.id}>
-                      {updatingCryptoExecutionId === item.id ? 'Updating…' : 'Mark Broadcasted'}
-                    </Button>
-                  )}
-                  {item.provider === 'transak' && (
-                    <Button size="sm" variant="secondary" onClick={() => void syncCryptoOrder(item.id)} disabled={syncingCryptoOrderId === item.id || resolvingCryptoOrderId === item.id}>
-                      {syncingCryptoOrderId === item.id ? 'Syncing…' : 'Sync'}
-                    </Button>
-                  )}
-                  {item.executionRail !== 'base_legacy' && item.executionRail !== 'base_treasury' && item.executionRail !== 'bsc_treasury' && item.executionRail !== 'routed_treasury' && item.executionRail !== 'sui_treasury' && (
-                    <>
-                      <Button size="sm" onClick={() => void resolveCryptoOrder(item.id, 'fulfilled')} disabled={resolvingCryptoOrderId === item.id}>
-                        {resolvingCryptoOrderId === item.id ? 'Updating…' : 'Fulfill'}
-                      </Button>
-                      <Button variant="danger" size="sm" onClick={() => void resolveCryptoOrder(item.id, 'failed')} disabled={resolvingCryptoOrderId === item.id}>
-                        Fail
-                      </Button>
-                    </>
-                  )}
-                </div>
               </div>
-            </div>
+              <div className="mt-3 text-[10px] text-[var(--gold2)]">Open Order Actions</div>
+            </button>
           ))}
         </div>
+        <Modal
+          open={Boolean(selectedCryptoOrder)}
+          onClose={() => setSelectedCryptoOrderId(null)}
+          title={selectedCryptoOrder ? selectedCryptoOrder.pairId : 'Crypto Order'}
+          subtitle={selectedCryptoOrder ? `${selectedCryptoOrder.side.toUpperCase()} · ${selectedCryptoOrder.status.toUpperCase()}` : undefined}
+          size="lg"
+          className="max-w-4xl"
+        >
+          {selectedCryptoOrder && (
+            <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[12px] font-bold text-[var(--text)]">{selectedCryptoOrder.pairId}</div>
+                  <div className="mt-1 text-[10px] text-[var(--muted)]">
+                    {selectedCryptoOrder.side.toUpperCase()} · {selectedCryptoOrder.status.toUpperCase()} · ₦{selectedCryptoOrder.amountNgn.toLocaleString('en-NG')}
+                  </div>
+                  <div className="mt-1 text-[10px] text-[var(--muted)]">Crypto: {selectedCryptoOrder.cryptoAmount.toFixed(8)} · Rate: ₦{selectedCryptoOrder.unitRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div>
+                  <div className="mt-1 text-[10px] text-[var(--muted)]">Destination: {selectedCryptoOrder.destinationLabel || selectedCryptoOrder.destinationType}</div>
+                  {selectedCryptoOrder.provider && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider: {selectedCryptoOrder.provider}</div>}
+                  {selectedCryptoOrder.executionRail && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution rail: {selectedCryptoOrder.executionRail}</div>}
+                  {selectedCryptoOrder.executionStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution status: {selectedCryptoOrder.executionStatus}</div>}
+                  {selectedCryptoOrder.executionReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution ref: {selectedCryptoOrder.executionReference}</div>}
+                  {selectedCryptoOrder.destinationTxHash && <div className="mt-1 text-[10px] text-[var(--muted)]">Destination tx: {selectedCryptoOrder.destinationTxHash}</div>}
+                  {selectedCryptoOrder.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {selectedCryptoOrder.providerStatus}</div>}
+                  {selectedCryptoOrder.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {selectedCryptoOrder.providerReference}</div>}
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {(selectedCryptoOrder.executionRail === 'base_legacy' || selectedCryptoOrder.executionRail === 'base_treasury') && selectedCryptoOrder.pairId === 'ETH_BASE' && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
+                  <Button size="sm" variant="secondary" onClick={() => void executeZeroExSwap(selectedCryptoOrder.id)} disabled={broadcastingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {broadcastingCryptoOrderId === selectedCryptoOrder.id ? 'Swapping…' : 'Swap via 0x'}
+                  </Button>
+                )}
+                {selectedCryptoOrder.executionRail === 'routed_treasury' && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
+                  <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(selectedCryptoOrder.id)} disabled={broadcastingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {broadcastingCryptoOrderId === selectedCryptoOrder.id ? 'Routing…' : 'Route via LI.FI'}
+                  </Button>
+                )}
+                {selectedCryptoOrder.executionRail === 'sui_treasury' && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
+                  <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(selectedCryptoOrder.id)} disabled={broadcastingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {broadcastingCryptoOrderId === selectedCryptoOrder.id ? 'Routing…' : 'Route to Sui Treasury'}
+                  </Button>
+                )}
+                {selectedCryptoOrder.executionRail === 'near_intents' && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
+                  <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(selectedCryptoOrder.id)} disabled={broadcastingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {broadcastingCryptoOrderId === selectedCryptoOrder.id ? 'Routing…' : 'Route via NEAR Intents'}
+                  </Button>
+                )}
+                {(selectedCryptoOrder.executionRail === 'base_legacy' || selectedCryptoOrder.executionRail === 'base_treasury' || selectedCryptoOrder.executionRail === 'bsc_treasury') && selectedCryptoOrder.provider !== '0x' && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
+                  <Button size="sm" variant="secondary" onClick={() => void broadcastCryptoOrder(selectedCryptoOrder.id)} disabled={broadcastingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {broadcastingCryptoOrderId === selectedCryptoOrder.id ? 'Broadcasting…' : 'Broadcast Delivery'}
+                  </Button>
+                )}
+                {(selectedCryptoOrder.executionRail === 'base_legacy' || selectedCryptoOrder.executionRail === 'base_treasury' || selectedCryptoOrder.executionRail === 'bsc_treasury' || selectedCryptoOrder.executionRail === 'routed_treasury' || selectedCryptoOrder.executionRail === 'sui_treasury' || selectedCryptoOrder.executionRail === 'near_intents') && selectedCryptoOrder.executionStatus === 'broadcasted' && (selectedCryptoOrder.destinationTxHash || typeof selectedCryptoOrder.providerPayload?.swapTxHash === 'string' || typeof selectedCryptoOrder.providerPayload?.sendingTxHash === 'string' || typeof selectedCryptoOrder.providerPayload?.originTxHash === 'string') && (
+                  <Button size="sm" variant="secondary" onClick={() => void syncBaseReceipt(selectedCryptoOrder.id)} disabled={syncingBaseReceiptOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {syncingBaseReceiptOrderId === selectedCryptoOrder.id ? 'Syncing…' : 'Sync Receipt'}
+                  </Button>
+                )}
+                {(selectedCryptoOrder.executionRail === 'base_legacy' || selectedCryptoOrder.executionRail === 'base_treasury' || selectedCryptoOrder.executionRail === 'bsc_treasury' || selectedCryptoOrder.executionRail === 'routed_treasury' || selectedCryptoOrder.executionRail === 'sui_treasury' || selectedCryptoOrder.executionRail === 'near_intents') && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
+                  <Button size="sm" variant="secondary" onClick={() => void updateCryptoExecution(selectedCryptoOrder.id, 'broadcasted')} disabled={updatingCryptoExecutionId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {updatingCryptoExecutionId === selectedCryptoOrder.id ? 'Updating…' : 'Mark Broadcasted'}
+                  </Button>
+                )}
+                {selectedCryptoOrder.provider === 'transak' && (
+                  <Button size="sm" variant="secondary" onClick={() => void syncCryptoOrder(selectedCryptoOrder.id)} disabled={syncingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                    {syncingCryptoOrderId === selectedCryptoOrder.id ? 'Syncing…' : 'Sync'}
+                  </Button>
+                )}
+                {selectedCryptoOrder.executionRail !== 'base_legacy' && selectedCryptoOrder.executionRail !== 'base_treasury' && selectedCryptoOrder.executionRail !== 'bsc_treasury' && selectedCryptoOrder.executionRail !== 'routed_treasury' && selectedCryptoOrder.executionRail !== 'sui_treasury' && (
+                  <>
+                    <Button size="sm" onClick={() => void resolveCryptoOrder(selectedCryptoOrder.id, 'fulfilled')} disabled={resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                      {resolvingCryptoOrderId === selectedCryptoOrder.id ? 'Updating…' : 'Fulfill'}
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => void resolveCryptoOrder(selectedCryptoOrder.id, 'failed')} disabled={resolvingCryptoOrderId === selectedCryptoOrder.id}>
+                      Fail
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </Modal>
       </Card>}
 
       {showEvents && <Card className="p-5">
@@ -243,37 +319,25 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
       </Card>}
 
       {showSupport && <Card className="p-5">
-        <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Webhook Acceptance Test</div>
-        <div className="mb-3 text-[11px] text-[var(--muted)]">
-          Paste a real or simulated Flutterwave payload here to exercise the same settlement handler used by the public webhook route. This is admin-only and skips signature verification by design.
+        <div className="mb-4 text-[11px] font-bold text-[var(--text)]">Support Tools</div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {supportCards.map(item => (
+            <div key={item.key} className="border border-[var(--border)] bg-[var(--clay)] p-4">
+              <div className="text-[11px] font-bold text-[var(--text)]">{item.label}</div>
+              <div className="mt-2 text-[10px] leading-relaxed text-[var(--muted)]">{item.summary}</div>
+              <div className="mt-3 text-[10px] text-[var(--gold2)]">{item.countLabel}</div>
+              <div className="mt-4">
+                <Button variant="secondary" size="sm" onClick={item.onToggle}>
+                  {item.actionLabel}
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
-        <textarea
-          value={webhookTestPayload}
-          onChange={event => setWebhookTestPayload(event.target.value)}
-          className="min-h-[16rem] w-full border border-[var(--border)] bg-[var(--clay)] p-3 font-mono text-[10px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
-          spellCheck={false}
-        />
-        <div className="mt-4 flex items-center gap-3">
-          <Button onClick={() => void runWebhookAcceptanceTest()} disabled={runningWebhookTest}>
-            {runningWebhookTest ? 'Processing…' : 'Run Acceptance Test'}
-          </Button>
-          <div className="text-[10px] text-[var(--muted)]">
-            Use a real customer email and the exact <span className="font-mono">tx_ref</span> or provider reference you want to test.
-          </div>
-        </div>
-        {webhookTestResult && (
-          <div className="mt-4 border border-[var(--border)] bg-[var(--clay)] p-4">
-            <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Last Result</div>
-            <div className="mt-2 text-[11px] text-[var(--text)]">HTTP {webhookTestResult.status || 'n/a'}</div>
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[10px] text-[var(--muted)]">
-              {JSON.stringify(webhookTestResult.body, null, 2)}
-            </pre>
-          </div>
-        )}
       </Card>}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        {showSettlements && <Card className="p-5">
+      {showSettlements && <Card className="p-5">
           <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Settlement Operations</div>
           <div className="mb-4 flex gap-2">
             <input
@@ -304,55 +368,44 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             <Button variant="secondary" size="sm" onClick={() => void reloadSettlementQueues(settlementSearch, settlementStatusFilter, settlementProviderFilter)} disabled={refreshingSettlementQueues}>
               {refreshingSettlementQueues ? 'Searching…' : 'Search'}
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => void inspectReference(settlementSearch)} disabled={loadingReferenceCase === settlementSearch.trim() || refreshingSettlementQueues}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setShowReferenceSupport(true)
+                void inspectReference(settlementSearch)
+              }}
+              disabled={loadingReferenceCase === settlementSearch.trim() || refreshingSettlementQueues}
+            >
               {loadingReferenceCase === settlementSearch.trim() && settlementSearch.trim() ? 'Opening…' : 'Open Case'}
             </Button>
           </div>
-          <div className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-2">
             <div>
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Deposit Intents</div>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 {depositIntents.length === 0 ? (
                   <div className="text-[10px] text-[var(--muted)]">No deposit intents found.</div>
                 ) : depositIntents.map(item => (
-                  <div key={item.id} className="border border-[var(--border)] bg-[var(--clay)] p-3">
+                  <button key={item.id} type="button" onClick={() => setSelectedSettlementReference(item.reference)} className="border border-[var(--border)] bg-[var(--clay)] p-3 text-left transition-all hover:border-[var(--border2)]">
                     <div className="text-[11px] font-bold text-[var(--text)]">{item.reference}</div>
                     <div className="mt-1 text-[10px] text-[var(--muted)]">{item.provider} · {item.status.toUpperCase()} · Net ₦{item.netAmount.toLocaleString('en-NG')}</div>
                     {item.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {item.providerReference}</div>}
                     {item.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {item.providerStatus}</div>}
                     <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {item.retryCount ?? 0}</div>
                     {item.failureReason && <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {item.failureReason}</div>}
-                    {item.status === 'pending' && (
-                      <div className="mt-2 flex gap-2">
-                        <Button size="sm" onClick={() => void resolveSettlement(item.reference, 'success')} disabled={resolvingReference === item.reference}>
-                          {resolvingReference === item.reference ? 'Resolving…' : 'Mark Success'}
-                        </Button>
-                        <Button variant="danger" size="sm" onClick={() => void resolveSettlement(item.reference, 'failed')} disabled={resolvingReference === item.reference}>
-                          Fail
-                        </Button>
-                      </div>
-                    )}
-                    {item.status === 'failed' && (
-                      <div className="mt-2">
-                        <Button variant="secondary" size="sm" onClick={() => void requeueSettlement(item.reference)} disabled={requeueingReference === item.reference}>
-                          {requeueingReference === item.reference ? 'Requeueing…' : 'Requeue'}
-                        </Button>
-                      </div>
-                    )}
-                    {item.status === 'success' && (
-                      <div className="mt-2 text-[10px] text-[var(--green2)]">Terminal record. Manual resolution is disabled.</div>
-                    )}
-                  </div>
+                    <div className="mt-2 text-[10px] text-[var(--gold2)]">Open Case</div>
+                  </button>
                 ))}
               </div>
             </div>
             <div>
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Payout Requests</div>
-              <div className="space-y-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 {payoutRequests.length === 0 ? (
                   <div className="text-[10px] text-[var(--muted)]">No payout requests found.</div>
                 ) : payoutRequests.map(item => (
-                  <div key={item.id} className="border border-[var(--border)] bg-[var(--clay)] p-3">
+                  <button key={item.id} type="button" onClick={() => setSelectedSettlementReference(item.reference)} className="border border-[var(--border)] bg-[var(--clay)] p-3 text-left transition-all hover:border-[var(--border2)]">
                     <div className="text-[11px] font-bold text-[var(--text)]">{item.reference}</div>
                     <div className="mt-1 text-[10px] text-[var(--muted)]">{item.provider} · {item.status.toUpperCase()} · ₦{item.amount.toLocaleString('en-NG')}</div>
                     {item.beneficiary && <div className="mt-1 text-[10px] text-[var(--muted)]">Beneficiary: {item.beneficiary}</div>}
@@ -360,31 +413,58 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                     {item.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {item.providerStatus}</div>}
                     <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {item.retryCount ?? 0}</div>
                     {item.failureReason && <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {item.failureReason}</div>}
-                    {item.status === 'pending' && (
-                      <div className="mt-2 flex gap-2">
-                        <Button size="sm" onClick={() => void resolveSettlement(item.reference, 'success')} disabled={resolvingReference === item.reference}>
-                          {resolvingReference === item.reference ? 'Resolving…' : 'Mark Success'}
-                        </Button>
-                        <Button variant="danger" size="sm" onClick={() => void resolveSettlement(item.reference, 'failed')} disabled={resolvingReference === item.reference}>
-                          Fail
-                        </Button>
-                      </div>
-                    )}
-                    {item.status === 'failed' && (
-                      <div className="mt-2">
-                        <Button variant="secondary" size="sm" onClick={() => void requeueSettlement(item.reference)} disabled={requeueingReference === item.reference}>
-                          {requeueingReference === item.reference ? 'Requeueing…' : 'Requeue'}
-                        </Button>
-                      </div>
-                    )}
-                    {item.status === 'success' && (
-                      <div className="mt-2 text-[10px] text-[var(--green2)]">Terminal record. Manual resolution is disabled.</div>
-                    )}
-                  </div>
+                    <div className="mt-2 text-[10px] text-[var(--gold2)]">Open Case</div>
+                  </button>
                 ))}
               </div>
             </div>
           </div>
+          <Modal
+            open={Boolean(selectedSettlement)}
+            onClose={() => setSelectedSettlementReference(null)}
+            title={selectedSettlement ? selectedSettlement.reference : 'Settlement Case'}
+            subtitle={selectedSettlement ? ('grossAmount' in selectedSettlement ? `${selectedSettlement.provider} · ${selectedSettlement.status.toUpperCase()}` : `${selectedSettlement.provider} · ${selectedSettlement.status.toUpperCase()}`) : undefined}
+            size="lg"
+            className="max-w-4xl"
+          >
+            {selectedSettlement && (
+              <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
+                <div className="text-[12px] font-bold text-[var(--text)]">{selectedSettlement.reference}</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">
+                  {'grossAmount' in selectedSettlement
+                    ? `Provider: ${selectedSettlement.provider} · Gross ₦${selectedSettlement.grossAmount.toLocaleString('en-NG')}`
+                    : `Provider: ${selectedSettlement.provider} · Amount ₦${selectedSettlement.amount.toLocaleString('en-NG')}`}
+                </div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Status: {selectedSettlement.status.toUpperCase()}</div>
+                {'providerStatus' in selectedSettlement && selectedSettlement.providerStatus && (
+                  <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {selectedSettlement.providerStatus}</div>
+                )}
+                {'failureReason' in selectedSettlement && selectedSettlement.failureReason && (
+                  <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {selectedSettlement.failureReason}</div>
+                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selectedSettlement.status === 'pending' && (
+                    <>
+                      <Button size="sm" onClick={() => void resolveSettlement(selectedSettlement.reference, 'success')} disabled={resolvingReference === selectedSettlement.reference}>
+                        {resolvingReference === selectedSettlement.reference ? 'Resolving…' : 'Mark Success'}
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => void resolveSettlement(selectedSettlement.reference, 'failed')} disabled={resolvingReference === selectedSettlement.reference}>
+                        Fail
+                      </Button>
+                    </>
+                  )}
+                  {selectedSettlement.status === 'failed' && (
+                    <Button variant="secondary" size="sm" onClick={() => void requeueSettlement(selectedSettlement.reference)} disabled={requeueingReference === selectedSettlement.reference}>
+                      {requeueingReference === selectedSettlement.reference ? 'Requeueing…' : 'Requeue'}
+                    </Button>
+                  )}
+                  {selectedSettlement.status === 'success' && (
+                    <div className="text-[10px] text-[var(--green2)]">Terminal record. Manual resolution is disabled.</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </Modal>
         </Card>}
 
       {showEvents && <Card className="p-5">
@@ -446,11 +526,16 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               {refreshingProviderEvents ? 'Filtering…' : 'Filter'}
             </Button>
           </div>
-          <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {providerEvents.length === 0 ? (
               <div className="text-[11px] text-[var(--muted)]">No provider events recorded yet.</div>
             ) : providerEvents.map(item => (
-              <div key={item.id} className="border border-[var(--border)] bg-[var(--clay)] p-3">
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSelectedProviderEventId(item.id)}
+                className="border border-[var(--border)] bg-[var(--clay)] p-3 text-left transition-all hover:border-[var(--border2)]"
+              >
                 <div className="text-[11px] font-bold text-[var(--text)]">{item.provider} · {item.status.toUpperCase()}</div>
                 <div className="mt-1 text-[10px] text-[var(--muted)]">Reference: {item.reference}</div>
                 <div className="mt-1 text-[10px] text-[var(--muted)]">Event: {item.externalEventId}</div>
@@ -459,19 +544,48 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                 <div className="mt-1 text-[10px] text-[var(--muted)]">
                   {item.processedAt ? `Processed ${new Date(item.processedAt).toLocaleString('en-NG')}` : 'Pending processing'}
                 </div>
-                {item.processedAt && (
-                  <div className="mt-2">
-                    <Button variant="secondary" size="sm" onClick={() => void requeueEvent(item.externalEventId)} disabled={requeueingEventId === item.externalEventId}>
-                      {requeueingEventId === item.externalEventId ? 'Requeueing…' : 'Requeue Event'}
+                <div className="mt-2 text-[10px] text-[var(--gold2)]">Open Event</div>
+              </button>
+            ))}
+          </div>
+          <Modal
+            open={Boolean(selectedProviderEvent)}
+            onClose={() => setSelectedProviderEventId(null)}
+            title={selectedProviderEvent ? selectedProviderEvent.provider : 'Provider Event'}
+            subtitle={selectedProviderEvent ? `${selectedProviderEvent.externalEventId} · ${selectedProviderEvent.status.toUpperCase()}` : undefined}
+            size="lg"
+            className="max-w-4xl"
+          >
+            {selectedProviderEvent && (
+              <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
+                <div className="text-[12px] font-bold text-[var(--text)]">{selectedProviderEvent.provider} · {selectedProviderEvent.status.toUpperCase()}</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Reference: {selectedProviderEvent.reference}</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Event: {selectedProviderEvent.externalEventId}</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {selectedProviderEvent.retryCount ?? 0}</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">
+                  {selectedProviderEvent.processedAt ? `Processed ${new Date(selectedProviderEvent.processedAt).toLocaleString('en-NG')}` : 'Pending processing'}
+                </div>
+                {selectedProviderEvent.failureReason && (
+                  <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {selectedProviderEvent.failureReason}</div>
+                )}
+                {selectedProviderEvent.payload && (
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words border border-[var(--border)] bg-[var(--coal)] p-3 text-[9px] text-[var(--muted)]">
+                    {JSON.stringify(selectedProviderEvent.payload, null, 2)}
+                  </pre>
+                )}
+                {selectedProviderEvent.processedAt && (
+                  <div className="mt-3">
+                    <Button variant="secondary" size="sm" onClick={() => void requeueEvent(selectedProviderEvent.externalEventId)} disabled={requeueingEventId === selectedProviderEvent.externalEventId}>
+                      {requeueingEventId === selectedProviderEvent.externalEventId ? 'Requeueing…' : 'Requeue Event'}
                     </Button>
                   </div>
                 )}
               </div>
-            ))}
-          </div>
+            )}
+          </Modal>
         </Card>}
 
-        {showSupport && <Card className="p-5">
+        {showSupport && showLedgerTools && <Card className="p-5">
           <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Transaction Ledger Trace</div>
           <div className="space-y-3">
             {transactions.length === 0 ? (
@@ -485,7 +599,14 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                       {item.userId} · {item.transaction.reference} · {item.transaction.status.toUpperCase()}
                     </div>
                   </div>
-                  <Button size="sm" onClick={() => void inspectLedger(item.transaction.id)} disabled={selectedTransactionId === item.transaction.id}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setShowLedgerTools(true)
+                      void inspectLedger(item.transaction.id)
+                    }}
+                    disabled={selectedTransactionId === item.transaction.id}
+                  >
                     {selectedTransactionId === item.transaction.id ? 'Loading…' : 'Inspect'}
                   </Button>
                 </div>
@@ -515,8 +636,24 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           </div>
         </Card>}
 
-        {showSupport && <Card className="p-5 xl:col-span-2">
+        {showSupport && showReferenceSupport && <Card className="p-5 xl:col-span-2">
           <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Reference Support View</div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <input
+              value={settlementSearch}
+              onChange={event => setSettlementSearch(event.target.value)}
+              placeholder="Search by reference"
+              className="min-w-[14rem] flex-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void inspectReference(settlementSearch)}
+              disabled={loadingReferenceCase === settlementSearch.trim() || !settlementSearch.trim()}
+            >
+              {loadingReferenceCase === settlementSearch.trim() && settlementSearch.trim() ? 'Opening…' : 'Open Case'}
+            </Button>
+          </div>
           {!referenceCase ? (
             <div className="text-[11px] text-[var(--muted)]">
               Search a settlement reference and use <span className="font-mono">Open Case</span> to inspect the linked transaction, provider records, ledger entries, events, and audit trail together.
@@ -669,6 +806,44 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           )}
         </Card>}
       </div>
+
+      <Modal
+        open={showSupport && showWebhookTester}
+        onClose={() => setShowWebhookTester(false)}
+        title="Webhook Acceptance Test"
+        subtitle="Replay a settlement payload through the internal handler."
+        size="lg"
+        className="max-w-4xl"
+      >
+        <div className="space-y-4">
+          <div className="text-[11px] text-[var(--muted)]">
+            Paste a real or simulated Flutterwave payload here to exercise the same settlement handler used by the public webhook route. This skips signature verification by design.
+          </div>
+          <textarea
+            value={webhookTestPayload}
+            onChange={event => setWebhookTestPayload(event.target.value)}
+            className="min-h-[16rem] w-full border border-[var(--border)] bg-[var(--clay)] p-3 font-mono text-[10px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
+            spellCheck={false}
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => void runWebhookAcceptanceTest()} disabled={runningWebhookTest}>
+              {runningWebhookTest ? 'Processing…' : 'Run Acceptance Test'}
+            </Button>
+            <div className="text-[10px] text-[var(--muted)]">
+              Use a real customer email and the exact <span className="font-mono">tx_ref</span> or provider reference you want to test.
+            </div>
+          </div>
+          {webhookTestResult && (
+            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
+              <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Last Result</div>
+              <div className="mt-2 text-[11px] text-[var(--text)]">HTTP {webhookTestResult.status || 'n/a'}</div>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[10px] text-[var(--muted)]">
+                {JSON.stringify(webhookTestResult.body, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      </Modal>
     </>
   )
 }

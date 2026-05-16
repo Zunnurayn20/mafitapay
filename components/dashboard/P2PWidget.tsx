@@ -9,7 +9,7 @@ export function P2PWidget() {
   const merchants = useP2PMerchants()
   const router = useRouter()
   return (
-    <Card>
+    <Card pattern="soft">
       <CardHeader>
         <CardTitle>P2P Merchants</CardTitle>
         <CardAction onClick={() => router.push('/p2p')}>All Offers →</CardAction>

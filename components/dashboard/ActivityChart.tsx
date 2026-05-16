@@ -49,7 +49,7 @@ export function ActivityChart() {
       : `${now.getFullYear()} monthly view`
 
   return (
-    <Card>
+    <Card pattern="soft">
       <CardHeader className="flex-wrap gap-3">
         <CardTitle>Spending Activity — {rangeLabel}</CardTitle>
         <div className="flex flex-wrap gap-1.5">

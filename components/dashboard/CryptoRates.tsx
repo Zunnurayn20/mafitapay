@@ -15,7 +15,7 @@ export function CryptoRates() {
     return formatUSDAdaptive(marketPriceUsd)
   }
   return (
-    <Card>
+    <Card pattern="soft">
       <CardHeader>
         <CardTitle>Crypto Assets</CardTitle>
         <CardAction onClick={() => router.push('/crypto')}>Trade →</CardAction>

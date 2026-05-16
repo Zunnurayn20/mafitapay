@@ -69,7 +69,7 @@ export function Sidebar() {
     : '—'
 
   return (
-    <aside className="sticky top-0 flex h-screen min-h-screen flex-col border-r border-[var(--border)] bg-[var(--coal)]">
+    <aside className="sticky top-0 flex h-screen min-h-screen flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--coal)]">
       <div className="ank-strip" />
 
       {/* Logo */}
@@ -99,7 +99,7 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 py-2 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+      <nav className="min-h-0 flex-1 overflow-y-auto py-2" style={{ scrollbarWidth: 'thin' }}>
         {navGroups.map(group => (
           <div key={group.section}>
             <div className="text-[8px] font-bold uppercase tracking-[1.6px] text-[var(--muted)] px-5 pt-4 pb-1.5">

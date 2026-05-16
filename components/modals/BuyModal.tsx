@@ -9,23 +9,12 @@ import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddres
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { getMinimumBuyNgn } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
-import { fmtDate, formatCrypto, formatNGN, formatUSD, sleep } from '@/lib/utils'
+import { fmtDate, formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
 import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
 
 type Step = 'form' | 'pin' | 'processing' | 'success'
 type AmountMode = 'ngn' | 'usd' | 'asset'
-
-function getPricingBadgeTone(pricingSource?: CryptoAsset['pricingSource']) {
-  return pricingSource === 'live'
-    ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.1)] text-[var(--green2)]'
-    : pricingSource === 'backup'
-      ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]'
-      : 'border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] text-[var(--red2)]'
-}
-
-function getPricingSourceLabel(pricingSource?: CryptoAsset['pricingSource']) {
-  return pricingSource === 'live' ? 'Live Price' : pricingSource === 'backup' ? 'Cached Price' : 'Price Unavailable'
-}
+const QUICK_NGN_AMOUNTS = [1000, 2000, 5000, 10000]
 
 function getApproxUsdNgnRate(asset?: CryptoAsset) {
   if (!asset) return 0
@@ -35,11 +24,19 @@ function getApproxUsdNgnRate(asset?: CryptoAsset) {
   return 0
 }
 
+function getPricingSourceLabel(source?: CryptoAsset['pricingSource']) {
+  if (source === 'live') return 'Live market'
+  if (source === 'backup') return 'Backup market'
+  if (source === 'safe') return 'Safe market'
+  return 'Market source'
+}
+
 export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { refreshSession, showToast, modalData } = useAppStore()
   const assets = useCryptoAssets()
   const [step, setStep]       = useState<Step>('form')
   const [pairId, setPairId]   = useState<CryptoPairId>('USDT_BSC')
+  const [showAssetPicker, setShowAssetPicker] = useState(false)
   const [amount, setAmount]   = useState('')
   const [amountMode, setAmountMode] = useState<AmountMode>('ngn')
   const [address, setAddress] = useState('')
@@ -48,6 +45,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const [pinVersion, setPinVersion] = useState(0)
   const [quoteTimeLeft, setQuoteTimeLeft] = useState(0)
   const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+  const [lockingQuote, setLockingQuote] = useState(false)
+  const [submittingOrder, setSubmittingOrder] = useState(false)
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = assets.find(a => a.id === pairId)
@@ -104,7 +103,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
 
   function handleClose() {
     onClose()
-    setTimeout(() => { setStep('form'); setAmount(''); setAmountMode('ngn'); setAddress(''); setQuote(null); setPinVersion(0); setAvailabilityError(null) }, 400)
+    setTimeout(() => { setStep('form'); setAmount(''); setAmountMode('ngn'); setAddress(''); setQuote(null); setPinVersion(0); setAvailabilityError(null); setShowAssetPicker(false) }, 400)
   }
 
   useEffect(() => {
@@ -143,34 +142,52 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     if (!addressValidation.valid) {
       throw new Error(addressValidation.error || 'Destination wallet address is invalid.')
     }
+    if (lockingQuote) return
 
-    await runBuyPreflight()
+    setLockingQuote(true)
+    try {
+      const [preflightResult, quoteResult] = await Promise.allSettled([
+        runBuyPreflight(),
+        fetch('/api/crypto', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            intent: 'quote',
+            action: 'buy',
+            pairId: asset.id,
+            amount: amt,
+            walletAddress: address,
+          }),
+        }).then(async response => {
+          const payload = await response.json()
+          if (!response.ok || payload.success === false) {
+            throw new Error(payload.error || 'Quote request failed.')
+          }
+          return payload
+        }),
+      ])
 
-    const response = await fetch('/api/crypto', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        intent: 'quote',
-        action: 'buy',
-        pairId: asset.id,
-        amount: amt,
-        walletAddress: address,
-      }),
-    })
-    const payload = await response.json()
-    if (!response.ok || payload.success === false) {
-      throw new Error(payload.error || 'Quote request failed.')
+      if (preflightResult.status === 'rejected') {
+        throw preflightResult.reason
+      }
+      if (quoteResult.status === 'rejected') {
+        throw quoteResult.reason
+      }
+
+      setAvailabilityError(null)
+      setQuote(quoteResult.value.data.quote)
+      setPinVersion(current => current + 1)
+      setStep('pin')
+    } finally {
+      setLockingQuote(false)
     }
-    setAvailabilityError(null)
-    setQuote(payload.data.quote)
-    setPinVersion(current => current + 1)
-    setStep('pin')
   }
 
   async function handlePin() {
+    if (submittingOrder) return
+    setSubmittingOrder(true)
     setStep('processing')
-    await sleep(1200)
 
     try {
       if (!asset || !quote) {
@@ -195,7 +212,6 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
         throw new Error(payload.error || 'Buy order failed.')
       }
 
-      await sleep(700)
       setRef(payload.data.transaction.reference)
       await refreshSession()
       setStep('success')
@@ -203,6 +219,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       showToast(error instanceof Error ? error.message : 'Buy order failed.', 'error')
       setPinVersion(current => current + 1)
       setStep('pin')
+    } finally {
+      setSubmittingOrder(false)
     }
   }
 
@@ -217,52 +235,74 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
 
       {asset && step === 'form' && (
         <div className="p-6 flex flex-col gap-4">
-          <div>
-            <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Asset</div>
-            <div className="flex border border-[var(--border)] bg-[var(--clay2)] focus-within:border-[var(--gold)] transition-colors">
-              <div className="flex items-center gap-3 px-3 py-2.5 min-w-0 flex-1">
-                <AssetLogo
-                  src={asset.icon}
-                  alt={`${asset.symbol} logo`}
-                  fallback={asset.symbol.slice(0, 1)}
-                  className="flex h-9 w-9 items-center justify-center overflow-hidden bg-[rgba(79,70,229,.1)] flex-shrink-0"
-                  imgClassName="h-7 w-7 object-contain"
-                  textClassName="text-lg"
-                />
-                <div className="min-w-0">
-                  <div className="text-[11px] font-bold text-[var(--text)] truncate">{asset.name}</div>
-                  <div className="text-[8px] text-[var(--muted)]">{asset.symbol} · {asset.network}</div>
-                </div>
-              </div>
-              <select
-                value={pairId}
-                onChange={event => setPairId(event.target.value as CryptoPairId)}
-                className="border-l border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none min-w-[8.5rem] flex-shrink-0"
-              >
-                {assets.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {a.symbol} · {a.network}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex items-center justify-between bg-[var(--clay)] border border-[var(--border)] p-3">
+          <div className="relative flex items-center justify-between gap-3 bg-[var(--clay)] border border-[rgba(202,165,96,.28)] p-3">
             <div>
-              <div className="text-[7px] text-[var(--muted)] uppercase tracking-[1px]">Buy Rate</div>
-              <div className="text-[15px] font-bold font-mono text-[var(--gold2)]">
+              <div className="text-[7px] text-[var(--text2)] uppercase tracking-[1px]">Buy Rate</div>
+              <div className="text-[15px] font-bold font-mono text-[var(--gold)]">
                 {asset.marketPriceUsd && asset.marketPriceUsd > 0
                   ? `${formatUSD(asset.marketPriceUsd)} / ${asset.symbol} = ${formatNGN(asset.buyRate)}`
                   : formatNGN(asset.buyRate)}
               </div>
             </div>
-            <div className={`text-[8px] font-bold border px-2.5 py-1 ${getPricingBadgeTone(asset.pricingSource)}`}>
-              {getPricingSourceLabel(asset.pricingSource)}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAssetPicker(current => !current)}
+                className="flex h-10 w-10 items-center justify-center border border-[var(--border)] bg-[var(--clay2)]"
+              >
+                <AssetLogo
+                  src={asset.icon}
+                  alt={`${asset.symbol} logo`}
+                  fallback={asset.symbol.slice(0, 1)}
+                  className="flex h-8 w-8 items-center justify-center overflow-hidden"
+                  imgClassName="h-7 w-7 object-contain"
+                  textClassName="text-lg"
+                />
+              </button>
             </div>
+            {showAssetPicker && (
+              <div className="absolute right-3 top-[calc(100%+0.5rem)] z-20 grid grid-cols-4 gap-2 border border-[var(--border)] bg-[var(--coal)] p-3 shadow-[0_14px_30px_rgba(0,0,0,.35)]">
+                {assets.map(a => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => {
+                      setPairId(a.id)
+                      setShowAssetPicker(false)
+                    }}
+                    className={`flex h-12 w-12 items-center justify-center border ${pairId === a.id ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)]' : 'border-[var(--border)] bg-[var(--clay2)]'}`}
+                  >
+                    <AssetLogo
+                      src={a.icon}
+                      alt={`${a.symbol} logo`}
+                      fallback={a.symbol.slice(0, 1)}
+                      className="flex h-8 w-8 items-center justify-center overflow-hidden"
+                      imgClassName="h-7 w-7 object-contain"
+                      textClassName="text-lg"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)] mb-1.5">Amount</div>
-            <div className="flex border border-[var(--border)] bg-[var(--clay2)] focus-within:border-[var(--gold)] transition-colors">
+            <div className="mb-2 grid grid-cols-4 gap-1.5">
+              {QUICK_NGN_AMOUNTS.map(value => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    setAmountMode('ngn')
+                    setAmount(String(value))
+                  }}
+                  className="border border-[var(--border)] bg-[var(--clay2)] py-2 text-[10px] font-bold text-[var(--text2)] transition-all hover:border-[var(--gold2)] hover:text-[var(--text)]"
+                >
+                  ₦{value >= 1000 ? `${value / 1000}k` : value}
+                </button>
+              ))}
+            </div>
+            <div className="flex border border-[rgba(202,165,96,.22)] bg-[var(--clay2)] focus-within:border-[var(--gold)] transition-colors">
               <div className="flex items-center bg-[var(--clay2)] px-3 text-[var(--ngn)] font-display font-black text-lg flex-shrink-0">
                 {amountMode === 'ngn' ? '₦' : amountMode === 'usd' ? '$' : asset.symbol}
               </div>
@@ -287,9 +327,9 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
                 <option value="asset">{asset.symbol}</option>
               </select>
             </div>
-            <div className="flex items-center justify-between bg-[var(--clay)] border border-[var(--border)] px-3.5 py-2.5 mt-2">
-              <span className="text-[9px] text-[var(--muted)]">Estimated receive</span>
-              <span className="text-[14px] font-bold font-display text-[var(--text)]">{formatCrypto(crypto, asset.symbol)}</span>
+            <div className="flex items-center justify-between bg-[var(--clay)] border border-[rgba(202,165,96,.22)] px-3.5 py-2.5 mt-2">
+              <span className="text-[9px] text-[var(--text2)]">Estimated receive</span>
+              <span className="text-[14px] font-bold font-display text-[var(--gold)]">{formatCrypto(crypto, asset.symbol)}</span>
             </div>
             <div className="mt-1.5 text-[9px] text-[var(--muted)]">
               {amountMode === 'asset'
@@ -313,9 +353,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               {addressError ?? getWalletAddressHint(asset.id)}
             </div>
           </div>
-          <div className="bg-[var(--clay)] border border-[var(--border)] p-3 text-[11px]">
-            <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Embedded spread</span><span className="text-[var(--text)] font-mono">{(asset.buySpreadBps / 100).toFixed(2)}%</span></div>
-            <div className="flex justify-between py-1 font-bold"><span className="text-[var(--text2)]">Total NGN debit</span><span className="text-[var(--text)] font-mono">{formatNGN(amt + fee)}</span></div>
+          <div className="bg-[var(--clay)] border border-[rgba(202,165,96,.24)] p-3 text-[11px]">
+            <div className="flex justify-between py-1 font-bold"><span className="text-[var(--text)]">Total NGN debit</span><span className="text-[var(--gold)] font-mono">{formatNGN(amt + fee)}</span></div>
           </div>
           {availabilityError && (
             <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[10px] text-[var(--text)]">
@@ -329,9 +368,9 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               showToast(message, 'error')
             })}
             className="w-full py-3.5"
-            disabled={asset.baseExecutionEnabled !== true || belowMinimum || (address.trim().length > 0 && !addressValidation.valid)}
+            disabled={lockingQuote || asset.baseExecutionEnabled !== true || belowMinimum || (address.trim().length > 0 && !addressValidation.valid)}
           >
-            {asset.baseExecutionEnabled === true ? 'Buy' : 'In-App Execution Coming Later'}
+            {asset.baseExecutionEnabled === true ? (lockingQuote ? 'Locking Quote…' : 'Buy') : 'In-App Execution Coming Later'}
           </Button>
           <div className="text-[9px] text-[var(--muted)]">
             Wallet-funded execution is live only for supported in-app treasury pairs in this phase.
@@ -369,7 +408,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               </div>
             )}
           </div>
-          <PinPad key={pinVersion} onComplete={handlePin} title="Confirm Buy Order" subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(amt + fee)} from your NGN balance`} />
+          <PinPad key={pinVersion} onComplete={handlePin} title={submittingOrder ? 'Submitting Order…' : 'Confirm Buy Order'} subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(amt + fee)} from your NGN balance`} />
         </div>
       )}
 

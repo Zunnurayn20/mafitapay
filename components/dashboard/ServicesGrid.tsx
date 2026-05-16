@@ -7,7 +7,7 @@ export function ServicesGrid() {
   const { openModal, setModalData } = useAppStore()
   const providers = useBillProviders().filter(item => item.isActive !== false)
   return (
-    <Card>
+    <Card pattern="soft">
       <CardHeader><CardTitle>Services</CardTitle></CardHeader>
       <div className="grid grid-cols-2 gap-px bg-[var(--border)] sm:grid-cols-4">
         {providers.map(p => (

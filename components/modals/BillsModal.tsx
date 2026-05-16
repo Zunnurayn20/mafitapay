@@ -139,7 +139,7 @@ function getAmigoPriceHint(
 }
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
-  const { modalData, openModal, refreshSession, setModalData, closeModal, showToast } = useAppStore()
+  const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions } = useAppStore()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
   const orderedNetworkProviders = [...networkProviders].sort((a, b) => getNetworkProviderOrder(a.name) - getNetworkProviderOrder(b.name))
@@ -154,6 +154,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [selectedBundleCode, setSelectedBundleCode] = useState('')
   const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>('best_offers')
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
+  const [showRecentAccounts, setShowRecentAccounts] = useState(false)
   const needsProvider = serviceConfig?.requiresNetwork ?? false
   const needsAccount = serviceConfig?.requiresAccount ?? true
   const amts = serviceConfig?.quickAmounts ?? [1000, 2000, 5000, 10000]
@@ -190,6 +191,29 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     ? selectedPackageBiller?.accountLabel || serviceConfig?.accountPlaceholder || 'Enter account detail'
     : serviceConfig?.accountPlaceholder || 'Enter account detail'
   const detectedProviderName = isPhoneService ? getDetectedNetworkProviderName(account, orderedNetworkProviders) : null
+  const recentPhoneAccounts = isPhoneService
+    ? Array.from(
+        transactions
+          .filter(tx =>
+            tx.type === serviceConfig?.type
+            && typeof tx.metadata?.account === 'string'
+            && tx.metadata.account.trim()
+          )
+          .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+          .reduce((map, tx) => {
+            const rawAccount = String(tx.metadata?.account ?? '')
+            const normalized = normalizeNigerianPhoneNumber(rawAccount)
+            if (!normalized || map.has(normalized)) return map
+            map.set(normalized, {
+              account: normalized,
+              provider: typeof tx.metadata?.provider === 'string' ? tx.metadata.provider : undefined,
+            })
+            return map
+          }, new Map<string, { account: string; provider?: string }>()),
+      )
+        .map(([, value]) => value)
+        .slice(0, 5)
+    : []
 
   useEffect(() => {
     if (!open) return
@@ -199,6 +223,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setSelectedBundleCode('')
     setSelectedDataBundleGroup('best_offers')
     setTouched(INITIAL_TOUCHED)
+    setShowRecentAccounts(false)
     setProvider(defaultNetworkProviderName)
   }, [defaultNetworkProviderName, open, service])
 
@@ -416,11 +441,17 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               placeholder={accountPlaceholder}
               value={account}
               inputMode={isPhoneService ? 'tel' : undefined}
+              onFocus={() => {
+                if (isPhoneService && recentPhoneAccounts.length > 0) {
+                  setShowRecentAccounts(true)
+                }
+              }}
               onChange={e => {
                 setAccount(e.target.value)
                 setTouched(current => ({ ...current, account: true }))
               }}
               onBlur={() => {
+                globalThis.setTimeout(() => setShowRecentAccounts(false), 120)
                 setTouched(current => ({ ...current, account: true }))
                 if (isPhoneService) {
                   setAccount(current => normalizeNigerianPhoneNumber(current))
@@ -428,6 +459,30 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               }}
               error={touched.account ? accountError ?? undefined : undefined}
             />
+            {isPhoneService && showRecentAccounts && recentPhoneAccounts.length > 0 && (
+              <div className="mt-2 border border-[var(--border)] bg-[var(--clay2)] p-2">
+                <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Recent Numbers</div>
+                <div className="space-y-1.5">
+                  {recentPhoneAccounts.map(item => (
+                    <button
+                      key={`${serviceName}-${item.account}`}
+                      type="button"
+                      onMouseDown={event => event.preventDefault()}
+                      onClick={() => {
+                        setAccount(item.account)
+                        if (item.provider) setProvider(item.provider)
+                        setTouched(current => ({ ...current, account: true, provider: true }))
+                        setShowRecentAccounts(false)
+                      }}
+                      className="flex w-full items-center justify-between gap-3 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-left transition-all hover:border-[var(--gold2)] hover:bg-[var(--clay)]"
+                    >
+                      <span className="text-[11px] font-semibold text-[var(--text)]">{item.account}</span>
+                      <span className="text-[9px] text-[var(--muted)]">{item.provider || 'Recent purchase'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {isPhoneService && detectedProviderName && !accountError && (
               <div className="text-[10px] text-[var(--muted)] mt-1">Detected network: {detectedProviderName}</div>
             )}

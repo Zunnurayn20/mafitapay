@@ -28,6 +28,13 @@ const bankDirectorySnapshot = new Map<string, BankDirectoryEntry[]>()
 const bankDirectoryInflight = new Map<string, Promise<void>>()
 const bankDirectoryListeners = new Map<string, Set<(banks: BankDirectoryEntry[]) => void>>()
 
+const LEGACY_CRYPTO_ICON_REPLACEMENTS: Record<string, string> = {
+  '/crypto-assets/eth.png': '/crypto-assets/eth-base.png',
+  '/crypto-assets/ton.svg': '/crypto-assets/ton.png',
+  '/crypto-assets/sui.svg': '/crypto-assets/sui.png',
+  '/crypto-assets/near.svg': '/crypto-assets/near.png',
+}
+
 function sortBillProviders(providers: BillProvider[]) {
   return [...providers].sort((a, b) => {
     const left = BILL_PROVIDER_DISPLAY_ORDER.indexOf(a.id as (typeof BILL_PROVIDER_DISPLAY_ORDER)[number])
@@ -39,7 +46,12 @@ function sortBillProviders(providers: BillProvider[]) {
 }
 
 function filterVisibleCryptoAssets(assets: CryptoAsset[]) {
-  return assets.filter(asset => !HIDDEN_CRYPTO_PAIR_IDS.has(asset.id))
+  return assets
+    .filter(asset => !HIDDEN_CRYPTO_PAIR_IDS.has(asset.id))
+    .map(asset => ({
+      ...asset,
+      icon: LEGACY_CRYPTO_ICON_REPLACEMENTS[asset.icon] ?? asset.icon,
+    }))
 }
 
 function readCachedCryptoAssets() {

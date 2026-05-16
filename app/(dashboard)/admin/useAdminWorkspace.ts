@@ -32,6 +32,10 @@ import {
   renderPricingSourceLabel,
 } from './admin-config'
 
+const ADMIN_FETCH_CACHE_TTL_MS = 15_000
+const adminFetchSnapshotCache = new Map<string, { expiresAt: number; data: unknown }>()
+const adminFetchInFlight = new Map<string, Promise<unknown>>()
+
 type AdminCriticalCheck = {
   key: string
   label: string
@@ -170,7 +174,46 @@ async function fetchAdminJson<T>(url: string): Promise<T> {
   return payload.data as T
 }
 
-export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmodule) {
+async function fetchAdminJsonCached<T>(url: string, options?: { force?: boolean }): Promise<T> {
+  const force = options?.force === true
+  const now = Date.now()
+
+  if (!force) {
+    const cached = adminFetchSnapshotCache.get(url)
+    if (cached && cached.expiresAt > now) {
+      return cached.data as T
+    }
+
+    const pending = adminFetchInFlight.get(url)
+    if (pending) {
+      return pending as Promise<T>
+    }
+  }
+
+  const request = fetchAdminJson<T>(url)
+    .then(data => {
+      adminFetchSnapshotCache.set(url, { expiresAt: Date.now() + ADMIN_FETCH_CACHE_TTL_MS, data })
+      return data
+    })
+    .finally(() => {
+      adminFetchInFlight.delete(url)
+    })
+
+  adminFetchInFlight.set(url, request)
+  return request
+}
+
+function primeAdminFetchCache<T>(url: string, data: T) {
+  adminFetchSnapshotCache.set(url, { expiresAt: Date.now() + ADMIN_FETCH_CACHE_TTL_MS, data })
+  adminFetchInFlight.delete(url)
+}
+
+function invalidateAdminFetchCache(url: string) {
+  adminFetchSnapshotCache.delete(url)
+  adminFetchInFlight.delete(url)
+}
+
+export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmodule) {
   const { showToast, user } = useAppStore()
   const [loading, setLoading] = useState(true)
   const [authorized, setAuthorized] = useState(true)
@@ -373,41 +416,60 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
 
     void (async () => {
       if (section === 'catalogs') {
-        const [entries, loadedCryptoPricing] = await Promise.all([
-          Promise.all(ADMIN_ENDPOINTS.map(async config => {
-            const data = await fetchAdminJson<unknown>(config.get)
-            return [config.key, JSON.stringify(data, null, 2)] as const
-          })),
-          fetchAdminJson<CryptoAsset[]>('/api/admin/crypto-assets'),
-        ])
+        if (!submodule) return
 
-        if (!active) return
-        setDrafts(current => {
-          const next = { ...current }
-          for (const [key, value] of entries) next[key] = value
-          return next
-        })
-        setCryptoPricing(Array.isArray(loadedCryptoPricing) ? loadedCryptoPricing : [])
-        try {
-          const parsedRewardRules = JSON.parse(entries.find(([key]) => key === 'rewardRules')?.[1] ?? '[]')
-          setRewardRules(Array.isArray(parsedRewardRules) ? parsedRewardRules : [])
-        } catch {
-          setRewardRules([])
+        if (submodule === 'assets') {
+          const loadedCryptoPricing = await fetchAdminJsonCached<CryptoAsset[]>('/api/admin/crypto-assets')
+          if (!active) return
+          const nextAssets = Array.isArray(loadedCryptoPricing) ? loadedCryptoPricing : []
+          setCryptoPricing(nextAssets)
+          setDrafts(current => ({ ...current, assets: JSON.stringify(nextAssets, null, 2) }))
+          return
         }
-        try {
-          const parsedBillProviders = JSON.parse(entries.find(([key]) => key === 'billProviders')?.[1] ?? '[]')
-          setBillProviderCatalog(Array.isArray(parsedBillProviders) ? parsedBillProviders : [])
-        } catch {
-          setBillProviderCatalog([])
+
+        if (submodule === 'rewards') {
+          const [loadedRewardRules, loadedRewardRuleReport] = await Promise.all([
+            fetchAdminJsonCached<RewardRule[]>('/api/admin/reward-rules'),
+            fetchAdminJsonCached<RewardRuleReport>('/api/admin/reward-rules/report?limit=20'),
+          ])
+          if (!active) return
+          const nextRules = Array.isArray(loadedRewardRules) ? loadedRewardRules : []
+          setRewardRules(nextRules)
+          setRewardRuleReport(loadedRewardRuleReport ?? null)
+          setDrafts(current => ({ ...current, rewardRules: JSON.stringify(nextRules, null, 2) }))
+          return
+        }
+
+        if (submodule === 'bills') {
+          const loadedBillProviders = await fetchAdminJsonCached<BillProvider[]>('/api/admin/bill-providers')
+          if (!active) return
+          const nextProviders = Array.isArray(loadedBillProviders) ? loadedBillProviders : []
+          setBillProviderCatalog(nextProviders)
+          setDrafts(current => ({ ...current, billProviders: JSON.stringify(nextProviders, null, 2) }))
+          return
+        }
+
+        if (submodule === 'raw') {
+          const rawEndpoints = ADMIN_ENDPOINTS.filter(config => config.key !== 'assets' && config.key !== 'billProviders' && config.key !== 'rewardRules')
+          const entries = await Promise.all(rawEndpoints.map(async config => {
+            const data = await fetchAdminJsonCached<unknown>(config.get)
+            return [config.key, JSON.stringify(data, null, 2)] as const
+          }))
+          if (!active) return
+          setDrafts(current => {
+            const next = { ...current }
+            for (const [key, value] of entries) next[key] = value
+            return next
+          })
         }
         return
       }
 
       if (section === 'users') {
         const [kyc, loadedUsers, loadedAuditLogs] = await Promise.all([
-          fetchAdminJson<typeof kycItems>('/api/admin/kyc'),
-          fetchAdminJson<User[]>('/api/admin/users'),
-          fetchAdminJson<AuditLog[]>('/api/admin/audit-logs?limit=40'),
+          fetchAdminJsonCached<typeof kycItems>('/api/admin/kyc'),
+          fetchAdminJsonCached<User[]>('/api/admin/users'),
+          fetchAdminJsonCached<AuditLog[]>('/api/admin/audit-logs?limit=40'),
         ])
 
         if (!active) return
@@ -419,12 +481,12 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
 
       if (section === 'operations') {
         const [loadedProviderEvents, loadedProviderDiagnosticsReport, loadedTransactions, loadedDepositIntents, loadedPayoutRequests, loadedCryptoOrders] = await Promise.all([
-          fetchAdminJson<ProviderEvent[]>('/api/admin/provider-events?limit=30'),
-          fetchAdminJson<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
-          fetchAdminJson<Array<{ userId: string; transaction: Transaction }>>('/api/admin/transactions?limit=30'),
-          fetchAdminJson<DepositIntent[]>('/api/admin/deposit-intents?limit=20'),
-          fetchAdminJson<PayoutRequest[]>('/api/admin/payout-requests?limit=20'),
-          fetchAdminJson<CryptoOrder[]>('/api/admin/crypto-orders?status=pending&limit=20'),
+          fetchAdminJsonCached<ProviderEvent[]>('/api/admin/provider-events?limit=30'),
+          fetchAdminJsonCached<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
+          fetchAdminJsonCached<Array<{ userId: string; transaction: Transaction }>>('/api/admin/transactions?limit=30'),
+          fetchAdminJsonCached<DepositIntent[]>('/api/admin/deposit-intents?limit=20'),
+          fetchAdminJsonCached<PayoutRequest[]>('/api/admin/payout-requests?limit=20'),
+          fetchAdminJsonCached<CryptoOrder[]>('/api/admin/crypto-orders?status=pending&limit=20'),
         ])
 
         if (!active) return
@@ -439,15 +501,15 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
 
       if (section === 'health') {
         const [loadedProviderDiagnosticsReport, loadedFlutterwaveHealth, loadedFlutterwaveBillsHealth, loadedTransakHealth, loadedBaseExecutorHealth, loadedZeroExHealth, loadedCryptoMarketHealth, loadedBaseTreasuryBalances, loadedCngnHealth] = await Promise.all([
-          fetchAdminJson<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
-          fetchAdminJson<FlutterwaveHealth>('/api/admin/flutterwave/health'),
-          fetchAdminJson<FlutterwaveBillsHealth>('/api/admin/flutterwave/bills-health'),
-          fetchAdminJson<TransakHealth>('/api/admin/transak/health'),
-          fetchAdminJson<BaseExecutorHealth>('/api/admin/base/health'),
-          fetchAdminJson<ZeroExHealth>('/api/admin/zerox/health'),
-          fetchAdminJson<CryptoMarketHealth>('/api/admin/crypto-market/health'),
-          fetchAdminJson<BaseTreasuryBalances>('/api/admin/base/treasury'),
-          fetchAdminJson<CngnHealth>('/api/admin/cngn/health'),
+          fetchAdminJsonCached<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
+          fetchAdminJsonCached<FlutterwaveHealth>('/api/admin/flutterwave/health'),
+          fetchAdminJsonCached<FlutterwaveBillsHealth>('/api/admin/flutterwave/bills-health'),
+          fetchAdminJsonCached<TransakHealth>('/api/admin/transak/health'),
+          fetchAdminJsonCached<BaseExecutorHealth>('/api/admin/base/health'),
+          fetchAdminJsonCached<ZeroExHealth>('/api/admin/zerox/health'),
+          fetchAdminJsonCached<CryptoMarketHealth>('/api/admin/crypto-market/health'),
+          fetchAdminJsonCached<BaseTreasuryBalances>('/api/admin/base/treasury'),
+          fetchAdminJsonCached<CngnHealth>('/api/admin/cngn/health'),
         ])
 
         if (!active) return
@@ -477,7 +539,7 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
     return () => {
       active = false
     }
-  }, [section, showToast])
+  }, [section, showToast, submodule])
 
   async function saveConfig(key: AdminKey) {
     const config = ADMIN_ENDPOINTS.find(item => item.key === key)
@@ -494,6 +556,7 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Save failed.')
+      primeAdminFetchCache(config.get, payload.data)
       setDrafts(current => ({ ...current, [key]: JSON.stringify(payload.data, null, 2) }))
       showToast(`${config.title} updated.`)
     } catch (error) {
@@ -513,7 +576,9 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
     })
     const payload = await response.json()
     if (!response.ok || payload.success === false) throw new Error(payload.error || 'Crypto pricing update failed.')
-    return Array.isArray(payload.data) ? payload.data as CryptoAsset[] : normalizedAssets
+    const persistedAssets = Array.isArray(payload.data) ? payload.data as CryptoAsset[] : normalizedAssets
+    primeAdminFetchCache('/api/admin/crypto-assets', persistedAssets)
+    return persistedAssets
   }
 
   function normalizeCryptoAssetForPersist(asset: CryptoAsset): CryptoAsset {
@@ -740,6 +805,7 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
     const reportResponse = await fetch('/api/admin/reward-rules/report?limit=20', { credentials: 'include', cache: 'no-store' })
     const reportPayload = await reportResponse.json()
     if (!reportResponse.ok || reportPayload.success === false) throw new Error(reportPayload.error || 'Failed to refresh reward report.')
+    primeAdminFetchCache('/api/admin/reward-rules/report?limit=20', reportPayload.data ?? null)
     setRewardRuleReport(reportPayload.data ?? null)
   }
 
@@ -755,6 +821,7 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Reward rule update failed.')
+      primeAdminFetchCache('/api/admin/reward-rules', Array.isArray(payload.data) ? payload.data : [])
       setRewardRules(Array.isArray(payload.data) ? payload.data : [])
       setDrafts(current => ({ ...current, rewardRules: JSON.stringify(payload.data, null, 2) }))
       await refreshRewardRuleReport()
@@ -821,6 +888,7 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Reward request update failed.')
+      primeAdminFetchCache('/api/admin/reward-rules/report?limit=20', payload.data ?? null)
       setRewardRuleReport(payload.data ?? null)
       showToast(action === 'approve' ? 'Reward request approved.' : 'Reward request rejected.')
     } catch (error) {
@@ -841,6 +909,7 @@ export function useAdminWorkspace(section: AdminSection, _submodule?: AdminSubmo
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Bill provider update failed.')
+      primeAdminFetchCache('/api/admin/bill-providers', Array.isArray(payload.data) ? payload.data : [])
       setBillProviderCatalog(Array.isArray(payload.data) ? payload.data : [])
       setDrafts(current => ({ ...current, billProviders: JSON.stringify(payload.data, null, 2) }))
       showToast('Bill providers updated.')
