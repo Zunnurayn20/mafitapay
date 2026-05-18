@@ -1,14 +1,13 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ClipboardList, ArrowLeftRight, Zap, Receipt } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, Zap, UserCircle } from 'lucide-react'
 
 const TABS = [
   { href: '/dashboard', label: 'Home',    Icon: LayoutDashboard },
   { href: '/history',   label: 'History', Icon: ClipboardList },
-  { href: '/p2p',       label: 'P2P',     Icon: ArrowLeftRight },
   { href: '/crypto',    label: 'Crypto',  Icon: Zap },
-  { href: '/bills',     label: 'Bills',   Icon: Receipt },
+  { href: '/profile',   label: 'Profile', Icon: UserCircle },
 ]
 
 export function MobileNav() {

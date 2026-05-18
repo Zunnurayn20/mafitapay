@@ -1,11 +1,13 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
 export default function ProfilePage() {
   const { refreshSession, showToast, user, wallet } = useAppStore()
+  const router = useRouter()
   const [name, setName] = useState(user?.name ?? '')
   const [phone, setPhone] = useState(user?.phone ?? '')
   const [editingProfile, setEditingProfile] = useState(false)
@@ -120,17 +122,38 @@ export default function ProfilePage() {
         <Card className="mt-4">
           <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
           {[
-            { icon: '👤', title: 'Personal Profile', sub: `${user?.email || 'No email on file'} · ${user?.phone || 'No phone'}` },
-            { icon: '🔐', title: 'Security & PIN', sub: 'Manage password, sessions, and account access' },
-            { icon: '✅', title: 'Verification Status', sub: kycCopy.headline },
+            {
+              icon: '👤',
+              title: 'Personal Profile',
+              sub: `${user?.email || 'No email on file'} · ${user?.phone || 'No phone'}`,
+              action: () => setEditingProfile(true),
+            },
+            {
+              icon: '🔐',
+              title: 'Security & PIN',
+              sub: 'Manage password, sessions, and account access',
+              action: () => router.push('/security'),
+            },
+            {
+              icon: '✅',
+              title: 'Verification Status',
+              sub: kycCopy.headline,
+              action: () => router.push('/kyc'),
+            },
           ].map(item => (
-            <div key={item.title} className="flex items-center gap-4 border-b border-[var(--border)] px-5 py-4 last:border-0">
+            <button
+              key={item.title}
+              type="button"
+              onClick={item.action}
+              className="flex w-full items-center gap-4 border-b border-[var(--border)] px-5 py-4 text-left transition-colors hover:bg-[var(--clay)] last:border-0"
+            >
               <span className="text-lg">{item.icon}</span>
               <div className="flex-1">
                 <div className="text-[13px] font-semibold text-[var(--text)]">{item.title}</div>
                 <div className="mt-0.5 text-[9px] text-[var(--muted)]">{item.sub}</div>
               </div>
-            </div>
+              <span className="text-[12px] text-[var(--gold2)]">›</span>
+            </button>
           ))}
         </Card>
 

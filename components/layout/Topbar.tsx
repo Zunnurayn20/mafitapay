@@ -1,7 +1,8 @@
 'use client'
 import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/store'
-import { ArrowDownToLine, Bell, Moon, Search, Send, Sun, X } from 'lucide-react'
+import { ArrowDownToLine, Bell, Moon, Search, Send, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
 import { fmtDate } from '@/lib/utils'
 
 interface TopbarProps {
@@ -9,13 +10,22 @@ interface TopbarProps {
 }
 
 export function Topbar({ title }: TopbarProps) {
-  const { markNotificationsRead, notifications, theme, toggleTheme, openModal } = useAppStore()
+  const { logout, markNotificationsRead, notifications, theme, toggleTheme, openModal, user } = useAppStore()
+  const router = useRouter()
   const [notifOpen, setNotifOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchVal, setSearchVal] = useState('')
   const unreadCount = notifications.filter(n => !n.read).length
   const visibleNotifications = useMemo(() => notifications.slice(0, 6), [notifications])
   const icons = { success: '✓', error: '✕', info: 'ℹ' } as const
+  const userInitial = user?.name?.trim().charAt(0).toUpperCase() || 'U'
+
+  async function handleLogout() {
+    setAccountOpen(false)
+    await logout()
+    router.push('/login')
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(13,13,20,.94)] backdrop-blur-xl">
@@ -124,6 +134,55 @@ export function Topbar({ title }: TopbarProps) {
                 <div className="px-4 py-3 text-center">
                   <span className="cursor-pointer text-[10px] font-bold text-[var(--gold2)] hover:text-[var(--text)]">View all notifications →</span>
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setAccountOpen(current => !current)}
+              className="flex h-9 min-w-9 items-center justify-center border border-[var(--border)] bg-[var(--clay)] px-2 transition-all hover:border-[var(--gold2)]"
+              title="Account menu"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[rgba(202,165,96,0.24)] bg-[rgba(202,165,96,0.08)] text-[10px] font-black text-[var(--gold2)]">
+                {userInitial}
+              </span>
+            </button>
+
+            {accountOpen && (
+              <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[min(17rem,calc(100vw-2rem))] border border-[var(--border)] bg-[var(--coal)] shadow-2xl">
+                <div className="border-b border-[var(--border)] px-4 py-3">
+                  <div className="text-[12px] font-bold text-[var(--text)]">{user?.name || 'Account User'}</div>
+                  <div className="mt-0.5 truncate text-[10px] text-[var(--muted)]">{user?.email || 'No email on file'}</div>
+                </div>
+
+                {[
+                  { href: '/profile', label: 'Profile', Icon: UserCircle2 },
+                  { href: '/security', label: 'Security & PIN', Icon: Shield },
+                  { href: '/kyc', label: 'Verification', Icon: CheckCheck },
+                ].map(({ href, label, Icon }) => (
+                  <button
+                    key={href}
+                    type="button"
+                    onClick={() => {
+                      setAccountOpen(false)
+                      router.push(href)
+                    }}
+                    className="flex w-full items-center gap-3 border-b border-[var(--border)] px-4 py-3 text-left transition-colors hover:bg-[var(--clay)] last:border-0"
+                  >
+                    <Icon size={14} className="text-[var(--gold2)]" />
+                    <span className="text-[11px] font-semibold text-[var(--text)]">{label}</span>
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--clay)]"
+                >
+                  <LogOut size={14} className="text-[var(--red2)]" />
+                  <span className="text-[11px] font-semibold text-[var(--text)]">Logout</span>
+                </button>
               </div>
             )}
           </div>
