@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { applyWalletMutation, createPayoutRequest, getWalletByUserId, upsertBeneficiary } from '@/lib/server/data'
+import { applyWalletMutation, createPayoutRequest, getWalletByUserId, upsertBeneficiary, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
 import { generateRef } from '@/lib/utils'
@@ -11,6 +11,8 @@ export async function POST(req: Request) {
 
   const body = await req.json()
   const { amount } = body
+  const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
+  const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
   if (!amount) {
     return NextResponse.json({ error: 'amount, bankName, accountNumber, and accountName are required' }, { status: 400 })
   }
@@ -42,6 +44,12 @@ export async function POST(req: Request) {
 
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     return NextResponse.json({ error: 'Invalid amount', success: false }, { status: 400 })
+  }
+
+  try {
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval failed.', success: false }, { status: 400 })
   }
 
   const wallet = await getWalletByUserId(user.id)

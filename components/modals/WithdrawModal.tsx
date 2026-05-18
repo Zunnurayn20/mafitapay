@@ -3,10 +3,14 @@ import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
+import { PinPad } from '@/components/ui/PinPad'
+import { createBiometricApproval } from '@/lib/client/biometric'
 import { useBankDirectory, useP2PMerchants } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
-import { generateRef } from '@/lib/utils'
+import { formatNGN, generateRef } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
+
+type Step = 'form' | 'pin'
 
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const modalData = useAppStore(state => state.modalData)
@@ -15,6 +19,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const setModalData = useAppStore(state => state.setModalData)
   const closeModal = useAppStore(state => state.closeModal)
   const showToast = useAppStore(state => state.showToast)
+  const securitySettings = useAppStore(state => state.securitySettings)
   const merchants = useP2PMerchants()
   const banks = useBankDirectory('NG')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([])
@@ -24,6 +29,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const [bankName, setBankName] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [accountName, setAccountName] = useState('')
+  const [step, setStep] = useState<Step>('form')
+  const [pinVersion, setPinVersion] = useState(0)
   const withdrawMode = modalData.withdrawMode === 'merchant' ? 'merchant' : 'bank'
   const presetMerchantId = typeof modalData.merchantId === 'string' ? modalData.merchantId : null
   const presetMerchantName = typeof modalData.merchantName === 'string' ? modalData.merchantName : null
@@ -47,7 +54,19 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       .catch(() => undefined)
   }, [open, withdrawMode])
 
+  useEffect(() => {
+    if (!open) {
+      setStep('form')
+      setPinVersion(0)
+    }
+  }, [open])
+
   async function confirm() {
+    setPinVersion(current => current + 1)
+    setStep('pin')
+  }
+
+  async function submitWithdrawal(input: { transactionPin?: string; biometricApprovalToken?: string }) {
     const amt = parseFloat(amount) || 0
     if (!amt) { showToast('Enter a valid amount', 'error'); return }
 
@@ -83,13 +102,13 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ action: 'withdraw', amount: amt, merchantId: presetMerchantId ?? selected }),
+            body: JSON.stringify({ action: 'withdraw', amount: amt, merchantId: presetMerchantId ?? selected, ...input }),
           })
         : await fetch('/api/wallet/withdraw', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ amount: amt, bankCode: resolvedBankCode, bankName: resolvedBankName, accountNumber: resolvedAccountNumber, accountName: resolvedAccountName }),
+            body: JSON.stringify({ amount: amt, bankCode: resolvedBankCode, bankName: resolvedBankName, accountNumber: resolvedAccountNumber, accountName: resolvedAccountName, ...input }),
           })
       const payload = await response.json()
 
@@ -111,11 +130,24 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       }, 100)
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Withdrawal failed.', 'error')
+      setPinVersion(current => current + 1)
+      setStep('pin')
+    }
+  }
+
+  async function handleBiometricApproval() {
+    try {
+      const approval = await createBiometricApproval()
+      await submitWithdrawal({ biometricApprovalToken: approval.token })
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
+      setPinVersion(current => current + 1)
     }
   }
 
   return (
     <Modal open={open} onClose={onClose} title={withdrawMode === 'merchant' ? 'Merchant Withdrawal' : 'Withdraw Funds'}>
+      {step === 'form' ? (
       <div className="p-6 flex flex-col gap-4">
         <div className="bg-[rgba(67,56,202,.07)] border border-[rgba(67,56,202,.2)] border-l-4 border-l-[var(--terra)] p-4">
           <div className="text-[9px] font-bold text-[var(--terra2)] uppercase tracking-wider mb-1">
@@ -207,6 +239,17 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         )}
         <Button onClick={confirm} className="w-full py-3.5">Proceed to Withdraw →</Button>
       </div>
+      ) : (
+        <PinPad
+          key={pinVersion}
+          onComplete={(pin) => void submitWithdrawal({ transactionPin: pin })}
+          title="Confirm Transaction PIN"
+          subtitle={`Authorising ${formatNGN(parseFloat(amount) || 0)} ${withdrawMode === 'merchant' ? `to ${presetMerchantName ?? 'selected merchant'}` : `to ${accountName || 'bank beneficiary'}`}`}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+          secondaryActionIconOnly
+          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+        />
+      )}
     </Modal>
   )
 }

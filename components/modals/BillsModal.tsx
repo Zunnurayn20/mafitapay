@@ -4,6 +4,8 @@ import Image from 'next/image'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
+import { PinPad } from '@/components/ui/PinPad'
+import { createBiometricApproval } from '@/lib/client/biometric'
 import { refreshBillCatalog, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
 import {
   getBillServiceConfig,
@@ -17,6 +19,7 @@ import { generateRef } from '@/lib/utils'
 interface BillsModalProps { open: boolean; onClose: () => void }
 type TouchedState = { amount: boolean; account: boolean; provider: boolean }
 type DataBundleGroupKey = 'best_offers' | 'daily' | 'weekly' | 'monthly' | 'night' | 'special'
+type Step = 'form' | 'pin'
 
 const INITIAL_TOUCHED: TouchedState = { amount: false, account: false, provider: false }
 
@@ -139,7 +142,7 @@ function getAmigoPriceHint(
 }
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
-  const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions } = useAppStore()
+  const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions, securitySettings } = useAppStore()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
   const orderedNetworkProviders = [...networkProviders].sort((a, b) => getNetworkProviderOrder(a.name) - getNetworkProviderOrder(b.name))
@@ -155,6 +158,15 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>('best_offers')
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
+  const [step, setStep] = useState<Step>('form')
+  const [pinVersion, setPinVersion] = useState(0)
+  const [pendingRequest, setPendingRequest] = useState<{
+    amount: number
+    billerCode?: string
+    itemCode?: string
+    providerPlanId?: string
+    providerNetworkId?: number
+  } | null>(null)
   const needsProvider = serviceConfig?.requiresNetwork ?? false
   const needsAccount = serviceConfig?.requiresAccount ?? true
   const amts = serviceConfig?.quickAmounts ?? [1000, 2000, 5000, 10000]
@@ -225,6 +237,9 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setTouched(INITIAL_TOUCHED)
     setShowRecentAccounts(false)
     setProvider(defaultNetworkProviderName)
+    setStep('form')
+    setPinVersion(0)
+    setPendingRequest(null)
   }, [defaultNetworkProviderName, open, service])
 
   useEffect(() => {
@@ -314,10 +329,14 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     amount?: string
     selectedBundleCode?: string
     selectedDataBundle?: typeof selectedDataBundle
+    transactionPin?: string
+    biometricApprovalToken?: string
   }) {
     const nextAmount = overrides?.amount ?? amount
     const nextSelectedBundleCode = overrides?.selectedBundleCode ?? selectedBundleCode
     const nextSelectedDataBundle = overrides?.selectedDataBundle ?? selectedDataBundle
+    const transactionPin = overrides?.transactionPin
+    const biometricApprovalToken = overrides?.biometricApprovalToken
     const nextAmountNumber = Number(nextAmount)
     const nextAmountError = isDataService
       ? (!nextSelectedBundleCode || !nextSelectedDataBundle ? 'Select a valid data plan.' : null)
@@ -355,6 +374,26 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     }
 
     const amt = Number(nextAmount)
+    const nextRequest = {
+      amount: amt,
+      ...(nextSelectedDataBundle ? {
+        billerCode: nextSelectedDataBundle.billerCode,
+        itemCode: nextSelectedDataBundle.itemCode,
+        providerPlanId: nextSelectedDataBundle.providerPlanId,
+        providerNetworkId: nextSelectedDataBundle.providerNetworkId,
+      } : {}),
+      ...(selectedPackageItem ? {
+        billerCode: selectedPackageItem.billerCode,
+        itemCode: selectedPackageItem.itemCode,
+      } : {}),
+    }
+
+    if (!transactionPin && !biometricApprovalToken) {
+      setPendingRequest(nextRequest)
+      setPinVersion(current => current + 1)
+      setStep('pin')
+      return
+    }
 
     try {
       const response = await fetch('/api/bills', {
@@ -366,16 +405,12 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           provider,
           account: normalizedAccount,
           amount: amt,
-          ...(nextSelectedDataBundle ? {
-            billerCode: nextSelectedDataBundle.billerCode,
-            itemCode: nextSelectedDataBundle.itemCode,
-            providerPlanId: nextSelectedDataBundle.providerPlanId,
-            providerNetworkId: nextSelectedDataBundle.providerNetworkId,
-          } : {}),
-          ...(selectedPackageItem ? {
-            billerCode: selectedPackageItem.billerCode,
-            itemCode: selectedPackageItem.itemCode,
-          } : {}),
+          transactionPin,
+          biometricApprovalToken,
+          billerCode: nextRequest.billerCode,
+          itemCode: nextRequest.itemCode,
+          providerPlanId: nextRequest.providerPlanId,
+          providerNetworkId: nextRequest.providerNetworkId,
         }),
       })
       const payload = await response.json()
@@ -399,11 +434,27 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
       }, 100)
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Bill payment failed.', 'error')
+      setPinVersion(current => current + 1)
+      setStep('pin')
+    }
+  }
+
+  async function handleBiometricApproval() {
+    try {
+      const approval = await createBiometricApproval()
+      await confirm({
+        amount: pendingRequest ? String(pendingRequest.amount) : amount,
+        biometricApprovalToken: approval.token,
+      })
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
+      setPinVersion(current => current + 1)
     }
   }
 
   return (
     <Modal open={open} onClose={onClose} title={`Pay ${serviceName}`}>
+      {step === 'form' ? (
       <div className="p-6 flex flex-col gap-4">
         {needsProvider && (
           <div>
@@ -685,6 +736,20 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         )}
         {!isDataService && <Button onClick={() => void confirm()} className="w-full py-3.5">Pay {serviceName} →</Button>}
       </div>
+      ) : (
+        <PinPad
+          key={pinVersion}
+          onComplete={(pin) => void confirm({
+            amount: pendingRequest ? String(pendingRequest.amount) : amount,
+            transactionPin: pin,
+          })}
+          title="Confirm Transaction PIN"
+          subtitle={`Authorising ${serviceName} payment for ₦${Number(pendingRequest?.amount ?? amount ?? 0).toLocaleString('en-NG')}`}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+          secondaryActionIconOnly
+          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+        />
+      )}
     </Modal>
   )
 }

@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { Fingerprint } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface PinPadProps {
@@ -7,9 +8,22 @@ interface PinPadProps {
   onComplete: (pin: string) => void
   title?: string
   subtitle?: string
+  secondaryActionLabel?: string
+  secondaryActionIconOnly?: boolean
+  onSecondaryAction?: () => void
+  secondaryActionPending?: boolean
 }
 
-export function PinPad({ length = 4, onComplete, title = 'Enter PIN', subtitle }: PinPadProps) {
+export function PinPad({
+  length = 4,
+  onComplete,
+  title = 'Enter PIN',
+  subtitle,
+  secondaryActionLabel,
+  secondaryActionIconOnly = false,
+  onSecondaryAction,
+  secondaryActionPending = false,
+}: PinPadProps) {
   const [pin, setPin] = useState('')
 
   const addDigit = (d: number) => {
@@ -49,6 +63,29 @@ export function PinPad({ length = 4, onComplete, title = 'Enter PIN', subtitle }
       <div className="mt-3 px-1 text-center text-[10px] text-[var(--muted)]">
         Submission continues automatically after the last digit.
       </div>
+      {secondaryActionLabel && onSecondaryAction && (
+        <div className="mt-3 flex justify-center">
+          <button
+            type="button"
+            onClick={onSecondaryAction}
+            disabled={secondaryActionPending}
+            aria-label={secondaryActionLabel}
+            title={secondaryActionLabel}
+            className={cn(
+              'border border-[var(--border)] bg-[var(--clay)] text-[var(--gold2)] disabled:opacity-60',
+              secondaryActionIconOnly
+                ? 'flex h-10 w-10 items-center justify-center rounded-full'
+                : 'px-4 py-2 text-[10px] font-bold uppercase tracking-[.8px]'
+            )}
+          >
+            {secondaryActionPending
+              ? (secondaryActionIconOnly ? <span className="text-[10px]">…</span> : 'Checking…')
+              : secondaryActionIconOnly
+                ? <Fingerprint className="h-4 w-4" />
+                : secondaryActionLabel}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

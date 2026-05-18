@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { applyWalletMutation, consumeCryptoQuote, createCryptoOrder, createCryptoQuote, ensureCryptoMarketAutoRefreshScheduler, getCryptoAssets, getCryptoOrderById, getWalletByUserId, kickCryptoMarketRefresh } from '@/lib/server/data'
+import { applyWalletMutation, consumeCryptoQuote, createCryptoOrder, createCryptoQuote, ensureCryptoMarketAutoRefreshScheduler, getCryptoAssets, getCryptoOrderById, getWalletByUserId, kickCryptoMarketRefresh, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { assertBaseTreasuryCanExecuteBuy } from '@/lib/server/base-executor'
 import { getExecutionRailForAsset } from '@/lib/crypto-execution'
 import { ensureBscReceiptAutoSyncWatchdog, kickBscReceiptAutoSync } from '@/lib/server/bsc-receipt-sync'
@@ -137,6 +137,8 @@ export async function POST(req: Request) {
   const pairId = typeof body.pairId === 'string' ? body.pairId.trim() : ''
   const amount = Number(body.amount)
   const walletAddress = typeof body.walletAddress === 'string' ? body.walletAddress.trim() : ''
+  const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
+  const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
 
   logCrypto('request', {
     intent,
@@ -405,6 +407,7 @@ export async function POST(req: Request) {
   let asset
   let quote
   try {
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
     const consumed = await consumeCryptoQuote(user.id, quoteId, action)
     asset = consumed.asset
     quote = consumed.quote
@@ -413,9 +416,9 @@ export async function POST(req: Request) {
       action,
       pairId,
       quoteId,
-      error: error instanceof Error ? error.message : 'Quote execution failed.',
+      error: error instanceof Error ? error.message : 'Security approval or quote execution failed.',
     })
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Quote execution failed.', success: false }, { status: 400 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval or quote execution failed.', success: false }, { status: 400 })
   }
 
   const wallet = await getWalletByUserId(user.id)

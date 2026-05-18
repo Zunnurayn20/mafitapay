@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
-import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, recordProviderEvent } from '@/lib/server/data'
+import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, recordProviderEvent, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { AMIGO_PLATFORM_MARKUP_NGN, createAmigoDataPayment, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
@@ -69,6 +69,8 @@ export async function POST(req: Request) {
   const numericAmount = Number(body.amount)
   const service = typeof body.service === 'string' ? body.service : ''
   const provider = typeof body.provider === 'string' ? body.provider : undefined
+  const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
+  const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
   const billerCode = typeof body.billerCode === 'string' ? body.billerCode.trim() : undefined
   const itemCode = typeof body.itemCode === 'string' ? body.itemCode.trim() : undefined
   const providerPlanId = typeof body.providerPlanId === 'string' ? body.providerPlanId.trim() : undefined
@@ -146,6 +148,12 @@ export async function POST(req: Request) {
 
   if (wallet.balance < numericAmount) {
     return NextResponse.json({ error: 'Insufficient balance', success: false }, { status: 400 })
+  }
+
+  try {
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval failed.', success: false }, { status: 400 })
   }
 
   const ref = generateRef()

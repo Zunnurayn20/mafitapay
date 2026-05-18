@@ -4,9 +4,10 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad } from '@/components/ui/PinPad'
+import { createBiometricApproval } from '@/lib/client/biometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
-import { formatNGN, sleep } from '@/lib/utils'
+import { formatNGN } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
 
 type Step = 'form' | 'review' | 'pin' | 'processing' | 'success'
@@ -14,7 +15,7 @@ type Step = 'form' | 'review' | 'pin' | 'processing' | 'success'
 const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { refreshSession, showToast } = useAppStore()
+  const { refreshSession, showToast, securitySettings } = useAppStore()
   const banks = useBankDirectory('NG')
   const [step, setStep] = useState<Step>('form')
   const [mode, setMode] = useState<'internal' | 'bank'>('internal')
@@ -124,20 +125,18 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     setStep('review')
   }
 
-  async function handlePin() {
+  async function submitTransfer(input: { transactionPin?: string; biometricApprovalToken?: string }) {
     setStep('processing')
     setProcStep(1)
-    await sleep(1200)
-    setProcStep(2)
-    await sleep(1200)
     try {
+      setProcStep(2)
       const response = await fetch('/api/wallet/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(mode === 'internal'
-          ? { mode, recipient, amount: amt, narration }
-          : { mode, bankCode, bankName, accountNumber, accountName, amount: amt, narration }),
+          ? { mode, recipient, amount: amt, narration, ...input }
+          : { mode, bankCode, bankName, accountNumber, accountName, amount: amt, narration, ...input }),
       })
       const payload = await response.json()
 
@@ -146,7 +145,6 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       }
 
       setProcStep(3)
-      await sleep(400)
       setRef(payload.data.transaction.reference)
       await refreshSession()
       setStep('success')
@@ -154,6 +152,20 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       showToast(error instanceof Error ? error.message : 'Transfer failed.', 'error')
       setPinVersion(current => current + 1)
       setStep('pin')
+    }
+  }
+
+  async function handlePin(pin: string) {
+    await submitTransfer({ transactionPin: pin })
+  }
+
+  async function handleBiometricApproval() {
+    try {
+      const approval = await createBiometricApproval()
+      await submitTransfer({ biometricApprovalToken: approval.token })
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
+      setPinVersion(current => current + 1)
     }
   }
 
@@ -310,6 +322,9 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           onComplete={handlePin}
           title="Confirm Transaction PIN"
           subtitle={`Authorising ${formatNGN(amt)} → ${mode === 'internal' ? (resolvedRecipient?.name || recipient) : accountName}`}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+          secondaryActionIconOnly
+          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
         />
       )}
 

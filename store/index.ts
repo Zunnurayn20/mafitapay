@@ -10,8 +10,14 @@ interface SessionData {
   securitySettings: {
     userId: string
     transactionPinEnabled: boolean
+    hasTransactionPin: boolean
+    transactionPinLockedUntil?: string
     twoFactorEnabled: boolean
     biometricEnabled: boolean
+    hasBiometricCredential: boolean
+    biometricCredentialCount: number
+    biometricCredentialLabel?: string
+    biometricLastVerifiedAt?: string
     createdAt: string
     updatedAt: string
   } | null

@@ -1,6 +1,7 @@
 'use client'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { canUseBiometrics } from '@/lib/client/biometric'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { Sidebar } from './Sidebar'
@@ -32,9 +33,11 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, theme, user } = useAppStore()
+  const { authResolved, isAuthenticated, theme, user, securitySettings } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
+  const [biometricSupported, setBiometricSupported] = useState(false)
+  const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
   const isAdminRoute = pathname.startsWith('/admin')
   const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
   const isAdminUser = (user?.email ?? '').toLowerCase() === adminEmail
@@ -47,9 +50,30 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }, [theme])
 
   useEffect(() => {
+    void (async () => {
+      try {
+        setBiometricSupported(await canUseBiometrics())
+      } finally {
+        setBiometricSupportResolved(true)
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
     if (!authResolved) return
     if (!isAuthenticated) router.push('/login')
   }, [authResolved, isAuthenticated, router])
+
+  useEffect(() => {
+    if (!authResolved || !isAuthenticated || !biometricSupportResolved) return
+    if (pathname === '/security') return
+
+    const needsPin = securitySettings?.hasTransactionPin !== true
+    const needsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
+    if (needsPin || needsBiometric) {
+      router.replace('/security?setup=1')
+    }
+  }, [authResolved, biometricSupportResolved, biometricSupported, isAuthenticated, pathname, router, securitySettings])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return
@@ -125,6 +149,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }
 
   if (!isAuthenticated) return null
+
+  if (biometricSupportResolved && pathname !== '/security') {
+    const needsPin = securitySettings?.hasTransactionPin !== true
+    const needsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
+    if (needsPin || needsBiometric) {
+      return (
+        <FullScreenAppLoading
+          title="Completing security setup"
+          detail="Redirecting you to transaction PIN and biometric onboarding."
+        />
+      )
+    }
+  }
 
   return (
     <ErrorBoundary>

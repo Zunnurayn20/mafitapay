@@ -402,8 +402,8 @@ export default function HistoryPage() {
           <table className="min-w-[52rem] w-full border-collapse">
             <thead>
               <tr>
-                {['','Description','Date & Time','Reference','Type','Status','Amount','Actions'].map((h,i) => (
-                  <th key={i} className={`px-4 py-3 text-left text-[8px] font-bold uppercase tracking-[1.3px] text-[var(--muted)] border-b border-[var(--border)] bg-[var(--clay)] ${i===6?'text-right':''}`}>{h}</th>
+                {['','Description','Date & Time','Reference','Status','Amount','Actions'].map((h,i) => (
+                  <th key={i} className={`px-4 py-3 text-left text-[8px] font-bold uppercase tracking-[1.3px] text-[var(--muted)] border-b border-[var(--border)] bg-[var(--clay)] ${i===5?'text-right':''}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -447,7 +447,6 @@ export default function HistoryPage() {
                     </td>
                     <td className="px-4 py-3 text-[11px] text-[var(--muted)] font-mono whitespace-nowrap">{fmtDate(tx.createdAt)}</td>
                     <td className="px-4 py-3 text-[10px] text-[var(--muted)] font-mono">{tx.reference}</td>
-                    <td className="px-4 py-3"><Badge variant="pending">{tx.type.replace(/_/g,' ')}</Badge></td>
                     <td className="px-4 py-3"><Badge variant={statusVariant}>{tx.status}</Badge></td>
                     <td className={`px-4 py-3 text-right text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
                       {tx.amount > 0 ? '+' : ''}{formatNGN(tx.amount)}

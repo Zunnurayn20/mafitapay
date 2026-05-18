@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { applyWalletMutation, createPayoutRequest, getP2PMerchantById, getP2PMerchants, getWalletByUserId } from '@/lib/server/data'
+import { applyWalletMutation, createPayoutRequest, getP2PMerchantById, getP2PMerchants, getWalletByUserId, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { generateRef } from '@/lib/utils'
 
 export async function GET() {
@@ -15,6 +15,8 @@ export async function POST(req: Request) {
   const merchant = await getP2PMerchantById(String(body.merchantId))
   const amount = Number(body.amount)
   const action = body.action === 'withdraw' ? 'withdraw' : 'deposit'
+  const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
+  const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
 
   if (!merchant) {
     return NextResponse.json({ error: 'Merchant not found', success: false }, { status: 404 })
@@ -26,6 +28,14 @@ export async function POST(req: Request) {
 
   if (amount < merchant.minAmount || amount > merchant.maxAmount) {
     return NextResponse.json({ error: 'Amount is outside merchant limits', success: false }, { status: 400 })
+  }
+
+  if (action === 'withdraw') {
+    try {
+      await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval failed.', success: false }, { status: 400 })
+    }
   }
 
   const wallet = await getWalletByUserId(user.id)

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { PinPad } from '@/components/ui/PinPad'
+import { createBiometricApproval } from '@/lib/client/biometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { getMinimumBuyNgn } from '@/lib/crypto-rules'
@@ -32,7 +33,7 @@ function getPricingSourceLabel(source?: CryptoAsset['pricingSource']) {
 }
 
 export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { refreshSession, showToast, modalData } = useAppStore()
+  const { refreshSession, showToast, modalData, securitySettings } = useAppStore()
   const assets = useCryptoAssets()
   const [step, setStep]       = useState<Step>('form')
   const [pairId, setPairId]   = useState<CryptoPairId>('USDT_BSC')
@@ -184,7 +185,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     }
   }
 
-  async function handlePin() {
+  async function submitBuyOrder(input: { transactionPin?: string; biometricApprovalToken?: string }) {
     if (submittingOrder) return
     setSubmittingOrder(true)
     setStep('processing')
@@ -204,6 +205,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           amount: amt,
           quoteId: quote.id,
           walletAddress: address,
+          ...input,
         }),
       })
       const payload = await response.json()
@@ -221,6 +223,20 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       setStep('pin')
     } finally {
       setSubmittingOrder(false)
+    }
+  }
+
+  async function handlePin(pin: string) {
+    await submitBuyOrder({ transactionPin: pin })
+  }
+
+  async function handleBiometricApproval() {
+    try {
+      const approval = await createBiometricApproval()
+      await submitBuyOrder({ biometricApprovalToken: approval.token })
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
+      setPinVersion(current => current + 1)
     }
   }
 
@@ -408,7 +424,15 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               </div>
             )}
           </div>
-          <PinPad key={pinVersion} onComplete={handlePin} title={submittingOrder ? 'Submitting Order…' : 'Confirm Buy Order'} subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(amt + fee)} from your NGN balance`} />
+          <PinPad
+            key={pinVersion}
+            onComplete={handlePin}
+            title={submittingOrder ? 'Submitting Order…' : 'Confirm Buy Order'}
+            subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(amt + fee)} from your NGN balance`}
+            secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+            secondaryActionIconOnly
+            onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          />
         </div>
       )}
 

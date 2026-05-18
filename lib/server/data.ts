@@ -88,10 +88,30 @@ export interface NotificationRecord {
 export interface SecuritySettingsRecord {
   userId: string
   transactionPinEnabled: boolean
+  hasTransactionPin: boolean
+  transactionPinLockedUntil?: string
   twoFactorEnabled: boolean
   biometricEnabled: boolean
+  hasBiometricCredential: boolean
+  biometricCredentialCount: number
+  biometricCredentialLabel?: string
+  biometricLastVerifiedAt?: string
   createdAt: string
   updatedAt: string
+}
+
+export interface BiometricCredentialRecord {
+  id: string
+  userId: string
+  credentialId: string
+  publicKey: string
+  counter: number
+  transports: string[]
+  deviceType?: string
+  backedUp: boolean
+  label?: string
+  createdAt: string
+  lastUsedAt?: string
 }
 
 interface WalletMutationInput {
@@ -118,6 +138,11 @@ const MAX_SESSIONS_PER_USER = 5
 const PASSWORD_RESET_TTL_MINUTES = 30
 const EMAIL_VERIFICATION_TTL_HOURS = 24
 const AUTH_RATE_LIMIT_RETENTION_HOURS = 48
+const TRANSACTION_PIN_LENGTH = 4
+const TRANSACTION_PIN_MAX_FAILED_ATTEMPTS = 5
+const TRANSACTION_PIN_LOCK_MINUTES = 15
+const WEBAUTHN_CHALLENGE_TTL_MINUTES = 10
+const BIOMETRIC_APPROVAL_TTL_MINUTES = 5
 const DEFAULT_REWARD_RULES: RewardRule[] = [
   {
     id: 'reward_referral_inviter_first_success',
@@ -298,10 +323,48 @@ type RewardAwardRequestRow = {
 type SecuritySettingsRow = {
   user_id: string
   transaction_pin_enabled: number
+  transaction_pin_hash: string | null
+  transaction_pin_salt: string | null
+  transaction_pin_failed_attempts: number
+  transaction_pin_locked_until: string | null
   two_factor_enabled: number
   biometric_enabled: number
   created_at: string
   updated_at: string
+}
+
+type BiometricCredentialRow = {
+  id: string
+  user_id: string
+  credential_id: string
+  public_key: string
+  counter: number
+  transports: string | null
+  device_type: string | null
+  backed_up: number
+  label: string | null
+  created_at: string
+  last_used_at: string | null
+}
+
+type WebAuthnChallengeRow = {
+  id: string
+  user_id: string
+  purpose: string
+  challenge: string
+  rp_id: string
+  origin: string
+  expires_at: string
+  created_at: string
+  used_at: string | null
+}
+
+type BiometricApprovalRow = {
+  token: string
+  user_id: string
+  expires_at: string
+  created_at: string
+  used_at: string | null
 }
 
 type P2PMerchantRow = {
@@ -597,6 +660,10 @@ function hashPassword(password: string, salt: string): string {
   return scryptSync(password, salt, 64).toString('hex')
 }
 
+function hashTransactionPin(pin: string, salt: string): string {
+  return scryptSync(pin, salt, 64).toString('hex')
+}
+
 function hashPasswordResetToken(token: string) {
   return createHash('sha256').update(token).digest('hex')
 }
@@ -610,6 +677,21 @@ function createPasswordRecord(password: string) {
   return {
     passwordSalt,
     passwordHash: hashPassword(password, passwordSalt),
+  }
+}
+
+function assertValidTransactionPin(pin: string) {
+  if (!/^\d{4}$/.test(pin)) {
+    throw new Error(`Transaction PIN must be exactly ${TRANSACTION_PIN_LENGTH} digits.`)
+  }
+}
+
+function createTransactionPinRecord(pin: string) {
+  assertValidTransactionPin(pin)
+  const transactionPinSalt = randomBytes(16).toString('hex')
+  return {
+    transactionPinSalt,
+    transactionPinHash: hashTransactionPin(pin, transactionPinSalt),
   }
 }
 
@@ -805,13 +887,34 @@ function mapRewardAwardRequestRow(
 }
 
 function mapSecuritySettingsRow(row: SecuritySettingsRow): SecuritySettingsRecord {
+  const hasTransactionPin = Boolean(row.transaction_pin_hash && row.transaction_pin_salt)
   return {
     userId: row.user_id,
-    transactionPinEnabled: Boolean(row.transaction_pin_enabled),
+    transactionPinEnabled: Boolean(row.transaction_pin_enabled) && hasTransactionPin,
+    hasTransactionPin,
+    transactionPinLockedUntil: row.transaction_pin_locked_until ?? undefined,
     twoFactorEnabled: Boolean(row.two_factor_enabled),
     biometricEnabled: Boolean(row.biometric_enabled),
+    hasBiometricCredential: false,
+    biometricCredentialCount: 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function mapBiometricCredentialRow(row: BiometricCredentialRow): BiometricCredentialRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    credentialId: row.credential_id,
+    publicKey: row.public_key,
+    counter: Number(row.counter ?? 0),
+    transports: row.transports ? JSON.parse(row.transports) as string[] : [],
+    deviceType: row.device_type ?? undefined,
+    backedUp: Boolean(row.backed_up),
+    label: row.label ?? undefined,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at ?? undefined,
   }
 }
 
@@ -1531,12 +1634,59 @@ function initSchema(db: DatabaseSync) {
 
     CREATE TABLE IF NOT EXISTS security_settings (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-      transaction_pin_enabled INTEGER NOT NULL DEFAULT 1,
+      transaction_pin_enabled INTEGER NOT NULL DEFAULT 0,
+      transaction_pin_hash TEXT,
+      transaction_pin_salt TEXT,
+      transaction_pin_failed_attempts INTEGER NOT NULL DEFAULT 0,
+      transaction_pin_locked_until TEXT,
       two_factor_enabled INTEGER NOT NULL DEFAULT 0,
       biometric_enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS biometric_credentials (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      credential_id TEXT NOT NULL UNIQUE,
+      public_key TEXT NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports TEXT,
+      device_type TEXT,
+      backed_up INTEGER NOT NULL DEFAULT 0,
+      label TEXT,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_biometric_credentials_user_created_at
+      ON biometric_credentials(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS webauthn_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL,
+      challenge TEXT NOT NULL,
+      rp_id TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_user_purpose_created_at
+      ON webauthn_challenges(user_id, purpose, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS biometric_approvals (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_biometric_approvals_user_created_at
+      ON biometric_approvals(user_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS p2p_merchants (
       id TEXT PRIMARY KEY,
@@ -1974,6 +2124,10 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'crypto_orders', 'execution_reference', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'destination_tx_hash', 'TEXT')
   ensureColumn(db, 'crypto_quotes', 'provider_payload', 'TEXT')
+  ensureColumn(db, 'security_settings', 'transaction_pin_hash', 'TEXT')
+  ensureColumn(db, 'security_settings', 'transaction_pin_salt', 'TEXT')
+  ensureColumn(db, 'security_settings', 'transaction_pin_failed_attempts', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(db, 'security_settings', 'transaction_pin_locked_until', 'TEXT')
   ensureColumn(db, 'reward_rules', 'daily_payout_cap_ngn', 'REAL')
   ensureColumn(db, 'reward_rules', 'manual_approval_required', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'crypto_pairs', 'transak_enabled', 'INTEGER NOT NULL DEFAULT 1')
@@ -2448,8 +2602,8 @@ function writeSnapshotSync(db: DatabaseSync, snapshot: AppDatabase) {
 
     const insertSecuritySettings = db.prepare(`
       INSERT INTO security_settings (
-        user_id, transaction_pin_enabled, two_factor_enabled, biometric_enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (const user of snapshot.users) {
@@ -2512,7 +2666,7 @@ function writeSnapshotSync(db: DatabaseSync, snapshot: AppDatabase) {
         )
       }
 
-      insertSecuritySettings.run(user.id, 1, 0, 1, user.createdAt, user.createdAt)
+      insertSecuritySettings.run(user.id, 0, null, null, 0, null, 0, 1, user.createdAt, user.createdAt)
     }
 
     for (const session of snapshot.sessions) {
@@ -6027,10 +6181,188 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
 
 export async function getSecuritySettingsByUserId(userId: string): Promise<SecuritySettingsRecord | null> {
   await ensureDbReady()
-  const row = getDb()
+  const db = getDb()
+  const row = db
     .prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1')
     .get(userId) as SecuritySettingsRow | undefined
-  return row ? mapSecuritySettingsRow(row) : null
+  if (!row) return null
+
+  const base = mapSecuritySettingsRow(row)
+  const summary = db.prepare(`
+    SELECT COUNT(*) AS count, MAX(last_used_at) AS last_used_at
+    FROM biometric_credentials
+    WHERE user_id = ?
+  `).get(userId) as { count?: number; last_used_at?: string | null } | undefined
+  const latestCredential = db.prepare(`
+    SELECT label
+    FROM biometric_credentials
+    WHERE user_id = ?
+    ORDER BY COALESCE(last_used_at, created_at) DESC
+    LIMIT 1
+  `).get(userId) as { label?: string | null } | undefined
+
+  return {
+    ...base,
+    hasBiometricCredential: Number(summary?.count ?? 0) > 0,
+    biometricCredentialCount: Number(summary?.count ?? 0),
+    biometricCredentialLabel: latestCredential?.label ?? undefined,
+    biometricLastVerifiedAt: summary?.last_used_at ?? undefined,
+  }
+}
+
+function cleanupExpiredWebAuthnArtifacts(db: DatabaseSync) {
+  const now = new Date().toISOString()
+  db.prepare('DELETE FROM webauthn_challenges WHERE expires_at <= ? OR used_at IS NOT NULL').run(now)
+  db.prepare('DELETE FROM biometric_approvals WHERE expires_at <= ? OR used_at IS NOT NULL').run(now)
+}
+
+export async function getBiometricCredentialsByUserId(userId: string): Promise<BiometricCredentialRecord[]> {
+  await ensureDbReady()
+  const db = getDb()
+  cleanupExpiredWebAuthnArtifacts(db)
+  const rows = db.prepare(`
+    SELECT *
+    FROM biometric_credentials
+    WHERE user_id = ?
+    ORDER BY COALESCE(last_used_at, created_at) DESC
+  `).all(userId) as BiometricCredentialRow[]
+  return rows.map(mapBiometricCredentialRow)
+}
+
+export async function saveWebAuthnChallenge(input: {
+  userId: string
+  purpose: string
+  challenge: string
+  rpId: string
+  origin: string
+}) {
+  await ensureDbReady()
+  const db = getDb()
+  cleanupExpiredWebAuthnArtifacts(db)
+  const now = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + WEBAUTHN_CHALLENGE_TTL_MINUTES * 60_000).toISOString()
+  db.prepare('UPDATE webauthn_challenges SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL').run(now, input.userId, input.purpose)
+  db.prepare(`
+    INSERT INTO webauthn_challenges (id, user_id, purpose, challenge, rp_id, origin, expires_at, created_at, used_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+  `).run(
+    `wch_${randomBytes(6).toString('hex')}`,
+    input.userId,
+    input.purpose,
+    input.challenge,
+    input.rpId,
+    input.origin,
+    expiresAt,
+    now
+  )
+}
+
+export async function consumeWebAuthnChallenge(userId: string, purpose: string) {
+  await ensureDbReady()
+  const db = getDb()
+  cleanupExpiredWebAuthnArtifacts(db)
+  const row = db.prepare(`
+    SELECT *
+    FROM webauthn_challenges
+    WHERE user_id = ? AND purpose = ? AND used_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(userId, purpose) as WebAuthnChallengeRow | undefined
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+    throw new Error('Biometric challenge expired. Try again.')
+  }
+  db.prepare('UPDATE webauthn_challenges SET used_at = ? WHERE id = ?').run(new Date().toISOString(), row.id)
+  return row
+}
+
+export async function saveBiometricCredential(input: {
+  userId: string
+  credentialId: string
+  publicKey: string
+  counter: number
+  transports?: string[]
+  deviceType?: string
+  backedUp?: boolean
+  label?: string
+}) {
+  await ensureDbReady()
+  const db = getDb()
+  const now = new Date().toISOString()
+  db.prepare(`
+    INSERT INTO biometric_credentials (
+      id, user_id, credential_id, public_key, counter, transports, device_type, backed_up, label, created_at, last_used_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(credential_id) DO UPDATE SET
+      public_key = excluded.public_key,
+      counter = excluded.counter,
+      transports = excluded.transports,
+      device_type = excluded.device_type,
+      backed_up = excluded.backed_up,
+      label = excluded.label
+  `).run(
+    `bio_${randomBytes(6).toString('hex')}`,
+    input.userId,
+    input.credentialId,
+    input.publicKey,
+    Number(input.counter ?? 0),
+    input.transports?.length ? JSON.stringify(input.transports) : null,
+    input.deviceType ?? null,
+    input.backedUp ? 1 : 0,
+    input.label ?? null,
+    now
+  )
+}
+
+export async function getBiometricCredentialByCredentialId(credentialId: string) {
+  await ensureDbReady()
+  const row = getDb().prepare('SELECT * FROM biometric_credentials WHERE credential_id = ? LIMIT 1').get(credentialId) as BiometricCredentialRow | undefined
+  return row ? mapBiometricCredentialRow(row) : null
+}
+
+export async function touchBiometricCredential(credentialId: string, counter: number) {
+  await ensureDbReady()
+  getDb().prepare(`
+    UPDATE biometric_credentials
+    SET counter = ?, last_used_at = ?
+    WHERE credential_id = ?
+  `).run(counter, new Date().toISOString(), credentialId)
+}
+
+export async function removeBiometricCredential(userId: string, credentialId: string) {
+  await ensureDbReady()
+  const db = getDb()
+  const result = db.prepare('DELETE FROM biometric_credentials WHERE user_id = ? AND credential_id = ?').run(userId, credentialId) as { changes?: number }
+  if (!Number(result.changes ?? 0)) {
+    throw new Error('Biometric credential not found.')
+  }
+}
+
+export async function createBiometricApproval(userId: string) {
+  await ensureDbReady()
+  const db = getDb()
+  cleanupExpiredWebAuthnArtifacts(db)
+  const token = `bioap_${randomBytes(24).toString('hex')}`
+  const now = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + BIOMETRIC_APPROVAL_TTL_MINUTES * 60_000).toISOString()
+  db.prepare(`
+    INSERT INTO biometric_approvals (token, user_id, expires_at, created_at, used_at)
+    VALUES (?, ?, ?, ?, NULL)
+  `).run(token, userId, expiresAt, now)
+  return { token, expiresAt }
+}
+
+export async function consumeBiometricApproval(userId: string, token: string) {
+  await ensureDbReady()
+  const db = getDb()
+  cleanupExpiredWebAuthnArtifacts(db)
+  const row = db.prepare('SELECT * FROM biometric_approvals WHERE token = ? AND user_id = ? LIMIT 1').get(token, userId) as BiometricApprovalRow | undefined
+  if (!row || row.used_at) {
+    throw new Error('Biometric approval is invalid or already used.')
+  }
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    throw new Error('Biometric approval expired. Try again.')
+  }
+  db.prepare('UPDATE biometric_approvals SET used_at = ? WHERE token = ?').run(new Date().toISOString(), token)
 }
 
 export async function upsertSecuritySettings(
@@ -6039,18 +6371,28 @@ export async function upsertSecuritySettings(
 ): Promise<SecuritySettingsRecord> {
   await ensureDbReady()
   const db = getDb()
-  const existing = await getSecuritySettingsByUserId(userId)
+  const row = db
+    .prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1')
+    .get(userId) as SecuritySettingsRow | undefined
+  const existing = row ? mapSecuritySettingsRow(row) : null
   const now = new Date().toISOString()
+  const hasTransactionPin = Boolean(row?.transaction_pin_hash && row?.transaction_pin_salt)
+  const biometricCredentialCount = Number((db.prepare('SELECT COUNT(*) AS count FROM biometric_credentials WHERE user_id = ?').get(userId) as { count?: number } | undefined)?.count ?? 0)
+  const requestedPinEnabled = typeof updates.transactionPinEnabled === 'boolean'
+    ? updates.transactionPinEnabled
+    : existing?.transactionPinEnabled ?? false
   const next = {
-    transactionPinEnabled: updates.transactionPinEnabled ?? existing?.transactionPinEnabled ?? true,
+    transactionPinEnabled: hasTransactionPin ? requestedPinEnabled : false,
     twoFactorEnabled: updates.twoFactorEnabled ?? existing?.twoFactorEnabled ?? false,
-    biometricEnabled: updates.biometricEnabled ?? existing?.biometricEnabled ?? true,
+    biometricEnabled: biometricCredentialCount > 0
+      ? (updates.biometricEnabled ?? existing?.biometricEnabled ?? true)
+      : false,
   }
 
   db.prepare(`
     INSERT INTO security_settings (
-      user_id, transaction_pin_enabled, two_factor_enabled, biometric_enabled, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?)
+      user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       transaction_pin_enabled = excluded.transaction_pin_enabled,
       two_factor_enabled = excluded.two_factor_enabled,
@@ -6059,6 +6401,10 @@ export async function upsertSecuritySettings(
   `).run(
     userId,
     next.transactionPinEnabled ? 1 : 0,
+    row?.transaction_pin_hash ?? null,
+    row?.transaction_pin_salt ?? null,
+    Number(row?.transaction_pin_failed_attempts ?? 0),
+    row?.transaction_pin_locked_until ?? null,
     next.twoFactorEnabled ? 1 : 0,
     next.biometricEnabled ? 1 : 0,
     existing?.createdAt ?? now,
@@ -6068,6 +6414,155 @@ export async function upsertSecuritySettings(
   const record = await getSecuritySettingsByUserId(userId)
   if (!record) throw new Error('Unable to persist security settings')
   return record
+}
+
+export async function upsertTransactionPin(userId: string, nextPin: string, currentPin?: string) {
+  await ensureDbReady()
+  assertValidTransactionPin(nextPin)
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
+  const now = new Date().toISOString()
+
+  if (row?.transaction_pin_hash && row?.transaction_pin_salt) {
+    if (!currentPin) {
+      throw new Error('Current transaction PIN is required.')
+    }
+    assertValidTransactionPin(currentPin)
+    const currentHash = hashTransactionPin(currentPin, row.transaction_pin_salt)
+    if (currentHash !== row.transaction_pin_hash) {
+      throw new Error('Current transaction PIN is incorrect.')
+    }
+  }
+
+  const { transactionPinHash, transactionPinSalt } = createTransactionPinRecord(nextPin)
+  db.prepare(`
+    INSERT INTO security_settings (
+      user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      transaction_pin_enabled = excluded.transaction_pin_enabled,
+      transaction_pin_hash = excluded.transaction_pin_hash,
+      transaction_pin_salt = excluded.transaction_pin_salt,
+      transaction_pin_failed_attempts = excluded.transaction_pin_failed_attempts,
+      transaction_pin_locked_until = excluded.transaction_pin_locked_until,
+      updated_at = excluded.updated_at
+  `).run(
+    userId,
+    1,
+    transactionPinHash,
+    transactionPinSalt,
+    0,
+    null,
+    row?.two_factor_enabled ?? 0,
+    row?.biometric_enabled ?? 1,
+    row?.created_at ?? now,
+    now
+  )
+
+  const record = await getSecuritySettingsByUserId(userId)
+  if (!record) throw new Error('Unable to save transaction PIN.')
+  return record
+}
+
+export async function disableTransactionPin(userId: string, currentPin: string) {
+  await ensureDbReady()
+  assertValidTransactionPin(currentPin)
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
+  if (!row?.transaction_pin_hash || !row.transaction_pin_salt) {
+    throw new Error('Transaction PIN is not set.')
+  }
+
+  const currentHash = hashTransactionPin(currentPin, row.transaction_pin_salt)
+  if (currentHash !== row.transaction_pin_hash) {
+    throw new Error('Current transaction PIN is incorrect.')
+  }
+
+  db.prepare(`
+    UPDATE security_settings
+    SET transaction_pin_enabled = 0,
+        transaction_pin_hash = NULL,
+        transaction_pin_salt = NULL,
+        transaction_pin_failed_attempts = 0,
+        transaction_pin_locked_until = NULL,
+        updated_at = ?
+    WHERE user_id = ?
+  `).run(new Date().toISOString(), userId)
+
+  const record = await getSecuritySettingsByUserId(userId)
+  if (!record) throw new Error('Unable to update transaction PIN.')
+  return record
+}
+
+export async function verifyTransactionPinForUser(userId: string, pin: string) {
+  await ensureDbReady()
+  assertValidTransactionPin(pin)
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
+  if (!row?.transaction_pin_hash || !row.transaction_pin_salt) {
+    throw new Error('Set up a transaction PIN before continuing.')
+  }
+
+  if (row.transaction_pin_locked_until && new Date(row.transaction_pin_locked_until).getTime() > Date.now()) {
+    throw new Error(`Transaction PIN is temporarily locked until ${new Date(row.transaction_pin_locked_until).toLocaleString('en-NG')}.`)
+  }
+
+  const nextHash = hashTransactionPin(pin, row.transaction_pin_salt)
+  if (nextHash !== row.transaction_pin_hash) {
+    const failedAttempts = Number(row.transaction_pin_failed_attempts ?? 0) + 1
+    const lockedUntil = failedAttempts >= TRANSACTION_PIN_MAX_FAILED_ATTEMPTS
+      ? new Date(Date.now() + TRANSACTION_PIN_LOCK_MINUTES * 60_000).toISOString()
+      : null
+
+    db.prepare(`
+      UPDATE security_settings
+      SET transaction_pin_failed_attempts = ?,
+          transaction_pin_locked_until = ?,
+          updated_at = ?
+      WHERE user_id = ?
+    `).run(failedAttempts, lockedUntil, new Date().toISOString(), userId)
+
+    if (lockedUntil) {
+      throw new Error(`Too many failed PIN attempts. Try again after ${new Date(lockedUntil).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}.`)
+    }
+    throw new Error('Transaction PIN is incorrect.')
+  }
+
+  db.prepare(`
+    UPDATE security_settings
+    SET transaction_pin_failed_attempts = 0,
+        transaction_pin_locked_until = NULL,
+        transaction_pin_enabled = 1,
+        updated_at = ?
+    WHERE user_id = ?
+  `).run(new Date().toISOString(), userId)
+
+  const record = await getSecuritySettingsByUserId(userId)
+  if (!record) throw new Error('Unable to validate transaction PIN.')
+  return record
+}
+
+export async function verifySensitiveActionAuthorization(
+  userId: string,
+  input: { transactionPin?: string; biometricApprovalToken?: string }
+) {
+  const transactionPin = typeof input.transactionPin === 'string' ? input.transactionPin.trim() : ''
+  const biometricApprovalToken = typeof input.biometricApprovalToken === 'string' ? input.biometricApprovalToken.trim() : ''
+
+  if (transactionPin) {
+    return verifyTransactionPinForUser(userId, transactionPin)
+  }
+
+  if (biometricApprovalToken) {
+    await consumeBiometricApproval(userId, biometricApprovalToken)
+    const settings = await getSecuritySettingsByUserId(userId)
+    if (!settings?.hasBiometricCredential || !settings.biometricEnabled) {
+      throw new Error('Biometric approval is not enabled for this account.')
+    }
+    return settings
+  }
+
+  throw new Error('Transaction PIN or biometric approval is required.')
 }
 
 export async function markNotificationsReadByUserId(userId: string) {
@@ -6247,9 +6742,9 @@ export async function createUser(input: { name: string; email: string; phone: st
     `).run(user.id, wallet.balance, wallet.lockedBalance, wallet.currency, JSON.stringify(wallet.virtualAccounts))
     db.prepare(`
       INSERT INTO security_settings (
-        user_id, transaction_pin_enabled, two_factor_enabled, biometric_enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(user.id, 1, 0, 1, now, now)
+        user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(user.id, 0, null, null, 0, null, 0, 1, now, now)
     db.exec('COMMIT')
   } catch (error) {
     db.exec('ROLLBACK')
