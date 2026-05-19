@@ -6,6 +6,7 @@ import {
   createSettledDepositFromProvider,
   getTransactionByReference,
   getUserByEmail,
+  getUserByVirtualAccountNumber,
   insertAuditLog,
   markProviderEventProcessed,
   recordProviderEvent,
@@ -83,8 +84,9 @@ export async function handleFlutterwaveWebhook(input: {
     if (eventType === 'charge.completed') {
       const customer = isRecord(data.customer) ? data.customer : {}
       const customerEmail = readString(customer.email)
+      const accountNumber = readString(data.account_number)
 
-      if (reference.startsWith('static_va_') && customerEmail) {
+      if (reference.startsWith('static_va_')) {
         const recorded = await recordProviderEvent({
           externalEventId,
           provider: 'flutterwave',
@@ -97,9 +99,21 @@ export async function handleFlutterwaveWebhook(input: {
           return { body: { data: { duplicate: true, event: recorded.event }, success: true }, status: 200 as const }
         }
 
-        const user = await getUserByEmail(customerEmail)
+        const user = (customerEmail ? await getUserByEmail(customerEmail) : null)
+          ?? (accountNumber ? await getUserByVirtualAccountNumber(accountNumber) : null)
         if (!user) {
-          return { body: { error: 'Deposit customer could not be matched to a user.', success: false }, status: 404 as const }
+          return {
+            body: {
+              error: 'Deposit customer could not be matched to a user.',
+              success: false,
+              debug: {
+                customerEmail: customerEmail || null,
+                accountNumber: accountNumber || null,
+                reference,
+              },
+            },
+            status: 404 as const,
+          }
         }
 
         const grossAmount = Number(data.amount)
@@ -127,7 +141,7 @@ export async function handleFlutterwaveWebhook(input: {
           grossAmount,
           fee,
           fundingMethod: 'virtual_account_static',
-          accountNumber: readString(data.account_number),
+          accountNumber,
           bankName: readString(data.bank_name),
           accountName: readString(data.narration) || `${user.name.trim()} MAFITAPAY`,
           metadata: {
