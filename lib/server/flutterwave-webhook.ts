@@ -15,6 +15,7 @@ import {
 import { processSettlementEvent } from '@/lib/server/settlements'
 
 const MAX_DEPOSIT_FEE = 100
+const FLUTTERWAVE_WEBHOOK_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_FLUTTERWAVE === '1'
 
 function readString(value: unknown) {
   if (typeof value === 'string') return value.trim()
@@ -26,13 +27,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function logFlutterwaveWebhook(event: string, payload: Record<string, unknown>) {
+  if (!FLUTTERWAVE_WEBHOOK_LOGGING_ENABLED) return
+  console.log(`[flutterwave-webhook] ${event}`, JSON.stringify(payload))
+}
+
 export async function handleFlutterwaveWebhook(input: {
   rawBody: string
   signature?: string | null
   skipSignatureVerification?: boolean
   source?: 'public_webhook' | 'admin_test'
 }) {
-  if (!input.skipSignatureVerification && !verifyFlutterwaveWebhook(input.rawBody, input.signature ?? null)) {
+  const signatureValid = input.skipSignatureVerification || verifyFlutterwaveWebhook(input.rawBody, input.signature ?? null)
+  if (!signatureValid) {
+    logFlutterwaveWebhook('signature.invalid', {
+      source: input.source ?? 'public_webhook',
+      hasSignature: Boolean(input.signature),
+      bodyLength: input.rawBody.length,
+    })
     return { body: { error: 'Unauthorized webhook request.', success: false }, status: 401 as const }
   }
 
@@ -73,10 +85,32 @@ export async function handleFlutterwaveWebhook(input: {
     rawStatus = readString(data.status) || readString(body.status)
     status = mapFlutterwaveBillPaymentStatus(rawStatus)
   } else {
+    logFlutterwaveWebhook('ignored', {
+      source: input.source ?? 'public_webhook',
+      eventType,
+    })
     return { body: { data: { ignored: true, eventType }, success: true }, status: 200 as const }
   }
 
+  logFlutterwaveWebhook('parsed', {
+    source: input.source ?? 'public_webhook',
+    eventType,
+    reference,
+    externalEventId,
+    providerReference: providerReference ?? null,
+    rawStatus,
+    mappedStatus: status,
+  })
+
   if (!reference || !externalEventId || !status) {
+    logFlutterwaveWebhook('payload.invalid', {
+      source: input.source ?? 'public_webhook',
+      eventType,
+      reference,
+      externalEventId,
+      rawStatus,
+      mappedStatus: status,
+    })
     return { body: { error: 'Invalid Flutterwave webhook payload.', success: false }, status: 400 as const }
   }
 
@@ -87,6 +121,14 @@ export async function handleFlutterwaveWebhook(input: {
       const accountNumber = readString(data.account_number)
 
       if (reference.startsWith('static_va_')) {
+        logFlutterwaveWebhook('static-va.received', {
+          reference,
+          externalEventId,
+          customerEmail: customerEmail || null,
+          accountNumber: accountNumber || null,
+          rawStatus,
+          mappedStatus: status,
+        })
         const recorded = await recordProviderEvent({
           externalEventId,
           provider: 'flutterwave',
@@ -96,12 +138,24 @@ export async function handleFlutterwaveWebhook(input: {
           payload: body,
         })
         if (!recorded.inserted) {
+          logFlutterwaveWebhook('static-va.duplicate-event', {
+            reference,
+            externalEventId,
+            providerReference: providerReference ?? null,
+          })
           return { body: { data: { duplicate: true, event: recorded.event }, success: true }, status: 200 as const }
         }
 
         const user = (customerEmail ? await getUserByEmail(customerEmail) : null)
           ?? (accountNumber ? await getUserByVirtualAccountNumber(accountNumber) : null)
         if (!user) {
+          logFlutterwaveWebhook('static-va.user-miss', {
+            reference,
+            externalEventId,
+            customerEmail: customerEmail || null,
+            accountNumber: accountNumber || null,
+            providerReference: providerReference ?? null,
+          })
           return {
             body: {
               error: 'Deposit customer could not be matched to a user.',
@@ -116,18 +170,42 @@ export async function handleFlutterwaveWebhook(input: {
           }
         }
 
+        logFlutterwaveWebhook('static-va.user-match', {
+          reference,
+          externalEventId,
+          userId: user.id,
+          customerEmail: customerEmail || null,
+          accountNumber: accountNumber || null,
+        })
+
         const grossAmount = Number(data.amount)
         if (!Number.isFinite(grossAmount) || grossAmount <= 0) {
+          logFlutterwaveWebhook('static-va.amount-invalid', {
+            reference,
+            externalEventId,
+            amount: data.amount ?? null,
+          })
           return { body: { error: 'Invalid Flutterwave deposit amount.', success: false }, status: 400 as const }
         }
 
         const uniqueReference = providerReference || reference
         const duplicateProviderRef = await getTransactionByReference(uniqueReference)
         if (duplicateProviderRef?.transaction) {
+          logFlutterwaveWebhook('static-va.duplicate-transaction', {
+            reference,
+            uniqueReference,
+            transactionId: duplicateProviderRef.transaction.id,
+          })
           return { body: { data: { duplicate: true, transaction: duplicateProviderRef.transaction }, success: true }, status: 200 as const }
         }
 
         if (status === 'failed') {
+          logFlutterwaveWebhook('static-va.failed-status', {
+            reference,
+            externalEventId,
+            rawStatus,
+            failureReason: failureReason ?? null,
+          })
           return { body: { data: { ignored: true, status }, success: true }, status: 200 as const }
         }
 
@@ -167,6 +245,16 @@ export async function handleFlutterwaveWebhook(input: {
           message: `${deposit.transaction.description} has been confirmed by Flutterwave.`,
           type: 'success',
         }))
+
+        logFlutterwaveWebhook('static-va.credited', {
+          reference,
+          uniqueReference,
+          userId: user.id,
+          grossAmount,
+          fee,
+          netAmount: deposit.transaction.amount,
+          transactionId: deposit.transaction.id,
+        })
 
         return { body: { data: deposit.transaction, success: true }, status: 200 as const }
       }
@@ -218,11 +306,30 @@ export async function handleFlutterwaveWebhook(input: {
     })
 
     if (processed.duplicate) {
+      logFlutterwaveWebhook('settlement.duplicate', {
+        reference,
+        externalEventId,
+        eventType,
+      })
       return { body: { data: { duplicate: true, event: processed.event }, success: true }, status: 200 as const }
     }
 
+    logFlutterwaveWebhook('settlement.processed', {
+      reference,
+      externalEventId,
+      eventType,
+      result: processed.result ?? null,
+    })
+
     return { body: { data: processed.result, success: true }, status: 200 as const }
   } catch (error) {
+    logFlutterwaveWebhook('error', {
+      source: input.source ?? 'public_webhook',
+      eventType,
+      reference,
+      externalEventId,
+      message: error instanceof Error ? error.message : 'Settlement processing failed.',
+    })
     return {
       body: { error: error instanceof Error ? error.message : 'Settlement processing failed.', success: false },
       status: 404 as const,
