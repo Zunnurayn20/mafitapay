@@ -58,7 +58,9 @@ export function WalletHero() {
           <div className="mb-3 flex flex-wrap items-end gap-2">
             <span className="font-display text-[20px] font-black text-[var(--gold2)]">₦</span>
             <span className={`font-display text-[clamp(2.5rem,7vw,3.75rem)] font-black leading-none text-[rgba(248,238,220,0.96)] transition-all ${!visible ? 'blur-sm select-none' : ''}`}>
-              {wallet ? Math.floor(availableBalance).toLocaleString() : '—'}
+              {wallet
+                ? availableBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : '—'}
             </span>
             <button onClick={() => setVisible(v => !v)} className="pb-1 text-[18px] text-[rgba(233,214,186,0.58)] transition-colors hover:text-[rgba(244,231,208,0.88)]">
               {visible ? '👁' : '🙈'}

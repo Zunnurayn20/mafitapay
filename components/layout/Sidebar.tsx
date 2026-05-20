@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/store'
+import { formatNGN } from '@/lib/utils'
 import {
   LayoutDashboard, ClipboardList, ArrowLeftRight, Zap,
   Receipt, Users, UserCircle, ShieldCheck, LogOut, ChevronRight
@@ -64,9 +65,7 @@ export function Sidebar() {
     } catch {}
   }
 
-  const ngnFmt = wallet
-    ? '₦' + Math.floor(wallet.balance).toLocaleString('en-NG')
-    : '—'
+  const ngnFmt = wallet ? formatNGN(wallet.balance) : '—'
 
   return (
     <aside className="sticky top-0 flex h-screen min-h-screen flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--coal)]">
