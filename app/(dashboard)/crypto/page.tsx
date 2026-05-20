@@ -165,33 +165,37 @@ export default function CryptoPage() {
               <Skeleton className="h-8 w-16" />
             </div>
           )) : assets.map(a => (
-            <div key={a.id} className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)] last:border-0 hover:bg-[var(--clay)] transition-colors cursor-pointer" onClick={() => { setModalData({ cryptoAsset: a, cryptoPairId: a.id }); openModal('buy') }}>
+            <div
+              key={a.id}
+              className="flex items-center gap-2.5 border-b border-[var(--border)] px-3 py-3 last:border-0 transition-colors hover:bg-[var(--clay)] sm:gap-3 sm:px-5 sm:py-4 cursor-pointer"
+              onClick={() => { setModalData({ cryptoAsset: a, cryptoPairId: a.id }); openModal('buy') }}
+            >
               <AssetLogo
                 src={a.icon}
                 alt={`${a.symbol} logo`}
                 fallback={a.symbol.slice(0, 1)}
-                className="h-14 w-14 flex items-center justify-center flex-shrink-0 overflow-hidden"
-                imgClassName="h-12 w-12 object-contain"
-                textClassName="font-display font-bold text-2xl text-[var(--gold2)]"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden sm:h-14 sm:w-14"
+                imgClassName="h-9 w-9 object-contain sm:h-12 sm:w-12"
+                textClassName="font-display text-xl font-bold text-[var(--gold2)] sm:text-2xl"
               />
-              <div className="flex-1">
-                <div className="text-[14px] font-bold text-[var(--gold2)]">{a.name} ({a.symbol})</div>
-                <div className="mt-1 text-[9px] font-medium text-[var(--text2)]">{a.network}</div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[12px] font-bold text-[var(--gold2)] sm:text-[14px]">{a.name} ({a.symbol})</div>
+                <div className="mt-0.5 truncate text-[8px] font-medium text-[var(--text2)] sm:mt-1 sm:text-[9px]">{a.network}</div>
               </div>
-              <div className="text-right mr-4">
-                <div className="text-[8px] text-[var(--muted)] uppercase tracking-[.8px]">Market Price</div>
-                <div className="text-[13px] font-bold font-mono text-[var(--text)]">
+              <div className="min-w-0 text-right">
+                <div className="text-[7px] uppercase tracking-[.7px] text-[var(--muted)] sm:text-[8px]">Market Price</div>
+                <div className="truncate text-[11px] font-bold font-mono text-[var(--text)] sm:text-[13px]">
                   {formatMarketUsd(a.marketPriceUsd, a.pricingSource)}
                 </div>
-                <div className="mt-1 text-[8px] text-[var(--muted)]">
-                  Buy rate: {formatNGN(a.buyRate)}
+                <div className="mt-0.5 text-[8px] font-mono text-[var(--muted)] sm:mt-1">
+                  {formatNGN(a.buyRate)}
                 </div>
               </div>
-              <div className="mr-3 text-right">
-                <div className={`text-[9px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
+              <div className="w-[3.2rem] flex-shrink-0 text-right sm:w-[3.75rem]">
+                <div className={`text-[8px] sm:text-[9px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
                   {a.change24h >= 0 ? '▲' : '▼'} {formatPercentChange(a.change24h)}
                 </div>
-                <div className={`mt-1 text-[8px] ${a.refreshDirection === 'up' ? 'text-[var(--green2)]' : a.refreshDirection === 'down' ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
+                <div className={`mt-0.5 text-[7px] sm:mt-1 sm:text-[8px] ${a.refreshDirection === 'up' ? 'text-[var(--green2)]' : a.refreshDirection === 'down' ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
                   {a.refreshDirection === 'up' ? '↗' : a.refreshDirection === 'down' ? '↘' : '•'}
                 </div>
               </div>
