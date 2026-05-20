@@ -176,12 +176,7 @@ export default function CryptoPage() {
               />
               <div className="flex-1">
                 <div className="text-[14px] font-bold text-[var(--gold2)]">{a.name} ({a.symbol})</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <div className="text-[9px] font-medium text-[var(--text2)]">{a.network}</div>
-                  <div className={`border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[.8px] ${shouldMaskStaleSnapshot && a.pricingSource !== 'live' ? 'border-[rgba(99,102,241,.25)] bg-[rgba(79,70,229,.08)] text-[var(--gold2)]' : a.pricingSource === 'live' ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]' : a.pricingSource === 'backup' ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] text-[var(--red2)]'}`}>
-                    {shouldMaskStaleSnapshot && a.pricingSource !== 'live' ? 'Refreshing' : a.pricingSource === 'live' ? 'Live' : a.pricingSource === 'backup' ? 'Cached' : 'Unavailable'}
-                  </div>
-                </div>
+                <div className="mt-1 text-[9px] font-medium text-[var(--text2)]">{a.network}</div>
               </div>
               <div className="text-right mr-4">
                 <div className="text-[8px] text-[var(--muted)] uppercase tracking-[.8px]">Market Price</div>
@@ -200,10 +195,6 @@ export default function CryptoPage() {
                   {a.refreshDirection === 'up' ? '↗' : a.refreshDirection === 'down' ? '↘' : '•'}
                 </div>
               </div>
-              <button onClick={e => { e.stopPropagation(); setModalData({ cryptoAsset: a, cryptoPairId: a.id }); openModal('buy') }}
-                className="px-3 py-1.5 text-[9px] font-bold uppercase bg-[var(--gold)] text-white hover:bg-[var(--terra2)] transition-colors flex-shrink-0">
-                Trade
-              </button>
             </div>
           ))}
         </Card>
