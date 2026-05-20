@@ -14,7 +14,7 @@ export function Toast() {
 
   return (
     <div
-      className={`fixed bottom-6 right-6 z-[600] flex items-center gap-3 px-5 py-3.5 border border-[var(--border)] border-l-4 ${colors[toast.type]} animate-fade-up min-w-72 max-w-sm cursor-pointer`}
+      className={`fixed left-1/2 top-4 z-[600] flex w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 border border-[var(--border)] border-l-4 px-4 py-3 ${colors[toast.type]} animate-fade-up cursor-pointer sm:left-auto sm:right-6 sm:top-auto sm:bottom-6 sm:w-auto sm:translate-x-0 sm:px-5 sm:py-3.5`}
       onClick={clearToast}
     >
       <span className="text-[16px]">{icons[toast.type]}</span>
