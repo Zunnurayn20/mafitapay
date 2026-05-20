@@ -47,7 +47,6 @@ export type AdminSubmodule =
   | 'rails'
   | 'providers'
   | 'market'
-  | 'legacy'
 export type CryptoCatalogFilter = 'all' | 'active' | 'archived'
 export type BillCatalogFilter = 'all' | 'active' | 'archived'
 
@@ -94,7 +93,6 @@ export const ADMIN_MODULE_TREE = [
       { href: '/admin/health/rails', label: 'Rails', description: 'Base executor, treasury, and 0x rail checks' },
       { href: '/admin/health/providers', label: 'Providers', description: 'Flutterwave and provider-side health' },
       { href: '/admin/health/market', label: 'Market', description: 'Crypto market freshness and cache health' },
-      { href: '/admin/health/legacy', label: 'Legacy Rails', description: 'Transak and cNGN legacy diagnostics' },
     ],
   },
 ] as const

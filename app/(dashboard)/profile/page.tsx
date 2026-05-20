@@ -19,7 +19,7 @@ export default function ProfilePage() {
   }, [user?.name, user?.phone])
 
   const initial = user?.name?.trim().charAt(0).toUpperCase() || 'A'
-  const virtualAccounts = (wallet?.virtualAccounts ?? []).filter(item => (item.provider === 'flutterwave' || item.provider === 'cngn') && item.isPermanent)
+  const virtualAccounts = (wallet?.virtualAccounts ?? []).filter(item => item.provider === 'flutterwave' && item.isPermanent)
   const kycCopy = user?.kycStatus === 'verified'
     ? {
         badge: 'KYC VERIFIED',

@@ -116,7 +116,7 @@ export interface BiometricCredentialRecord {
 
 interface WalletMutationInput {
   userId: string
-  asset?: 'NGN' | 'CNGN'
+  asset?: 'NGN' | 'RESERVE'
   balanceDelta?: number
   lockedBalanceDelta?: number
   minimumAvailableBalance?: number
@@ -401,8 +401,7 @@ type CryptoPairRow = {
   sell_spread_bps: number
   quote_ttl_seconds: number
   is_active: number
-  transak_enabled: number
-  cngn_swap_enabled: number
+  base_execution_enabled: number
   execution_rail: string | null
   routed_to_chain: string | null
   routed_to_token: string | null
@@ -448,7 +447,7 @@ type CryptoOrderRow = {
   provider_status: string | null
   provider_reference: string | null
   provider_payload: string | null
-  execution_rail: 'cngn_base' | 'base_treasury' | 'bsc_treasury' | 'routed_treasury' | 'sui_treasury' | 'ton_treasury' | 'near_intents' | null
+  execution_rail: 'base_legacy' | 'base_treasury' | 'bsc_treasury' | 'routed_treasury' | 'sui_treasury' | 'ton_treasury' | 'near_intents' | null
   execution_status: 'awaiting_swap' | 'broadcasted' | 'settled' | 'failed' | null
   execution_reference: string | null
   destination_tx_hash: string | null
@@ -537,7 +536,7 @@ type LedgerEntryRow = {
   id: string
   user_id: string
   transaction_id: string | null
-  asset: 'NGN' | 'CNGN'
+  asset: 'NGN' | 'RESERVE'
   account: 'available' | 'locked'
   direction: 'credit' | 'debit'
   amount: number
@@ -545,7 +544,7 @@ type LedgerEntryRow = {
   created_at: string
 }
 
-type AssetBalanceKey = 'NGN' | 'CNGN'
+type AssetBalanceKey = 'NGN' | 'RESERVE'
 type AssetBalanceSummary = Record<AssetBalanceKey, { available: number; locked: number }>
 
 type ProviderEventRow = {
@@ -953,8 +952,7 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
     sellSpreadBps: Number(row.sell_spread_bps),
     quoteTtlSeconds: Number(row.quote_ttl_seconds),
     isActive: Boolean(row.is_active),
-    transakEnabled: Boolean(row.transak_enabled),
-    baseExecutionEnabled: Boolean(row.cngn_swap_enabled),
+    baseExecutionEnabled: Boolean(row.base_execution_enabled),
     executionRail:
       row.execution_rail === 'base_treasury'
         ? 'base_treasury'
@@ -1042,11 +1040,9 @@ function mapCryptoOrderRow(row: CryptoOrderRow): CryptoOrder {
     walletAddress: row.wallet_address ?? undefined,
     exchange: row.exchange ?? undefined,
     provider:
-      row.provider === 'transak'
-        ? 'transak'
-        : row.provider === '0x'
-          ? '0x'
-          : row.provider === 'lifi'
+      row.provider === '0x'
+        ? '0x'
+        : row.provider === 'lifi'
             ? 'lifi'
             : row.provider === 'ston'
               ? 'ston'
@@ -1058,15 +1054,21 @@ function mapCryptoOrderRow(row: CryptoOrderRow): CryptoOrder {
     providerReference: row.provider_reference ?? undefined,
     providerPayload: parseJson(row.provider_payload, undefined),
     executionRail:
-      row.execution_rail === 'cngn_base'
+      row.execution_rail === 'base_legacy'
         ? 'base_legacy'
-        : row.execution_rail === 'sui_treasury'
-          ? 'sui_treasury'
-        : row.execution_rail === 'ton_treasury'
-          ? 'ton_treasury'
-          : row.execution_rail === 'near_intents'
-            ? 'near_intents'
-            : row.execution_rail ?? undefined,
+        : row.execution_rail === 'base_treasury'
+          ? 'base_treasury'
+          : row.execution_rail === 'bsc_treasury'
+            ? 'bsc_treasury'
+            : row.execution_rail === 'routed_treasury'
+              ? 'routed_treasury'
+              : row.execution_rail === 'sui_treasury'
+                ? 'sui_treasury'
+                : row.execution_rail === 'ton_treasury'
+                  ? 'ton_treasury'
+                  : row.execution_rail === 'near_intents'
+                    ? 'near_intents'
+                    : undefined,
     executionStatus: row.execution_status ?? undefined,
     executionReference: row.execution_reference ?? undefined,
     destinationTxHash: row.destination_tx_hash ?? undefined,
@@ -1413,7 +1415,7 @@ function mapBeneficiaryVerificationRow(row: BeneficiaryVerificationRow): Benefic
 function emptyAssetBalances(): AssetBalanceSummary {
   return {
     NGN: { available: 0, locked: 0 },
-    CNGN: { available: 0, locked: 0 },
+    RESERVE: { available: 0, locked: 0 },
   }
 }
 
@@ -1421,8 +1423,8 @@ function buildWalletFromRow(row: WalletRow, balances?: AssetBalanceSummary): Wal
   return {
     balance: balances ? balances.NGN.available : Number(row.balance),
     lockedBalance: balances ? balances.NGN.locked : Number(row.locked_balance),
-    reserveBalance: balances ? balances.CNGN.available : 0,
-    reserveLockedBalance: balances ? balances.CNGN.locked : 0,
+    reserveBalance: balances ? balances.RESERVE.available : 0,
+    reserveLockedBalance: balances ? balances.RESERVE.locked : 0,
     currency: row.currency,
     virtualAccounts: parseJson(row.virtual_accounts, [] as Wallet['virtualAccounts']),
   }
@@ -1436,12 +1438,12 @@ function calculateWalletBalances(db: DatabaseSync, userId: string) {
     FROM ledger_entries
     WHERE user_id = ?
     GROUP BY asset, account
-  `).all(userId) as Array<{ asset: AssetBalanceKey; account: 'available' | 'locked'; balance: number }>
+  `).all(userId) as Array<{ asset: string; account: 'available' | 'locked'; balance: number }>
 
   const balances = emptyAssetBalances()
 
   for (const row of rows) {
-    const asset = row.asset === 'CNGN' ? 'CNGN' : 'NGN'
+    const asset: AssetBalanceKey = row.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
     if (row.account === 'available') balances[asset].available = Number(row.balance)
     if (row.account === 'locked') balances[asset].locked = Number(row.balance)
   }
@@ -1722,8 +1724,7 @@ function initSchema(db: DatabaseSync) {
       sell_spread_bps INTEGER NOT NULL,
       quote_ttl_seconds INTEGER NOT NULL DEFAULT 90,
       is_active INTEGER NOT NULL DEFAULT 1,
-      transak_enabled INTEGER NOT NULL DEFAULT 1,
-      cngn_swap_enabled INTEGER NOT NULL DEFAULT 0,
+      base_execution_enabled INTEGER NOT NULL DEFAULT 0,
       execution_rail TEXT,
       routed_to_chain TEXT,
       routed_to_token TEXT,
@@ -2130,8 +2131,7 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'security_settings', 'transaction_pin_locked_until', 'TEXT')
   ensureColumn(db, 'reward_rules', 'daily_payout_cap_ngn', 'REAL')
   ensureColumn(db, 'reward_rules', 'manual_approval_required', 'INTEGER NOT NULL DEFAULT 0')
-  ensureColumn(db, 'crypto_pairs', 'transak_enabled', 'INTEGER NOT NULL DEFAULT 1')
-  ensureColumn(db, 'crypto_pairs', 'cngn_swap_enabled', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(db, 'crypto_pairs', 'base_execution_enabled', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'crypto_pairs', 'execution_rail', 'TEXT')
   ensureColumn(db, 'crypto_pairs', 'routed_to_chain', 'TEXT')
   ensureColumn(db, 'crypto_pairs', 'routed_to_token', 'TEXT')
@@ -2205,9 +2205,9 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
   const upsertAsset = db.prepare(`
     INSERT INTO crypto_pairs (
       id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds,
-      is_active, transak_enabled, cngn_swap_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+      is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       symbol = excluded.symbol,
       name = excluded.name,
@@ -2221,8 +2221,7 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       sell_spread_bps = excluded.sell_spread_bps,
       quote_ttl_seconds = excluded.quote_ttl_seconds,
       is_active = excluded.is_active,
-      transak_enabled = excluded.transak_enabled,
-      cngn_swap_enabled = excluded.cngn_swap_enabled,
+      base_execution_enabled = excluded.base_execution_enabled,
       execution_rail = COALESCE(crypto_pairs.execution_rail, excluded.execution_rail),
       routed_to_chain = COALESCE(crypto_pairs.routed_to_chain, excluded.routed_to_chain),
       routed_to_token = COALESCE(crypto_pairs.routed_to_token, excluded.routed_to_token),
@@ -2257,7 +2256,6 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       asset.sellSpreadBps,
       asset.quoteTtlSeconds,
       asset.isActive === false ? 0 : 1,
-      asset.transakEnabled === false ? 0 : 1,
       asset.baseExecutionEnabled === true ? 1 : 0,
       executionRail ?? null,
       routedConfig?.toChain ?? null,
@@ -2282,7 +2280,7 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
 
   db.prepare(`
     UPDATE crypto_pairs
-    SET cngn_swap_enabled = 1, updated_at = ?
+    SET base_execution_enabled = 1, updated_at = ?
     WHERE id IN ('USDT_BSC', 'BNB_BSC', 'USDC_SOLANA', 'SOL_SOLANA', 'TON_TON', 'SUI_SUI', 'NEAR_NEAR')
   `).run(now)
 }
@@ -2477,8 +2475,8 @@ function seedCatalogTables(db: DatabaseSync) {
   if (!hasCatalogRows(db, 'crypto_pairs')) {
     const insertAsset = db.prepare(`
       INSERT INTO crypto_pairs (
-        id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds, is_active, transak_enabled, cngn_swap_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (const asset of CRYPTO_ASSETS) {
@@ -2504,7 +2502,6 @@ function seedCatalogTables(db: DatabaseSync) {
         asset.sellSpreadBps,
         asset.quoteTtlSeconds,
         asset.isActive === false ? 0 : 1,
-        asset.transakEnabled === false ? 0 : 1,
         asset.baseExecutionEnabled === true ? 1 : 0,
         executionRail ?? null,
         routedConfig?.toChain ?? null,
@@ -3452,7 +3449,7 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
 export async function applyWalletMutation(input: WalletMutationInput): Promise<{ wallet: Wallet; transaction: Transaction }> {
   await ensureDbReady()
   const db = getDb()
-  const asset = input.asset === 'CNGN' ? 'CNGN' : 'NGN'
+  const asset = input.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
   const balanceDelta = input.balanceDelta ?? 0
   const lockedBalanceDelta = input.lockedBalanceDelta ?? 0
 
@@ -3591,7 +3588,7 @@ export async function resolvePendingTransaction(
     const currentBalances = calculateWalletBalances(db, userId)
     const absoluteAmount = Math.abs(Number(transactionRow.amount))
     const metadata = parseJson(transactionRow.metadata, {} as Record<string, unknown>)
-    const walletAsset = metadata.walletAsset === 'CNGN' ? 'CNGN' : 'NGN'
+    const walletAsset = metadata.walletAsset === 'RESERVE' ? 'RESERVE' : 'NGN'
     let nextBalance = currentBalances[walletAsset].available
     let nextLockedBalance = currentBalances[walletAsset].locked
     const settlementFlow = typeof metadata.settlementFlow === 'string'
@@ -6116,8 +6113,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
   const now = new Date().toISOString()
   const statement = db.prepare(`
     INSERT INTO crypto_pairs (
-      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds, is_active, transak_enabled, cngn_swap_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       symbol = excluded.symbol,
@@ -6134,8 +6131,7 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       sell_spread_bps = excluded.sell_spread_bps,
       quote_ttl_seconds = excluded.quote_ttl_seconds,
       is_active = excluded.is_active,
-      transak_enabled = excluded.transak_enabled,
-      cngn_swap_enabled = excluded.cngn_swap_enabled,
+      base_execution_enabled = excluded.base_execution_enabled,
       execution_rail = excluded.execution_rail,
       routed_to_chain = excluded.routed_to_chain,
       routed_to_token = excluded.routed_to_token,
@@ -6179,7 +6175,6 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
         asset.sellSpreadBps,
         asset.quoteTtlSeconds,
         asset.isActive === false ? 0 : 1,
-        asset.transakEnabled === false ? 0 : 1,
         asset.baseExecutionEnabled === true ? 1 : 0,
         executionRail ?? null,
         routedConfig?.toChain ?? null,

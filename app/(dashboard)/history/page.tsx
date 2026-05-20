@@ -77,7 +77,7 @@ function formatHistoryTitle(tx: Transaction, cryptoAsset?: { network?: string; s
     || (typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : '')
 
   const amountLabel = amount && symbol ? `${amount} ${symbol}` : ''
-  const providerLabel = tx.metadata?.provider === 'transak' ? ' via Transak' : ''
+  const providerLabel = ''
 
   return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
 }

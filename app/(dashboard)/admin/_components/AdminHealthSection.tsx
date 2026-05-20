@@ -19,18 +19,10 @@ export function AdminHealthSection({ workspace, submodule }: { workspace: AdminW
     providerDiagnosticsReport,
     refreshingProviderDiagnostics,
     reloadProviderDiagnosticsReport,
-    showLegacyRailsHealth,
-    setShowLegacyRailsHealth,
-    transakHealth,
-    cngnHealth,
-    runCngnTest,
-    runningCngnAction,
-    cngnTestResult,
   } = workspace
   const showRails = !submodule || submodule === 'rails'
   const showProviders = !submodule || submodule === 'providers'
   const showMarket = !submodule || submodule === 'market'
-  const showLegacy = !submodule || submodule === 'legacy'
 
   return (
     <>
@@ -59,7 +51,7 @@ export function AdminHealthSection({ workspace, submodule }: { workspace: AdminW
                 {baseExecutorHealth.derivedAddress && <div className="mt-1">Derived signer: <span className="font-mono text-[var(--text)]">{baseExecutorHealth.derivedAddress}</span></div>}
               </div>
               <div className="border border-[var(--border)] bg-[var(--clay)] p-3 text-[10px] text-[var(--muted)]">
-                <div>Base cNGN Contract: <span className="font-mono text-[var(--text)]">{baseExecutorHealth.contracts.cngn}</span></div>
+                <div>Reserve Contract: <span className="font-mono text-[var(--text)]">{baseExecutorHealth.contracts.reserve}</span></div>
                 <div className="mt-1">USDC: <span className="font-mono text-[var(--text)]">{baseExecutorHealth.contracts.usdc}</span></div>
                 <div className="mt-1">WETH: <span className="font-mono text-[var(--text)]">{baseExecutorHealth.contracts.weth}</span></div>
               </div>
@@ -432,118 +424,6 @@ export function AdminHealthSection({ workspace, submodule }: { workspace: AdminW
         )}
       </Card>}
 
-      {showLegacy && <Card className="p-5">
-        <button
-          type="button"
-          onClick={() => setShowLegacyRailsHealth((current: boolean) => !current)}
-          className="flex w-full items-center justify-between gap-3 text-left"
-        >
-          <div>
-            <div className="text-[11px] font-bold text-[var(--text)]">Legacy Rails</div>
-            <div className="mt-1 text-[10px] text-[var(--muted)]">
-              Optional and inactive integrations kept for fallback and future reactivation.
-            </div>
-          </div>
-          <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
-            {showLegacyRailsHealth ? 'Hide' : 'Show'}
-          </div>
-        </button>
-        {showLegacyRailsHealth && (
-          <div className="mt-4 space-y-5">
-            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Transak Health</div>
-              {!transakHealth ? (
-                <div className="text-[11px] text-[var(--muted)]">Health state unavailable.</div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-3">
-                    {transakHealth.criticalChecks.map(item => (
-                      <div key={item.key} className="border border-[var(--border)] bg-[var(--coal)] p-3">
-                        <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">{item.label}</div>
-                        <div className={`mt-2 text-[12px] font-bold ${item.ready ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
-                          {item.ready ? 'READY' : 'BLOCKED'}
-                        </div>
-                        <div className="mt-1 text-[10px] text-[var(--muted)]">{item.detail}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="border border-[var(--border)] bg-[var(--coal)] p-3 text-[10px] text-[var(--text2)]">
-                    <div>Environment: {transakHealth.env}</div>
-                    <div className="mt-1">Overall state: {transakHealth.configured ? 'configured for provider checkout' : 'not ready'}</div>
-                    <div className="mt-1">API Key: {transakHealth.apiKeyConfigured ? 'configured' : 'missing'} · API Secret: {transakHealth.apiSecretConfigured ? 'configured' : 'missing'}</div>
-                    <div className="mt-1">Referrer Domain: {transakHealth.referrerDomainConfigured ? 'configured' : 'missing'} · Redirect URL: {transakHealth.redirectUrlConfigured ? 'configured' : 'missing'}</div>
-                  </div>
-                  {transakHealth.warnings.length > 0 && (
-                    <div className="space-y-2">
-                      {transakHealth.warnings.map((item: string) => (
-                        <div key={item} className="border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[10px] text-[var(--red2)]">
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="mb-3 text-[11px] font-bold text-[var(--text)]">cNGN Merchant Health</div>
-              {!cngnHealth ? (
-                <div className="text-[11px] text-[var(--muted)]">Health state unavailable.</div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    {cngnHealth.criticalChecks.map(item => (
-                      <div key={item.key} className="border border-[var(--border)] bg-[var(--coal)] p-3">
-                        <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">{item.label}</div>
-                        <div className={`mt-2 text-[12px] font-bold ${item.ready ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
-                          {item.ready ? 'READY' : 'BLOCKED'}
-                        </div>
-                        <div className="mt-1 text-[10px] text-[var(--muted)]">{item.detail}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="border border-[var(--border)] bg-[var(--coal)] p-3 text-[10px] text-[var(--text2)]">
-                    <div>Base URL: {cngnHealth.baseUrl}</div>
-                    <div className="mt-1">Merchant rail: {cngnHealth.merchantEnabled ? 'env configured' : 'incomplete env'}</div>
-                    <div className="mt-1">API Key: {cngnHealth.apiKeyConfigured ? 'configured' : 'missing'} · AES Key: {cngnHealth.encryptionKeyConfigured ? 'configured' : 'missing'}</div>
-                    <div className="mt-1">Private Key: {cngnHealth.privateKeyConfigured ? 'configured' : 'missing'} · Sodium Runtime: {cngnHealth.sodiumAvailable ? 'available' : 'missing'}</div>
-                    <div className="mt-1">Webhook URL: {cngnHealth.webhookUrlConfigured ? 'configured' : 'missing'}</div>
-                  </div>
-                  {cngnHealth.warnings.length > 0 && (
-                    <div className="space-y-2">
-                      {cngnHealth.warnings.map((item: string) => (
-                        <div key={item} className="border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[10px] text-[var(--red2)]">
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="border border-[var(--border)] bg-[var(--coal)] p-4">
-                    <div className="mb-3 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Merchant Probe</div>
-                    <div className="flex flex-wrap gap-3">
-                      <Button onClick={() => void runCngnTest('balance')} disabled={runningCngnAction !== null}>
-                        {runningCngnAction === 'balance' ? 'Checking…' : 'Check cNGN Balance'}
-                      </Button>
-                      <Button variant="secondary" onClick={() => void runCngnTest('create_virtual_account')} disabled={runningCngnAction !== null}>
-                        {runningCngnAction === 'create_virtual_account' ? 'Creating…' : 'Create Test Virtual Account'}
-                      </Button>
-                    </div>
-                    <div className="mt-2 text-[10px] text-[var(--muted)]">
-                      Use this to verify merchant connectivity before routing normal user funding through cNGN.
-                    </div>
-                    {cngnTestResult && (
-                      <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words border border-[var(--border)] bg-[var(--char)] p-3 text-[10px] text-[var(--muted)]">
-                        {cngnTestResult}
-                      </pre>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </Card>}
     </>
   )
 }

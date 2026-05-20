@@ -21,7 +21,7 @@ import { getCryptoAssetById } from '@/lib/server/data'
 
 const DEFAULT_BASE_EXECUTOR_ADDRESS = '0xA37cd2CACF7ac304b6f966e980952910D7750921'
 const DEFAULT_BASE_RPC_URL = 'https://mainnet.base.org'
-const DEFAULT_BASE_CNGN_ADDRESS = '0x46C85152bFe9f96829aA94755D9f915F9B10EF5F'
+const DEFAULT_BASE_RESERVE_ADDRESS = '0x46C85152bFe9f96829aA94755D9f915F9B10EF5F'
 const DEFAULT_BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 const DEFAULT_BASE_WETH_ADDRESS = '0x4200000000000000000000000000000000000006'
 const MIN_BASE_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
@@ -49,7 +49,7 @@ export function getBaseExecutorConfig() {
     rpcUrls,
     privateKeyConfigured: Boolean(privateKey),
     configuredAddress,
-    cngnAddress: getAddress(process.env.MAFITAPAY_BASE_CNGN_ADDRESS?.trim() || DEFAULT_BASE_CNGN_ADDRESS),
+    reserveAddress: getAddress(process.env.MAFITAPAY_BASE_RESERVE_ADDRESS?.trim() || DEFAULT_BASE_RESERVE_ADDRESS),
     usdcAddress: getAddress(process.env.MAFITAPAY_BASE_USDC_ADDRESS?.trim() || DEFAULT_BASE_USDC_ADDRESS),
     wethAddress: getAddress(process.env.MAFITAPAY_BASE_WETH_ADDRESS?.trim() || DEFAULT_BASE_WETH_ADDRESS),
     privateKey,
@@ -84,7 +84,7 @@ export function getBaseExecutorHealth() {
     derivedAddress,
     walletMatchesConfiguredAddress,
     contracts: {
-      cngn: config.cngnAddress,
+      reserve: config.reserveAddress,
       usdc: config.usdcAddress,
       weth: config.wethAddress,
     },

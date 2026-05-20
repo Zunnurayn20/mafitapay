@@ -23,7 +23,7 @@ function formatTradeTitle(tx: Transaction) {
       ? formatCryptoQuantity(tx.metadata.cryptoAmount)
       : null
   const symbol = typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : ''
-  const providerLabel = tx.metadata?.provider === 'transak' ? ' via Transak' : ''
+  const providerLabel = ''
   return `${side}${providerLabel}${amount && symbol ? ` ${amount} ${symbol}` : ''}`
 }
 

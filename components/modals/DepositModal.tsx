@@ -23,7 +23,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const closeModal = useAppStore(state => state.closeModal)
   const refreshSession = useAppStore(state => state.refreshSession)
   const showToast = useAppStore(state => state.showToast)
-  const permanentAccount = wallet?.virtualAccounts.find(item => (item.provider === 'flutterwave' || item.provider === 'cngn') && item.isPermanent)
+  const permanentAccount = wallet?.virtualAccounts.find(item => item.provider === 'flutterwave' && item.isPermanent)
   const [loading, setLoading] = useState(false)
   const [fundingAccount, setFundingAccount] = useState<FundingAccount | null>(null)
 

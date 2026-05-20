@@ -155,7 +155,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
         documentNumber: maskDocumentNumber(kycSubmission.documentType, kycSubmission.documentNumber),
       }
     : null
-  const hasPermanentAccount = Boolean(wallet?.virtualAccounts.some(item => (item.provider === 'flutterwave' || item.provider === 'cngn') && item.isPermanent))
+  const hasPermanentAccount = Boolean(wallet?.virtualAccounts.some(item => item.provider === 'flutterwave' && item.isPermanent))
   let fundingAccountEligibility: FundingAccountEligibility
 
   if (hasPermanentAccount) {

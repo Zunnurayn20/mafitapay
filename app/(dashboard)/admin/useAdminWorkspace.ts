@@ -50,7 +50,7 @@ type BaseExecutorHealth = {
   configuredAddress: string
   derivedAddress?: string
   contracts: {
-    cngn: string
+    reserve: string
     usdc: string
     weth: string
   }
@@ -140,29 +140,6 @@ type FlutterwaveBillsHealth = {
   recentProviderEvents: ProviderEvent[]
 }
 
-type TransakHealth = {
-  criticalChecks: AdminCriticalCheck[]
-  env: string
-  configured: boolean
-  apiKeyConfigured: boolean
-  apiSecretConfigured: boolean
-  referrerDomainConfigured: boolean
-  redirectUrlConfigured: boolean
-  warnings: string[]
-}
-
-type CngnHealth = {
-  criticalChecks: AdminCriticalCheck[]
-  baseUrl: string
-  merchantEnabled: boolean
-  apiKeyConfigured: boolean
-  encryptionKeyConfigured: boolean
-  privateKeyConfigured: boolean
-  sodiumAvailable: boolean
-  webhookUrlConfigured: boolean
-  warnings: string[]
-}
-
 async function fetchAdminJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { credentials: 'include', cache: 'no-store' })
   const payload = await response.json()
@@ -217,7 +194,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const { showToast, user } = useAppStore()
   const [loading, setLoading] = useState(true)
   const [authorized, setAuthorized] = useState(true)
-  const [showLegacyRailsHealth, setShowLegacyRailsHealth] = useState(false)
   const [saving, setSaving] = useState<AdminKey | null>(null)
   const [savingCryptoPricing, setSavingCryptoPricing] = useState(false)
   const [users, setUsers] = useState<User[]>([])
@@ -306,7 +282,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     sellSpreadBps: number
     quoteTtlSeconds: number
     isActive: boolean
-    transakEnabled: boolean
     baseExecutionEnabled: boolean
     executionRail: NonNullable<CryptoAsset['executionRail']> | ''
     routedProfile: string
@@ -326,7 +301,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     sellSpreadBps: 180,
     quoteTtlSeconds: 90,
     isActive: true,
-    transakEnabled: false,
     baseExecutionEnabled: false,
     executionRail: '',
     routedProfile: '',
@@ -340,15 +314,11 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [referenceCase, setReferenceCase] = useState<ReferenceCase | null>(null)
   const [flutterwaveHealth, setFlutterwaveHealth] = useState<FlutterwaveHealth | null>(null)
   const [flutterwaveBillsHealth, setFlutterwaveBillsHealth] = useState<FlutterwaveBillsHealth | null>(null)
-  const [transakHealth, setTransakHealth] = useState<TransakHealth | null>(null)
   const [baseExecutorHealth, setBaseExecutorHealth] = useState<BaseExecutorHealth | null>(null)
   const [zeroExHealth, setZeroExHealth] = useState<ZeroExHealth | null>(null)
   const [cryptoMarketHealth, setCryptoMarketHealth] = useState<CryptoMarketHealth | null>(null)
   const [baseTreasuryBalances, setBaseTreasuryBalances] = useState<BaseTreasuryBalances | null>(null)
-  const [cngnHealth, setCngnHealth] = useState<CngnHealth | null>(null)
   const [refreshingCryptoMarket, setRefreshingCryptoMarket] = useState(false)
-  const [runningCngnAction, setRunningCngnAction] = useState<'balance' | 'create_virtual_account' | null>(null)
-  const [cngnTestResult, setCngnTestResult] = useState<string | null>(null)
   const [transactions, setTransactions] = useState<Array<{ userId: string; transaction: Transaction }>>([])
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null)
   const [ledgerTrace, setLedgerTrace] = useState<{ userId: string; transaction: Transaction; ledgerEntries: LedgerEntry[] } | null>(null)
@@ -500,28 +470,24 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       }
 
       if (section === 'health') {
-        const [loadedProviderDiagnosticsReport, loadedFlutterwaveHealth, loadedFlutterwaveBillsHealth, loadedTransakHealth, loadedBaseExecutorHealth, loadedZeroExHealth, loadedCryptoMarketHealth, loadedBaseTreasuryBalances, loadedCngnHealth] = await Promise.all([
+        const [loadedProviderDiagnosticsReport, loadedFlutterwaveHealth, loadedFlutterwaveBillsHealth, loadedBaseExecutorHealth, loadedZeroExHealth, loadedCryptoMarketHealth, loadedBaseTreasuryBalances] = await Promise.all([
           fetchAdminJsonCached<ProviderDiagnosticsReport>('/api/admin/provider-events/report'),
           fetchAdminJsonCached<FlutterwaveHealth>('/api/admin/flutterwave/health'),
           fetchAdminJsonCached<FlutterwaveBillsHealth>('/api/admin/flutterwave/bills-health'),
-          fetchAdminJsonCached<TransakHealth>('/api/admin/transak/health'),
           fetchAdminJsonCached<BaseExecutorHealth>('/api/admin/base/health'),
           fetchAdminJsonCached<ZeroExHealth>('/api/admin/zerox/health'),
           fetchAdminJsonCached<CryptoMarketHealth>('/api/admin/crypto-market/health'),
           fetchAdminJsonCached<BaseTreasuryBalances>('/api/admin/base/treasury'),
-          fetchAdminJsonCached<CngnHealth>('/api/admin/cngn/health'),
         ])
 
         if (!active) return
         setProviderDiagnosticsReport(loadedProviderDiagnosticsReport ?? null)
         setFlutterwaveHealth(loadedFlutterwaveHealth ?? null)
         setFlutterwaveBillsHealth(loadedFlutterwaveBillsHealth ?? null)
-        setTransakHealth(loadedTransakHealth ?? null)
         setBaseExecutorHealth(loadedBaseExecutorHealth ?? null)
         setZeroExHealth(loadedZeroExHealth ?? null)
         setCryptoMarketHealth(loadedCryptoMarketHealth ?? null)
         setBaseTreasuryBalances(loadedBaseTreasuryBalances ?? null)
-        setCngnHealth(loadedCngnHealth ?? null)
       }
     })()
       .catch((error: unknown) => {
@@ -715,7 +681,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       sellRate: marketRatePreview > 0 ? computeSellRate(marketRatePreview, newCryptoAsset.sellSpreadBps) : 0,
       quoteTtlSeconds: newCryptoAsset.quoteTtlSeconds,
       isActive: newCryptoAsset.isActive,
-      transakEnabled: newCryptoAsset.transakEnabled,
       baseExecutionEnabled: newCryptoAsset.baseExecutionEnabled,
       executionRail: newCryptoAsset.executionRail || undefined,
       routedToChain: newCryptoAsset.routedToChain.trim() || undefined,
@@ -744,7 +709,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         sellSpreadBps: 180,
         quoteTtlSeconds: 90,
         isActive: true,
-        transakEnabled: false,
         baseExecutionEnabled: false,
         executionRail: '',
         routedProfile: '',
@@ -768,7 +732,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     setCryptoPricing(current => current.map(asset => asset.id === pairId ? {
       ...asset,
       isActive: !archived,
-      transakEnabled: archived ? false : asset.transakEnabled,
       baseExecutionEnabled: archived ? false : asset.baseExecutionEnabled,
     } : asset))
   }
@@ -1103,7 +1066,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.cryptoOrder?.id === orderId && referenceCase.reference) await inspectReference(referenceCase.reference)
-      showToast('Crypto order synced from Transak.')
+      showToast('Crypto order synced.')
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Crypto order sync failed.', 'error')
     } finally {
@@ -1341,26 +1304,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
-  async function runCngnTest(action: 'balance' | 'create_virtual_account') {
-    setRunningCngnAction(action)
-    try {
-      const response = await fetch('/api/admin/cngn/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ action }),
-      })
-      const payload = await response.json()
-      setCngnTestResult(JSON.stringify(payload, null, 2))
-      if (!response.ok || payload.success === false) throw new Error(payload.error || 'cNGN test failed.')
-      showToast(action === 'balance' ? 'Loaded cNGN balances.' : 'Created cNGN virtual account.')
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'cNGN test failed.', 'error')
-    } finally {
-      setRunningCngnAction(null)
-    }
-  }
-
   async function refreshCryptoMarketSnapshotsNow() {
     setRefreshingCryptoMarket(true)
     try {
@@ -1412,8 +1355,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     parseOptionalNumber,
     findRoutedProfileForAsset,
     getRoutedProfileConfig,
-    showLegacyRailsHealth,
-    setShowLegacyRailsHealth,
     saving,
     savingCryptoPricing,
     users,
@@ -1451,15 +1392,11 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     referenceCase,
     flutterwaveHealth,
     flutterwaveBillsHealth,
-    transakHealth,
     baseExecutorHealth,
     zeroExHealth,
     cryptoMarketHealth,
     baseTreasuryBalances,
-    cngnHealth,
     refreshingCryptoMarket,
-    runningCngnAction,
-    cngnTestResult,
     transactions,
     selectedTransactionId,
     ledgerTrace,
@@ -1534,7 +1471,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     syncAllPendingPayouts,
     requeueEvent,
     runWebhookAcceptanceTest,
-    runCngnTest,
     refreshCryptoMarketSnapshotsNow,
     flutterwaveIssueEvents,
     flutterwaveIssuePayouts,

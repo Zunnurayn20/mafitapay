@@ -127,7 +127,7 @@ export interface VirtualAccount {
   bank: string
   accountNumber: string
   accountName: string
-  provider: 'flutterwave' | 'moniepoint' | 'opay' | 'palmpay' | 'cngn'
+  provider: 'flutterwave' | 'moniepoint' | 'opay' | 'palmpay'
   isPermanent?: boolean
   reference?: string
   expiresAt?: string
@@ -224,7 +224,6 @@ export interface CryptoAsset {
   sellSpreadBps: number
   quoteTtlSeconds: number
   isActive?: boolean
-  transakEnabled?: boolean
   baseExecutionEnabled?: boolean
   executionRail?: 'base_treasury' | 'routed_treasury' | 'sui_treasury' | 'ton_treasury' | 'near_intents'
   routedToChain?: string
@@ -264,7 +263,7 @@ export interface CryptoOrder {
   destinationLabel?: string
   walletAddress?: string
   exchange?: string
-  provider?: 'transak' | '0x' | 'lifi' | 'ston' | 'near_intents'
+  provider?: '0x' | 'lifi' | 'ston' | 'near_intents'
   providerOrderId?: string
   providerStatus?: string
   providerReference?: string
@@ -390,7 +389,7 @@ export interface LedgerEntry {
   id: string
   userId: string
   transactionId?: string
-  asset: 'NGN' | 'CNGN'
+  asset: 'NGN' | 'RESERVE'
   account: 'available' | 'locked'
   direction: 'credit' | 'debit'
   amount: number

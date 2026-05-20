@@ -495,14 +495,6 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={newCryptoAsset.transakEnabled}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, transakEnabled: event.target.checked }))}
-              />
-              Transak Enabled
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
                 checked={newCryptoAsset.baseExecutionEnabled}
                 onChange={event => setNewCryptoAsset(current => ({ ...current, baseExecutionEnabled: event.target.checked }))}
               />
@@ -793,15 +785,6 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-[10px] text-[var(--muted)]">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={item.transakEnabled !== false}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, transakEnabled: event.target.checked } : asset))}
-                    disabled={item.isActive === false}
-                  />
-                  Transak Enabled
-                </label>
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"

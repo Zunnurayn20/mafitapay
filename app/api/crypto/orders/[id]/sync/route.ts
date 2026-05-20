@@ -126,9 +126,5 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
     }
   }
 
-  if (order.provider !== 'transak' || !order.providerReference) {
-    return NextResponse.json({ error: 'This crypto order is not eligible for provider sync.', success: false }, { status: 400 })
-  }
-
-  return NextResponse.json({ error: 'Legacy Transak sync is not active in this environment.', success: false }, { status: 410 })
+  return NextResponse.json({ error: 'This crypto order is not eligible for provider sync.', success: false }, { status: 400 })
 }

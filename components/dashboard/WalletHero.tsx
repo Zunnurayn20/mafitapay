@@ -9,7 +9,7 @@ export function WalletHero() {
   const { wallet, transactions, openModal, showToast } = useAppStore()
   const [visible, setVisible] = useState(true)
   const [copied, setCopied] = useState(false)
-  const account = wallet?.virtualAccounts.find(item => (item.provider === 'flutterwave' || item.provider === 'cngn') && item.isPermanent)
+  const account = wallet?.virtualAccounts.find(item => item.provider === 'flutterwave' && item.isPermanent)
   const availableBalance = wallet?.balance ?? 0
   const reserveBalance = wallet?.reserveBalance ?? 0
   const reserveLockedBalance = wallet?.reserveLockedBalance ?? 0

@@ -218,11 +218,6 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                     {updatingCryptoExecutionId === selectedCryptoOrder.id ? 'Updating…' : 'Mark Broadcasted'}
                   </Button>
                 )}
-                {selectedCryptoOrder.provider === 'transak' && (
-                  <Button size="sm" variant="secondary" onClick={() => void syncCryptoOrder(selectedCryptoOrder.id)} disabled={syncingCryptoOrderId === selectedCryptoOrder.id || resolvingCryptoOrderId === selectedCryptoOrder.id}>
-                    {syncingCryptoOrderId === selectedCryptoOrder.id ? 'Syncing…' : 'Sync'}
-                  </Button>
-                )}
                 {selectedCryptoOrder.executionRail !== 'base_legacy' && selectedCryptoOrder.executionRail !== 'base_treasury' && selectedCryptoOrder.executionRail !== 'bsc_treasury' && selectedCryptoOrder.executionRail !== 'routed_treasury' && selectedCryptoOrder.executionRail !== 'sui_treasury' && (
                   <>
                     <Button size="sm" onClick={() => void resolveCryptoOrder(selectedCryptoOrder.id, 'fulfilled')} disabled={resolvingCryptoOrderId === selectedCryptoOrder.id}>
