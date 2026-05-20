@@ -311,6 +311,49 @@ export async function verifyFlutterwaveTransaction(transactionId: string): Promi
   }
 }
 
+export async function verifyFlutterwaveTransactionByReference(reference: string): Promise<FlutterwaveVerifiedTransaction | null> {
+  const secretKey = getFlutterwaveSecretKey()
+  if (!secretKey) {
+    throw new Error('Flutterwave deposit collections are not configured.')
+  }
+
+  let response: Response
+  try {
+    const params = new URLSearchParams({ tx_ref: reference })
+    response = await fetch(`${getFlutterwaveBaseUrl()}/transactions/verify_by_reference?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    })
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : 'Flutterwave transaction verification by reference failed.')
+  }
+
+  const payload = await response.json().catch(() => null)
+  const body = isRecord(payload) ? payload : {}
+  const data = isRecord(body.data) ? body.data : {}
+  if (!response.ok || readString(body.status).toLowerCase() !== 'success') {
+    return null
+  }
+
+  return {
+    id: readString(data.id),
+    reference: readString(data.tx_ref),
+    providerReference: readString(data.flw_ref) || undefined,
+    status: readString(data.status),
+    amount: readNumber(data.amount),
+    chargedAmount: readNumber(data.charged_amount),
+    amountSettled: readNumber(data.amount_settled),
+    appFee: readNumber(data.app_fee),
+    merchantFee: readNumber(data.merchant_fee),
+    currency: readString(data.currency) || undefined,
+    paymentType: readString(data.payment_type) || undefined,
+    payload: body,
+  }
+}
+
 export function buildFlutterwaveCollectionsEventId(eventType: string, reference: string, providerReference?: string) {
   return providerReference || `${eventType}:${reference}:${generateRef()}`
 }

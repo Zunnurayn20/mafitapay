@@ -33,7 +33,7 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, theme, user, securitySettings } = useAppStore()
+  const { authResolved, isAuthenticated, refreshSession, theme, user, securitySettings } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
@@ -91,6 +91,31 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       clearInterval(interval)
     }
   }, [authResolved, isAuthenticated])
+
+  useEffect(() => {
+    if (!authResolved || !isAuthenticated) return
+
+    const refreshNow = () => {
+      void refreshSession()
+    }
+
+    const interval = setInterval(refreshNow, 20_000)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshNow()
+    }
+    const handleFocus = () => {
+      refreshNow()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [authResolved, isAuthenticated, refreshSession])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return

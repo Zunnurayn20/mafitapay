@@ -1,4 +1,4 @@
-import { mapFlutterwaveChargeStatus, verifyFlutterwaveTransaction } from '@/lib/server/flutterwave-collections'
+import { mapFlutterwaveChargeStatus, verifyFlutterwaveTransaction, verifyFlutterwaveTransactionByReference } from '@/lib/server/flutterwave-collections'
 import { mapFlutterwaveBillPaymentStatus } from '@/lib/server/flutterwave-bills'
 import { mapFlutterwaveTransferStatus, verifyFlutterwaveWebhook } from '@/lib/server/flutterwave-transfers'
 import { appendNotification, createNotification } from '@/lib/server/auth'
@@ -38,6 +38,50 @@ function readNumber(value: unknown) {
 function logFlutterwaveWebhook(event: string, payload: Record<string, unknown>) {
   if (!FLUTTERWAVE_WEBHOOK_LOGGING_ENABLED) return
   console.log(`[flutterwave-webhook] ${event}`, JSON.stringify(payload))
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function resolveVerifiedFlutterwaveDeposit(params: {
+  transactionId?: string
+  reference: string
+}) {
+  const attempts = 4
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const byId = params.transactionId
+      ? await verifyFlutterwaveTransaction(params.transactionId).catch(() => null)
+      : null
+    const byReference = byId?.amountSettled == null
+      ? await verifyFlutterwaveTransactionByReference(params.reference).catch(() => null)
+      : null
+    const verified = byId ?? byReference
+
+    logFlutterwaveWebhook('static-va.verify', {
+      reference: params.reference,
+      transactionId: params.transactionId ?? null,
+      attempt,
+      byIdFound: Boolean(byId),
+      byReferenceFound: Boolean(byReference),
+      amount: verified?.amount ?? null,
+      chargedAmount: verified?.chargedAmount ?? null,
+      amountSettled: verified?.amountSettled ?? null,
+      appFee: verified?.appFee ?? null,
+      merchantFee: verified?.merchantFee ?? null,
+      status: verified?.status ?? null,
+    })
+
+    if (verified?.amountSettled != null && verified.amountSettled > 0) {
+      return verified
+    }
+
+    if (attempt < attempts) {
+      await sleep(1500)
+    }
+  }
+
+  return null
 }
 
 export async function handleFlutterwaveWebhook(input: {
@@ -187,7 +231,10 @@ export async function handleFlutterwaveWebhook(input: {
         })
 
         const verifiedTransactionId = readString(data.id)
-        const verified = verifiedTransactionId ? await verifyFlutterwaveTransaction(verifiedTransactionId).catch(() => null) : null
+        const verified = await resolveVerifiedFlutterwaveDeposit({
+          transactionId: verifiedTransactionId || undefined,
+          reference,
+        })
         const amount = verified?.amount ?? readNumber(data.amount)
         const chargedAmount = verified?.chargedAmount ?? readNumber(data.charged_amount)
         const amountSettled = verified?.amountSettled
