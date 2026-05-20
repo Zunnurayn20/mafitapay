@@ -75,7 +75,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       <div className="p-6 flex flex-col gap-4">
         <div className="bg-[rgba(79,70,229,.06)] border border-[rgba(79,70,229,.18)] border-l-4 border-l-[var(--gold)] p-4">
           <div className="text-[9px] font-bold text-[var(--gold2)] uppercase tracking-wider mb-1">Fee Notice</div>
-          <div className="text-[11px] text-[var(--text2)] leading-relaxed">2% fee, capped at ₦100.</div>
+          <div className="text-[11px] text-[var(--text2)] leading-relaxed">Flutterwave provider charges are applied automatically. Your wallet is credited after confirmed fees.</div>
         </div>
         {!fundingAccount ? (
           <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
@@ -163,7 +163,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
                 <div>Use this account for wallet top-up.</div>
                 {fundingAccount.reference && <div>Provider reference: <span className="font-mono text-[var(--text)]">{fundingAccount.reference}</span></div>}
                 <div>Wallet is credited after provider confirmation.</div>
-                <div>Deposit fee is deducted before credit.</div>
+                <div>Wallet is credited net of confirmed provider charges.</div>
                 {fundingAccount.expiresAt && <div>Expires: <span className="text-[var(--text)]">{new Date(fundingAccount.expiresAt).toLocaleString()}</span></div>}
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { mapFlutterwaveChargeStatus } from '@/lib/server/flutterwave-collections'
+import { mapFlutterwaveChargeStatus, verifyFlutterwaveTransaction } from '@/lib/server/flutterwave-collections'
 import { mapFlutterwaveBillPaymentStatus } from '@/lib/server/flutterwave-bills'
 import { mapFlutterwaveTransferStatus, verifyFlutterwaveWebhook } from '@/lib/server/flutterwave-transfers'
 import { appendNotification, createNotification } from '@/lib/server/auth'
@@ -14,7 +14,6 @@ import {
 } from '@/lib/server/data'
 import { processSettlementEvent } from '@/lib/server/settlements'
 
-const MAX_DEPOSIT_FEE = 100
 const FLUTTERWAVE_WEBHOOK_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_FLUTTERWAVE === '1'
 
 function readString(value: unknown) {
@@ -25,6 +24,15 @@ function readString(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function readNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
 }
 
 function logFlutterwaveWebhook(event: string, payload: Record<string, unknown>) {
@@ -178,12 +186,24 @@ export async function handleFlutterwaveWebhook(input: {
           accountNumber: accountNumber || null,
         })
 
-        const grossAmount = Number(data.amount)
-        if (!Number.isFinite(grossAmount) || grossAmount <= 0) {
+        const verifiedTransactionId = readString(data.id)
+        const verified = verifiedTransactionId ? await verifyFlutterwaveTransaction(verifiedTransactionId).catch(() => null) : null
+        const amount = verified?.amount ?? readNumber(data.amount)
+        const chargedAmount = verified?.chargedAmount ?? readNumber(data.charged_amount)
+        const amountSettled = verified?.amountSettled
+        const merchantFee = verified?.merchantFee ?? readNumber(data.merchant_fee)
+        const appFee = verified?.appFee ?? readNumber(data.app_fee)
+        const grossAmount = chargedAmount && amount && chargedAmount >= amount
+          ? chargedAmount
+          : amount
+
+        if (grossAmount == null || !Number.isFinite(grossAmount) || grossAmount <= 0) {
           logFlutterwaveWebhook('static-va.amount-invalid', {
             reference,
             externalEventId,
+            verifiedTransactionId: verifiedTransactionId || null,
             amount: data.amount ?? null,
+            chargedAmount: data.charged_amount ?? null,
           })
           return { body: { error: 'Invalid Flutterwave deposit amount.', success: false }, status: 400 as const }
         }
@@ -209,7 +229,10 @@ export async function handleFlutterwaveWebhook(input: {
           return { body: { data: { ignored: true, status }, success: true }, status: 200 as const }
         }
 
-        const fee = Math.min(MAX_DEPOSIT_FEE, Math.round(grossAmount * 0.02))
+        const netAmount = amountSettled && amountSettled > 0
+          ? amountSettled
+          : amount
+        const fee = grossAmount - (netAmount ?? 0)
         const deposit = await createSettledDepositFromProvider({
           userId: user.id,
           reference: uniqueReference,
@@ -250,6 +273,12 @@ export async function handleFlutterwaveWebhook(input: {
           reference,
           uniqueReference,
           userId: user.id,
+          verifiedTransactionId: verifiedTransactionId || null,
+          amount,
+          chargedAmount,
+          amountSettled,
+          appFee,
+          merchantFee,
           grossAmount,
           fee,
           netAmount: deposit.transaction.amount,

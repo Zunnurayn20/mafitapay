@@ -30,6 +30,21 @@ export type FlutterwaveVirtualAccountResult = {
   payload?: Record<string, unknown>
 }
 
+export type FlutterwaveVerifiedTransaction = {
+  id: string
+  reference: string
+  providerReference?: string
+  status: string
+  amount?: number
+  chargedAmount?: number
+  amountSettled?: number
+  appFee?: number
+  merchantFee?: number
+  currency?: string
+  paymentType?: string
+  payload: Record<string, unknown>
+}
+
 function readString(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -243,6 +258,57 @@ export function mapFlutterwaveChargeStatus(rawStatus: string) {
   if (normalized === 'successful' || normalized === 'success') return 'success'
   if (normalized === 'failed' || normalized === 'failure') return 'failed'
   return null
+}
+
+function readNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+export async function verifyFlutterwaveTransaction(transactionId: string): Promise<FlutterwaveVerifiedTransaction | null> {
+  const secretKey = getFlutterwaveSecretKey()
+  if (!secretKey) {
+    throw new Error('Flutterwave deposit collections are not configured.')
+  }
+
+  let response: Response
+  try {
+    response = await fetch(`${getFlutterwaveBaseUrl()}/transactions/${encodeURIComponent(transactionId)}/verify`, {
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    })
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : 'Flutterwave transaction verification failed.')
+  }
+
+  const payload = await response.json().catch(() => null)
+  const body = isRecord(payload) ? payload : {}
+  const data = isRecord(body.data) ? body.data : {}
+  if (!response.ok || readString(body.status).toLowerCase() !== 'success') {
+    return null
+  }
+
+  return {
+    id: readString(data.id),
+    reference: readString(data.tx_ref),
+    providerReference: readString(data.flw_ref) || undefined,
+    status: readString(data.status),
+    amount: readNumber(data.amount),
+    chargedAmount: readNumber(data.charged_amount),
+    amountSettled: readNumber(data.amount_settled),
+    appFee: readNumber(data.app_fee),
+    merchantFee: readNumber(data.merchant_fee),
+    currency: readString(data.currency) || undefined,
+    paymentType: readString(data.payment_type) || undefined,
+    payload: body,
+  }
 }
 
 export function buildFlutterwaveCollectionsEventId(eventType: string, reference: string, providerReference?: string) {
