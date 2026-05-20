@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/store'
-import { ArrowDownToLine, Bell, Moon, Search, Send, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
+import { Bell, Moon, Search, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
 import { fmtDate } from '@/lib/utils'
 
 interface TopbarProps {
@@ -10,7 +10,7 @@ interface TopbarProps {
 }
 
 export function Topbar({ title }: TopbarProps) {
-  const { logout, markNotificationsRead, notifications, theme, toggleTheme, openModal, user } = useAppStore()
+  const { logout, markNotificationsRead, notifications, theme, toggleTheme, user } = useAppStore()
   const router = useRouter()
   const [notifOpen, setNotifOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
@@ -49,23 +49,6 @@ export function Topbar({ title }: TopbarProps) {
         )}
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {!searchOpen && (
-            <>
-              <button
-                onClick={() => openModal('send')}
-                className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--clay)] px-3.5 py-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text2)] transition-all hover:border-[var(--gold2)] hover:text-[var(--text)]"
-              >
-                <Send size={11} /> Send
-              </button>
-              <button
-                onClick={() => openModal('deposit')}
-                className="flex items-center gap-1.5 bg-[var(--gold)] px-3.5 py-2 text-[11px] font-bold uppercase tracking-wide text-white transition-all hover:bg-[var(--terra2)]"
-              >
-                <ArrowDownToLine size={11} /> Deposit
-              </button>
-            </>
-          )}
-
           <button
             onClick={toggleTheme}
             className="flex h-9 w-9 items-center justify-center border border-[var(--border)] bg-[var(--clay)] transition-all hover:border-[var(--gold2)]"
