@@ -82,6 +82,27 @@ function formatHistoryTitle(tx: Transaction, cryptoAsset?: { network?: string; s
   return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
 }
 
+function getStatusIcon(status: Transaction['status']) {
+  if (status === 'success') {
+    return {
+      icon: '✓',
+      className: 'border-[var(--green)] bg-[var(--green)] text-white',
+    }
+  }
+
+  if (status === 'failed') {
+    return {
+      icon: '✕',
+      className: 'border-[var(--red2)] bg-[var(--red2)] text-white',
+    }
+  }
+
+  return {
+    icon: '•',
+    className: 'border-[var(--gold)] bg-[var(--gold)] text-[var(--char)]',
+  }
+}
+
 function buildCryptoOrderProgress(order: CryptoOrder) {
   const currentKey =
     order.status === 'fulfilled'
@@ -398,7 +419,78 @@ export default function HistoryPage() {
       </div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(21rem,0.9fr)]">
       <Card>
-        <div className="overflow-x-auto">
+        <div className="xl:hidden">
+          {filtered.map(tx => {
+            const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
+            const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
+            const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
+            const statusVariant =
+              tx.status === 'success' ? 'success' : tx.status === 'failed' ? 'failed' : 'pending'
+            const statusIcon = getStatusIcon(tx.status)
+            const isPendingCryptoOrder =
+              tx.type.startsWith('crypto')
+              && tx.status === 'pending'
+
+            return (
+              <button
+                key={tx.id}
+                type="button"
+                className="block w-full border-b border-[var(--border)] px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[rgba(26,26,46,.6)]"
+                onClick={() => void openDetail(tx.id)}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-9 flex-shrink-0">
+                    {cryptoAsset ? (
+                      <AssetLogo
+                        src={cryptoAsset.icon}
+                        alt={`${cryptoAsset.symbol} logo`}
+                        fallback={cryptoAsset.symbol.slice(0, 1)}
+                        className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(79,70,229,.1)]"
+                        imgClassName="h-6 w-6 object-contain"
+                        textClassName="text-[18px] font-bold text-[var(--gold2)]"
+                      />
+                    ) : (
+                      <span className="text-[18px]">{icon}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-[13px] font-semibold text-[var(--text)]">
+                          {formatHistoryTitle(tx, cryptoAsset)}
+                        </div>
+                      </div>
+                      <div className={`text-right text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
+                        {tx.amount > 0 ? '+' : ''}{formatNGN(tx.amount)}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2 text-[9px] font-mono text-[var(--muted)]">
+                        <span className="truncate">{fmtDate(tx.createdAt)}</span>
+                        <span className="text-[var(--border2)]">·</span>
+                        <span className="truncate">{tx.reference}</span>
+                      </div>
+                      <div className="flex flex-shrink-0 items-center gap-2">
+                        {isPendingCryptoOrder && (
+                          <span className="inline-flex items-center gap-1.5 border border-[rgba(99,102,241,.25)] bg-[rgba(79,70,229,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.6px] text-[var(--gold2)]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--gold2)] animate-soft-pulse" />
+                            Processing
+                          </span>
+                        )}
+                        <span className={`flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold leading-none shadow-[inset_0_1px_0_rgba(255,255,255,.18)] ${statusIcon.className}`}>
+                          {statusIcon.icon}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="hidden overflow-x-auto xl:block">
           <table className="min-w-[52rem] w-full border-collapse">
             <thead>
               <tr>

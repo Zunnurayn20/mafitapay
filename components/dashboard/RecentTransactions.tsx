@@ -1,12 +1,15 @@
 'use client'
+import { useState } from 'react'
+import { toBlob, toPng } from 'html-to-image'
 import { useAppStore } from '@/store'
 import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardAction } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
+import { Modal } from '@/components/ui/Modal'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { fmtDate, formatNGN } from '@/lib/utils'
-import type { Transaction } from '@/types'
+import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 function formatCryptoQuantity(value: number) {
   if (!Number.isFinite(value)) return '0'
@@ -68,66 +71,314 @@ function formatTransactionTitle(tx: Transaction, cryptoAsset?: { symbol?: string
   return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
 }
 
+function getStatusIcon(status: Transaction['status']) {
+  if (status === 'success') {
+    return {
+      icon: '✓',
+      className: 'border-[var(--green)] bg-[var(--green)] text-white',
+    }
+  }
+
+  if (status === 'failed') {
+    return {
+      icon: '✕',
+      className: 'border-[var(--red2)] bg-[var(--red2)] text-white',
+    }
+  }
+
+  return {
+    icon: '•',
+    className: 'border-[var(--gold)] bg-[var(--gold)] text-[var(--char)]',
+  }
+}
+
 export function RecentTransactions() {
-  const { transactions } = useAppStore()
+  const { transactions, showToast } = useAppStore()
   const router = useRouter()
   const cryptoAssets = useCryptoAssets()
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [exportingReceipt, setExportingReceipt] = useState(false)
+  const [detail, setDetail] = useState<{
+    transaction: Transaction
+    cryptoOrder: CryptoOrder | null
+    depositIntent: DepositIntent | null
+    payoutRequest: PayoutRequest | null
+    timeline: Array<{ label: string; at: string; tone: string }>
+  } | null>(null)
   const recent = transactions.slice(0, 5)
 
-  return (
-    <Card pattern="soft">
-      <CardHeader>
-        <CardTitle>Recent Transactions</CardTitle>
-        <CardAction onClick={() => router.push('/history')}>View All →</CardAction>
-      </CardHeader>
-      <div className="divide-y divide-[var(--border)]">
-        {recent.map(tx => {
-          const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
-          const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
-          const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
-          const statusVariant =
-            tx.status === 'success' ? 'success' : tx.status === 'failed' ? 'failed' : 'pending'
+  async function openDetail(id: string) {
+    setSelectedId(id)
+    setLoadingDetail(true)
+    try {
+      const response = await fetch(`/api/transactions/${encodeURIComponent(id)}`, {
+        credentials: 'include',
+        cache: 'no-store',
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Failed to load transaction detail.')
+      }
+      setDetail(payload.data)
+    } catch (error) {
+      setSelectedId(null)
+      setDetail(null)
+      showToast(error instanceof Error ? error.message : 'Failed to load transaction detail.', 'error')
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
 
-          return (
-            <button
-              key={tx.id}
-              onClick={() => router.push('/history')}
-              className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-[rgba(26,26,46,.6)]"
+  function closeDetail() {
+    setSelectedId(null)
+    setDetail(null)
+    setLoadingDetail(false)
+  }
+
+  async function shareReceiptImage() {
+    if (!detail) return
+    const receiptElement = document.getElementById('dashboard-receipt-sheet')
+    if (!receiptElement) {
+      showToast('Receipt is not ready yet.', 'error')
+      return
+    }
+
+    setExportingReceipt(true)
+    try {
+      const blob = await toBlob(receiptElement, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#f6efdd',
+      })
+      if (!blob) throw new Error('Failed to render receipt image.')
+
+      const fileName = `${detail.transaction.reference}.png`
+      const file = new File([blob], fileName, { type: 'image/png' })
+
+      if (
+        typeof navigator !== 'undefined'
+        && typeof navigator.share === 'function'
+        && typeof navigator.canShare === 'function'
+        && navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          title: 'MafitaPay Receipt',
+          files: [file],
+        })
+        return
+      }
+
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.click()
+      URL.revokeObjectURL(url)
+      showToast('Receipt image downloaded.')
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      showToast(error instanceof Error ? error.message : 'Failed to share receipt image.', 'error')
+    } finally {
+      setExportingReceipt(false)
+    }
+  }
+
+  async function downloadReceiptImage() {
+    if (!detail) return
+    const receiptElement = document.getElementById('dashboard-receipt-sheet')
+    if (!receiptElement) {
+      showToast('Receipt is not ready yet.', 'error')
+      return
+    }
+
+    setExportingReceipt(true)
+    try {
+      const dataUrl = await toPng(receiptElement, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#f6efdd',
+      })
+      const link = document.createElement('a')
+      link.href = dataUrl
+      link.download = `${detail.transaction.reference}.png`
+      link.click()
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to download receipt image.', 'error')
+    } finally {
+      setExportingReceipt(false)
+    }
+  }
+
+  function downloadReceiptPdf() {
+    if (!detail) return
+    const receiptElement = document.getElementById('dashboard-receipt-sheet')
+    if (!receiptElement) {
+      showToast('Receipt is not ready yet.', 'error')
+      return
+    }
+
+    const popup = window.open('', '_blank', 'noopener,noreferrer,width=720,height=900')
+    if (!popup) {
+      showToast('Popup was blocked. Allow popups to download the receipt.', 'error')
+      return
+    }
+
+    popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MafitaPay Receipt</title>
+    <style>
+      body { margin: 0; padding: 24px; background: #f5efe2; font-family: Arial, sans-serif; color: #2c2418; }
+      .receipt-shell { max-width: 720px; margin: 0 auto; }
+      @media print {
+        body { padding: 0; background: #fff; }
+        .receipt-shell { max-width: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="receipt-shell">${receiptElement.outerHTML}</div>
+  </body>
+</html>`)
+    popup.document.close()
+    popup.focus()
+    popup.print()
+  }
+
+  return (
+    <>
+      <Card pattern="soft">
+        <CardHeader>
+          <CardTitle>Recent Transactions</CardTitle>
+          <CardAction onClick={() => router.push('/history')}>View All →</CardAction>
+        </CardHeader>
+        <div className="divide-y divide-[var(--border)]">
+          {recent.map(tx => {
+            const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
+            const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
+            const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
+            const statusIcon = getStatusIcon(tx.status)
+
+            return (
+              <button
+                key={tx.id}
+                type="button"
+                onClick={() => void openDetail(tx.id)}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-[rgba(26,26,46,.6)]"
+              >
+                <div className="w-8 flex-shrink-0">
+                  {cryptoAsset ? (
+                    <AssetLogo
+                      src={cryptoAsset.icon}
+                      alt={`${cryptoAsset.symbol} logo`}
+                      fallback={cryptoAsset.symbol.slice(0, 1)}
+                      className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(79,70,229,.1)]"
+                      imgClassName="h-5 w-5 object-contain"
+                      textClassName="text-[15px] font-bold text-[var(--gold2)]"
+                    />
+                  ) : (
+                    <div className="text-[18px]">{icon}</div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="truncate text-[13px] font-semibold text-[var(--text)]">{formatTransactionTitle(tx, cryptoAsset)}</div>
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold leading-none shadow-[inset_0_1px_0_rgba(255,255,255,.18)] ${statusIcon.className}`}>
+                      {statusIcon.icon}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[9px] font-mono text-[var(--muted)]">
+                    {fmtDate(tx.createdAt)}
+                  </div>
+                </div>
+                <div className={`text-right text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
+                  {tx.amount > 0 ? '+' : ''}{formatNGN(tx.amount)}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </Card>
+
+      <Modal
+        open={Boolean(selectedId)}
+        onClose={closeDetail}
+        title={detail ? formatTransactionTitle(detail.transaction, (() => {
+          const pairId = typeof detail.transaction.metadata?.pairId === 'string' ? detail.transaction.metadata.pairId : ''
+          return pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
+        })()) : 'Transaction Detail'}
+        subtitle={detail ? detail.transaction.reference : undefined}
+        size="lg"
+      >
+        {loadingDetail && (
+          <div className="p-8 text-center">
+            <div className="spinner mx-auto mb-4" />
+            <div className="text-[12px] text-[var(--text)]">Loading transaction detail…</div>
+          </div>
+        )}
+
+        {!loadingDetail && detail && (
+          <div className="space-y-4 p-6">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()}>
+                {exportingReceipt ? 'Preparing…' : 'Share Image'}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()}>PNG</Button>
+              <Button size="sm" variant="secondary" onClick={downloadReceiptPdf}>PDF</Button>
+            </div>
+
+            <div
+              id="dashboard-receipt-sheet"
+              className="relative overflow-hidden border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-5 text-[#2c2418] shadow-[0_18px_40px_rgba(0,0,0,.18)]"
             >
-              <div className="w-8 flex-shrink-0">
-                {cryptoAsset ? (
-                  <AssetLogo
-                    src={cryptoAsset.icon}
-                    alt={`${cryptoAsset.symbol} logo`}
-                    fallback={cryptoAsset.symbol.slice(0, 1)}
-                    className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(79,70,229,.1)]"
-                    imgClassName="h-5 w-5 object-contain"
-                    textClassName="text-[15px] font-bold text-[var(--gold2)]"
-                  />
-                ) : (
-                  <div className="text-[18px]">{icon}</div>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="truncate text-[13px] font-semibold text-[var(--text)]">{formatTransactionTitle(tx, cryptoAsset)}</div>
-                  <Badge variant={statusVariant}>{tx.status}</Badge>
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
+                style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+              />
+              <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
+              <div className="relative flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[2px] text-[#8c6b31]">MafitaPay Receipt</div>
+                  <div className="mt-2 text-[22px] font-black text-[#1f1a12]">
+                    {detail.transaction.amount > 0 ? '+' : ''}{formatNGN(detail.transaction.amount)}
+                  </div>
+                  <div className="mt-2 text-[11px] font-mono text-[#7c6a4b]">{fmtDate(detail.transaction.createdAt)}</div>
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[9px] text-[var(--muted)] font-mono">
-                  <span>{tx.type.replace(/_/g,' ')}</span>
-                  <span>·</span>
-                  <span>{fmtDate(tx.createdAt)}</span>
-                  <span>·</span>
-                  <span>{tx.reference}</span>
+                <div className={`rounded-full border px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.8px] ${
+                  detail.transaction.status === 'success'
+                    ? 'border-[rgba(34,122,69,.18)] bg-[rgba(255,255,255,.72)] text-[#227a45]'
+                    : detail.transaction.status === 'failed'
+                      ? 'border-[rgba(196,52,26,.18)] bg-[rgba(255,255,255,.72)] text-[#b54027]'
+                      : 'border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.72)] text-[#8c6b31]'
+                }`}>
+                  {detail.transaction.status}
                 </div>
               </div>
-              <div className={`text-right text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
-                {tx.amount > 0 ? '+' : ''}{formatNGN(tx.amount)}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
+                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Reference</div>
+                <div className="mt-2 text-[12px] font-mono text-[#7c5f2a]">{detail.transaction.reference}</div>
               </div>
-            </button>
-          )
-        })}
-      </div>
-    </Card>
+              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
+                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Recorded</div>
+                <div className="mt-2 text-[12px] text-[#3a3123]">{fmtDate(detail.transaction.createdAt)}</div>
+              </div>
+            </div>
+
+            {detail.transaction.description && !detail.transaction.type.startsWith('crypto') && (
+              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
+                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Narration</div>
+                <div className="mt-2 text-[12px] text-[#3a3123]">{detail.transaction.description}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+    </>
   )
 }
