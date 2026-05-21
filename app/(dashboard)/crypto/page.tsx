@@ -27,6 +27,10 @@ function formatTradeTitle(tx: Transaction) {
   return `${side}${providerLabel}${amount && symbol ? ` ${amount} ${symbol}` : ''}`
 }
 
+function isStablecoin(symbol: string) {
+  return new Set(['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'BUSD', 'USDE']).has(symbol.toUpperCase())
+}
+
 export default function CryptoPage() {
   const { openModal, setModalData, transactions } = useAppStore()
   const assets = useCryptoAssets()
@@ -65,7 +69,8 @@ export default function CryptoPage() {
       return map
     }, new Map<string, (typeof assets)[number]>()),
   ).map(([, asset]) => asset)
-  const formatMarketUsd = (marketPriceUsd: number | undefined, pricingSource?: 'live' | 'backup' | 'safe') => {
+  const formatMarketUsd = (symbol: string, marketPriceUsd: number | undefined, pricingSource?: 'live' | 'backup' | 'safe') => {
+    if (isStablecoin(symbol)) return '$1'
     if (shouldMaskStaleSnapshot && pricingSource !== 'live') return 'Refreshing…'
     if ((!marketPriceUsd || marketPriceUsd <= 0) || pricingSource === 'safe') return 'Live unavailable'
     return formatUSDAdaptive(marketPriceUsd)
@@ -114,7 +119,7 @@ export default function CryptoPage() {
               </div>
             )}
           </div>
-            <div className="grid grid-cols-6 gap-2 lg:grid-cols-8">
+            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
               {showMarketSkeleton ? Array.from({ length: 8 }).map((_, index) => (
                 <div key={`market-skeleton-${index}`} className="space-y-1.5">
                   <Skeleton className="h-3 w-full" />
@@ -125,7 +130,7 @@ export default function CryptoPage() {
               <div key={a.id}>
                 <div className="truncate text-[9px] font-bold tracking-[0.3px] text-[var(--gold2)]">{a.symbol}</div>
                 <div className="truncate text-[12px] font-bold font-mono text-[var(--text)]">
-                  {formatMarketUsd(a.marketPriceUsd, a.pricingSource)}
+                  {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
                 </div>
                 <div className="mt-1 flex items-center gap-1">
                   <div className={`truncate text-[8px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
@@ -183,9 +188,8 @@ export default function CryptoPage() {
                 <div className="mt-0.5 truncate text-[8px] font-medium text-[var(--text2)] sm:mt-1 sm:text-[9px]">{a.network}</div>
               </div>
               <div className="min-w-0 text-right">
-                <div className="text-[7px] uppercase tracking-[.7px] text-[var(--muted)] sm:text-[8px]">Market Price</div>
                 <div className="truncate text-[11px] font-bold font-mono text-[var(--text)] sm:text-[13px]">
-                  {formatMarketUsd(a.marketPriceUsd, a.pricingSource)}
+                  {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
                 </div>
                 <div className="mt-0.5 text-[8px] font-mono text-[var(--muted)] sm:mt-1">
                   {formatNGN(a.buyRate)}
