@@ -6,9 +6,9 @@ export function Toast() {
   if (!toast) return null
 
   const colors = {
-    success: 'border-l-[var(--green)] bg-[rgba(46,170,92,.08)]',
-    error:   'border-l-[var(--red2)] bg-[rgba(196,52,26,.08)]',
-    info:    'border-l-[var(--gold2)] bg-[rgba(79,70,229,.08)]',
+    success: 'border-l-emerald-400 border-emerald-500 bg-emerald-500 text-white',
+    error:   'border-l-red-300 border-red-500 bg-red-500 text-white',
+    info:    'border-l-[var(--gold)] border-[var(--gold)] bg-[var(--gold)] text-[var(--ink)]',
   }
   const icons = { success: '✓', error: '✕', info: 'ℹ' }
 
@@ -18,7 +18,7 @@ export function Toast() {
       onClick={clearToast}
     >
       <span className="text-[16px]">{icons[toast.type]}</span>
-      <span className="text-[13px] font-semibold text-[var(--text)]">{toast.message}</span>
+      <span className="text-[13px] font-semibold">{toast.message}</span>
     </div>
   )
 }
