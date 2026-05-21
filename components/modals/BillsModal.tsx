@@ -276,14 +276,10 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
 
   useEffect(() => {
     if (!isDataService || groupedDataBundles.length === 0) return
-    if (groupedDataBundles.some(group => group.key === 'best_offers') && selectedDataBundleGroup !== 'best_offers' && !selectedBundleCode) {
-      setSelectedDataBundleGroup('best_offers')
-      return
-    }
     if (!groupedDataBundles.some(group => group.key === selectedDataBundleGroup)) {
       setSelectedDataBundleGroup(groupedDataBundles[0].key)
     }
-  }, [groupedDataBundles, isDataService, selectedBundleCode, selectedDataBundleGroup])
+  }, [groupedDataBundles, isDataService, selectedDataBundleGroup])
 
   const amountNumber = Number(amount)
   const amountError = (() => {
