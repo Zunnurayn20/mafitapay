@@ -128,9 +128,18 @@ export default function CryptoPage() {
                 </div>
               )) : marketStripAssets.map(a => (
               <div key={a.id}>
-                <div className="truncate text-[9px] font-bold tracking-[0.3px] text-[var(--gold2)]">{a.symbol}</div>
-                <div className="truncate text-[12px] font-bold font-mono text-[var(--text)]">
-                  {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
+                <div className="flex items-center gap-1.5">
+                  <AssetLogo
+                    src={a.icon}
+                    alt={`${a.symbol} logo`}
+                    fallback={a.symbol.slice(0, 1)}
+                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(255,255,255,.03)]"
+                    imgClassName="h-4 w-4 object-contain"
+                    textClassName="font-display text-[10px] font-bold text-[var(--gold2)]"
+                  />
+                  <div className="truncate text-[12px] font-bold font-mono text-[var(--text)]">
+                    {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
+                  </div>
                 </div>
                 <div className="mt-1 flex items-center gap-1">
                   <div className={`truncate text-[8px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
