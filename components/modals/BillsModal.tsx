@@ -589,7 +589,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                         </div>
                       </div>
                       {bundle.provider === 'amigo' && (
-                        <div className="shrink-0 rounded-full border border-[rgba(34,197,94,.38)] bg-[rgba(34,197,94,.14)] px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.8px] text-emerald-300 shadow-[0_0_0_1px_rgba(34,197,94,.08)]">
+                        <div className="shrink-0 rounded-full border border-emerald-500 bg-emerald-500 px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.8px] text-white shadow-[0_6px_18px_rgba(34,197,94,.22)]">
                           Amigo
                         </div>
                       )}
