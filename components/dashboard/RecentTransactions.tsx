@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
 import { useCryptoAssets } from '@/lib/client/catalogs'
+import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
@@ -329,53 +330,14 @@ export function RecentTransactions() {
               <Button size="sm" variant="secondary" onClick={downloadReceiptPdf}>PDF</Button>
             </div>
 
-            <div
+            <TransactionReceiptSheet
               id="dashboard-receipt-sheet"
-              className="relative overflow-hidden border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-5 text-[#2c2418] shadow-[0_18px_40px_rgba(0,0,0,.18)]"
-            >
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
-                style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
-              />
-              <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
-              <div className="relative flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-[2px] text-[#8c6b31]">MafitaPay Receipt</div>
-                  <div className="mt-2 text-[22px] font-black text-[#1f1a12]">
-                    {detail.transaction.amount > 0 ? '+' : ''}{formatNGN(detail.transaction.amount)}
-                  </div>
-                  <div className="mt-2 text-[11px] font-mono text-[#7c6a4b]">{fmtDate(detail.transaction.createdAt)}</div>
-                </div>
-                <div className={`rounded-full border px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.8px] ${
-                  detail.transaction.status === 'success'
-                    ? 'border-[rgba(34,122,69,.18)] bg-[rgba(255,255,255,.72)] text-[#227a45]'
-                    : detail.transaction.status === 'failed'
-                      ? 'border-[rgba(196,52,26,.18)] bg-[rgba(255,255,255,.72)] text-[#b54027]'
-                      : 'border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.72)] text-[#8c6b31]'
-                }`}>
-                  {detail.transaction.status}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Reference</div>
-                <div className="mt-2 text-[12px] font-mono text-[#7c5f2a]">{detail.transaction.reference}</div>
-              </div>
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Recorded</div>
-                <div className="mt-2 text-[12px] text-[#3a3123]">{fmtDate(detail.transaction.createdAt)}</div>
-              </div>
-            </div>
-
-            {detail.transaction.description && !detail.transaction.type.startsWith('crypto') && (
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Narration</div>
-                <div className="mt-2 text-[12px] text-[#3a3123]">{detail.transaction.description}</div>
-              </div>
-            )}
+              transaction={detail.transaction}
+              title={formatTransactionTitle(detail.transaction, (() => {
+                const pairId = typeof detail.transaction.metadata?.pairId === 'string' ? detail.transaction.metadata.pairId : ''
+                return pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
+              })())}
+            />
           </div>
         )}
       </Modal>
