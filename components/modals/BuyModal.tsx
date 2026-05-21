@@ -16,6 +16,7 @@ import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
 type Step = 'form' | 'pin' | 'processing' | 'success'
 type AmountMode = 'ngn' | 'usd' | 'asset'
 const QUICK_NGN_AMOUNTS = [1000, 2000, 5000, 10000]
+const LAST_USED_BUY_ADDRESS_KEY = 'mafitapay:last-buy-addresses'
 
 function getApproxUsdNgnRate(asset?: CryptoAsset) {
   if (!asset) return 0
@@ -30,6 +31,39 @@ function getPricingSourceLabel(source?: CryptoAsset['pricingSource']) {
   if (source === 'backup') return 'Backup market'
   if (source === 'safe') return 'Safe market'
   return 'Market source'
+}
+
+function truncateAddress(value: string) {
+  if (value.length <= 18) return value
+  return `${value.slice(0, 8)}...${value.slice(-8)}`
+}
+
+function readLastUsedBuyAddresses(): Partial<Record<CryptoPairId, string>> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(LAST_USED_BUY_ADDRESS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed as Partial<Record<CryptoPairId, string>> : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLastUsedBuyAddress(pairId: CryptoPairId, address: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const existing = readLastUsedBuyAddresses()
+    window.localStorage.setItem(
+      LAST_USED_BUY_ADDRESS_KEY,
+      JSON.stringify({
+        ...existing,
+        [pairId]: address,
+      }),
+    )
+  } catch {
+    // Ignore local persistence failures.
+  }
 }
 
 export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -48,6 +82,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const [availabilityError, setAvailabilityError] = useState<string | null>(null)
   const [lockingQuote, setLockingQuote] = useState(false)
   const [submittingOrder, setSubmittingOrder] = useState(false)
+  const [lastUsedAddress, setLastUsedAddress] = useState('')
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = assets.find(a => a.id === pairId)
@@ -84,6 +119,12 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       setPairId(assets[0].id)
     }
   }, [assets, modalAsset, modalData, open])
+
+  useEffect(() => {
+    if (!open || !pairId) return
+    const savedAddress = readLastUsedBuyAddresses()[pairId] ?? ''
+    setLastUsedAddress(savedAddress)
+  }, [open, pairId])
 
   useEffect(() => {
     if (!quote || step !== 'pin') return
@@ -214,6 +255,9 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
         throw new Error(payload.error || 'Buy order failed.')
       }
 
+      const trimmedAddress = address.trim()
+      writeLastUsedBuyAddress(asset.id, trimmedAddress)
+      setLastUsedAddress(trimmedAddress)
       setRef(payload.data.transaction.reference)
       await refreshSession()
       setStep('success')
@@ -365,6 +409,16 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               placeholder={asset ? getWalletAddressPlaceholder(asset.id) : 'Paste wallet address…'}
               value={address} onChange={e => setAddress(e.target.value)}
               className="text-[12px] font-mono" suffix="PASTE" />
+            {lastUsedAddress && lastUsedAddress !== address.trim() && (
+              <button
+                type="button"
+                onClick={() => setAddress(lastUsedAddress)}
+                className="mt-2 inline-flex items-center gap-2 border border-[rgba(202,165,96,.24)] bg-[var(--clay)] px-2.5 py-1.5 text-left text-[9px] font-semibold text-[var(--text)] transition-colors hover:border-[var(--gold2)]"
+              >
+                <span className="text-[var(--muted)]">Last used</span>
+                <span className="font-mono text-[var(--gold2)]">{truncateAddress(lastUsedAddress)}</span>
+              </button>
+            )}
             <div className={`text-[9px] mt-1.5 ${addressError ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
               {addressError ?? getWalletAddressHint(asset.id)}
             </div>
