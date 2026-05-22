@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 
 const PUBLIC_PATHS = ['/login', '/register']
 const SESSION_COOKIE = 'mfp_session'
+const LANDING_SEEN_COOKIE = 'mfp_seen_landing'
 const DASHBOARD_PREFIXES = [
   '/dashboard',
   '/history',
@@ -20,9 +21,24 @@ const DASHBOARD_PREFIXES = [
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value)
+  const hasSeenLanding = Boolean(request.cookies.get(LANDING_SEEN_COOKIE)?.value)
 
   if (pathname === '/') {
-    return NextResponse.next()
+    if (!hasSession && hasSeenLanding) {
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
+
+    const response = NextResponse.next()
+    if (!hasSession && !hasSeenLanding) {
+      response.cookies.set(LANDING_SEEN_COOKIE, '1', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 365,
+      })
+    }
+    return response
   }
 
   if (DASHBOARD_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
