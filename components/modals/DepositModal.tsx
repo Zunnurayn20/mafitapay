@@ -120,7 +120,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-y-0 right-[-1rem] w-24 bg-center bg-no-repeat opacity-[0.12]"
-                style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+                style={{ backgroundImage: "url('/mafitapay-logo.png')", backgroundSize: 'contain' }}
               />
               <div
                 aria-hidden="true"

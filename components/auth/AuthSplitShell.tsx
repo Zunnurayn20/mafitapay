@@ -51,7 +51,7 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
           <div className="flex items-center gap-4">
             <div className="flex h-16 w-16 items-center justify-center overflow-hidden border border-[rgba(202,165,96,.2)] bg-[rgba(12,9,7,.38)] shadow-[0_14px_34px_rgba(0,0,0,.18)]">
               <img
-                src="/mafitapay-logo.jpg"
+                src="/mafitapay-logo.png"
                 alt="MafitaPay logo"
                 className="h-16 w-16 object-contain"
               />

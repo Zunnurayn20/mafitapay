@@ -146,7 +146,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,.06)] bg-[rgba(255,255,255,.02)]">
                 <img
-                  src="/mafitapay-logo.jpg"
+                  src="/mafitapay-logo.png"
                   alt="MafitaPay logo"
                   className="h-11 w-11 object-contain"
                 />
@@ -237,7 +237,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 <div className="mb-4 flex items-center gap-3 border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
                   <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,.06)] bg-[rgba(255,255,255,.02)]">
                     <img
-                      src="/mafitapay-logo.jpg"
+                      src="/mafitapay-logo.png"
                       alt="MafitaPay logo"
                       className="h-10 w-10 object-contain"
                     />

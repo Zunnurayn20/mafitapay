@@ -45,7 +45,7 @@ export function Card({ className, children, accent, pattern = 'subtle', ...props
             'pointer-events-none absolute inset-y-0 right-[-1.5rem] bg-center bg-no-repeat',
             isStrong ? 'w-28 opacity-[0.12]' : 'w-24 opacity-[0.08]',
           )}
-          style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+          style={{ backgroundImage: "url('/mafitapay-logo.png')", backgroundSize: 'contain' }}
         />
       )}
       <div

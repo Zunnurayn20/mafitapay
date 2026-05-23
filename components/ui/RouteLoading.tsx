@@ -12,7 +12,7 @@ export function FullScreenAppLoading({
       <div className="w-full max-w-md border border-[var(--border)] bg-[var(--coal)] p-8 text-center">
         <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center overflow-hidden">
           <img
-            src="/mafitapay-logo.jpg"
+            src="/mafitapay-logo.png"
             alt="MafitaPay logo"
             className="h-20 w-20 object-contain opacity-90"
           />
@@ -36,7 +36,7 @@ export function AuthRouteLoading() {
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden">
             <img
-              src="/mafitapay-logo.jpg"
+              src="/mafitapay-logo.png"
               alt="MafitaPay logo"
               className="h-20 w-20 object-contain opacity-90"
             />

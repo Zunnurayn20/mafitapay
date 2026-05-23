@@ -274,7 +274,7 @@ export default function CryptoPage() {
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
-                style={{ backgroundImage: "url('/mafitapay-logo.jpg')", backgroundSize: 'contain' }}
+                style={{ backgroundImage: "url('/mafitapay-logo.png')", backgroundSize: 'contain' }}
               />
               <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
               <div className="relative flex items-start justify-between gap-4">

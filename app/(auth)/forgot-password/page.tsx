@@ -55,7 +55,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden">
-            <img src="/mafitapay-logo.jpg" alt="MafitaPay logo" className="h-20 w-20 object-contain" />
+            <img src="/mafitapay-logo.png" alt="MafitaPay logo" className="h-20 w-20 object-contain" />
           </div>
           <div className="font-display text-3xl font-black text-[var(--text)]">MafitaPay</div>
           <div className="mt-1 text-[10px] uppercase tracking-widest text-[var(--muted)]">Password Recovery</div>

@@ -105,7 +105,7 @@ export default function RegisterPage() {
       <div className="lg:hidden text-center mb-8">
         <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden">
           <img
-            src="/mafitapay-logo.jpg"
+            src="/mafitapay-logo.png"
             alt="MafitaPay logo"
             className="h-20 w-20 object-contain"
           />
