@@ -167,6 +167,17 @@ body::before {
   }
 }
 
+@keyframes floatSoft {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
 @keyframes ticker {
   from {
     transform: translateX(100vw);
@@ -204,6 +215,10 @@ body::before {
 
 .animate-ticker {
   animation: ticker 35s linear infinite;
+}
+
+.animate-float-soft {
+  animation: floatSoft 5.6s ease-in-out infinite;
 }
 
 .pin-dot {
