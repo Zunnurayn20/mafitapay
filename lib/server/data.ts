@@ -2854,6 +2854,29 @@ export async function getUserByVirtualAccountNumber(accountNumber: string): Prom
   return null
 }
 
+export async function getUserByVirtualAccountReference(reference: string): Promise<StoredUser | null> {
+  await ensureDbReady()
+  const normalized = reference.trim()
+  if (!normalized) return null
+
+  const rows = getDb()
+    .prepare('SELECT user_id, virtual_accounts FROM wallets')
+    .all() as Pick<WalletRow, 'user_id' | 'virtual_accounts'>[]
+
+  for (const row of rows) {
+    const virtualAccounts = parseJson(row.virtual_accounts, [] as Wallet['virtualAccounts'])
+    const matched = virtualAccounts.some(item => typeof item.reference === 'string' && item.reference.trim() === normalized)
+    if (!matched) continue
+
+    const userRow = getDb()
+      .prepare('SELECT * FROM users WHERE id = ? LIMIT 1')
+      .get(row.user_id) as UserRow | undefined
+    if (userRow) return userRow
+  }
+
+  return null
+}
+
 export async function getUserByHandle(handle: string): Promise<StoredUser | null> {
   await ensureDbReady()
   const normalized = handle.trim().replace(/^@/, '')

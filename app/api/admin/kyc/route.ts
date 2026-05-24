@@ -39,8 +39,8 @@ export async function PATCH(req: Request) {
     message:
       status === 'approved'
         ? submission.documentType === 'bvn' || submission.documentType === 'nin'
-          ? `Your ${submission.documentType.toUpperCase()} verification has been approved. You can now create a permanent wallet funding account.`
-          : 'Your verification has been approved and your account tier was upgraded. Permanent funding accounts still require an approved BVN or NIN.'
+          ? `Your ${submission.documentType.toUpperCase()} verification has been approved. You can now create a secondary Flutterwave funding account.`
+          : 'Your verification has been approved and your account tier was upgraded. Flutterwave funding accounts still require an approved BVN or NIN.'
         : `Your verification was rejected.${notes ? ` Reason: ${notes}` : ''}`,
     type: status === 'approved' ? 'success' : 'error',
   }))

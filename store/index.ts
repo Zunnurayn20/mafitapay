@@ -131,7 +131,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
         eligible: false,
         reason: 'approved_identity_required',
         hasPermanentAccount: false,
-        message: 'Submit BVN or NIN KYC and get it approved before creating a permanent funding account.',
+        message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
       },
     })
     return
@@ -213,7 +213,7 @@ export const useAppStore = create<AppStore>()(
         eligible: false,
         reason: 'approved_identity_required',
         hasPermanentAccount: false,
-        message: 'Submit BVN or NIN KYC and get it approved before creating a permanent funding account.',
+        message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
       },
       notifications: [],
       sessions: [],

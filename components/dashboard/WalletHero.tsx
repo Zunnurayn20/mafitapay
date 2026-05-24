@@ -1,15 +1,19 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { formatNGN } from '@/lib/utils'
+import type { Wallet } from '@/types'
 
 export function WalletHero() {
   const { wallet, transactions, openModal, showToast } = useAppStore()
   const [visible, setVisible] = useState(true)
   const [copied, setCopied] = useState(false)
-  const account = wallet?.virtualAccounts.find(item => item.provider === 'flutterwave' && item.isPermanent)
+  const [activeAccountIndex, setActiveAccountIndex] = useState(0)
+  const touchStartX = useRef<number | null>(null)
+  const accounts = (wallet?.virtualAccounts ?? []).filter(item => item.isPermanent)
+  const account = accounts[activeAccountIndex] ?? accounts[0] ?? null
   const availableBalance = wallet?.balance ?? 0
   const reserveBalance = wallet?.reserveBalance ?? 0
   const reserveLockedBalance = wallet?.reserveLockedBalance ?? 0
@@ -22,6 +26,40 @@ export function WalletHero() {
     setCopied(true)
     setTimeout(() => setCopied(false), 1400)
     showToast('Funding account copied.')
+  }
+
+  function selectAccount(index: number) {
+    setActiveAccountIndex(index)
+    setCopied(false)
+  }
+
+  function moveAccount(direction: 'prev' | 'next') {
+    if (accounts.length < 2) return
+    setCopied(false)
+    setActiveAccountIndex(current => {
+      if (direction === 'prev') {
+        return current === 0 ? accounts.length - 1 : current - 1
+      }
+      return current === accounts.length - 1 ? 0 : current + 1
+    })
+  }
+
+  function handleTouchStart(clientX: number) {
+    touchStartX.current = clientX
+  }
+
+  function handleTouchEnd(clientX: number) {
+    if (touchStartX.current === null) return
+    const delta = clientX - touchStartX.current
+    touchStartX.current = null
+    if (Math.abs(delta) < 36) return
+    moveAccount(delta > 0 ? 'prev' : 'next')
+  }
+
+  function renderAccountLabel(item: Wallet['virtualAccounts'][number]) {
+    if (item.provider === 'palmpay') return 'PalmPay'
+    if (item.provider === 'flutterwave') return 'Flutterwave'
+    return item.bank
   }
 
   return (
@@ -82,70 +120,145 @@ export function WalletHero() {
             <Button variant="secondary" size="sm" onClick={() => openModal('withdraw')}>⬆ Withdraw</Button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void copyFundingAccount()}
-            disabled={!account?.accountNumber}
-            className={`min-w-0 border px-3 py-3 text-left transition-all xl:hidden ${
-              copied
-                ? 'border-[rgba(46,170,92,0.38)] bg-[rgba(46,170,92,0.14)] shadow-[0_0_0_1px_rgba(46,170,92,0.18)]'
-                : 'border-[rgba(224,196,138,0.2)] bg-[rgba(33,23,15,0.62)] hover:bg-[rgba(46,170,92,0.08)]'
-            } ${!account?.accountNumber ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Funding Account</div>
-                <div className="mt-1 font-mono text-[13px] font-bold tracking-[1.4px] text-[rgba(244,231,208,0.9)] sm:text-[14px]">
-                  {account ? account.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
-                </div>
-                <div className="truncate text-[8px] text-[rgba(233,214,186,0.62)] sm:text-[9px]">
-                  {account?.bank || 'Permanent funding account not available yet.'}
-                </div>
-              </div>
-              <span
-                className={`flex-shrink-0 border px-2.5 py-1 text-[8px] font-bold tracking-[1px] transition-all ${
-                  copied
-                    ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
-                    : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
-                }`}
-              >
-                {copied ? 'COPIED' : 'COPY'}
-              </span>
+          <div className="xl:hidden">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Funding Accounts</div>
+              {accounts.length > 1 ? (
+                <div className="text-[8px] text-[rgba(233,214,186,0.62)]">Swipe to switch</div>
+              ) : null}
             </div>
-          </button>
+            <div className="overflow-hidden">
+              <div
+                className="flex transition-transform duration-300 ease-out"
+                style={{ transform: `translateX(-${activeAccountIndex * 100}%)` }}
+                onTouchStart={event => handleTouchStart(event.touches[0]?.clientX ?? 0)}
+                onTouchEnd={event => handleTouchEnd(event.changedTouches[0]?.clientX ?? 0)}
+              >
+                {(accounts.length ? accounts : [null]).map((item, index) => (
+                  <div key={item ? `${item.provider}-${item.accountNumber}-${index}` : 'empty-mobile'} className="min-w-full pr-0.5">
+                    <div
+                      className={`min-w-0 border px-3 py-3 text-left transition-all ${
+                        copied && index === activeAccountIndex
+                          ? 'border-[rgba(46,170,92,0.38)] bg-[rgba(46,170,92,0.14)] shadow-[0_0_0_1px_rgba(46,170,92,0.18)]'
+                          : 'border-[rgba(224,196,138,0.2)] bg-[rgba(33,23,15,0.62)]'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
+                            {item ? renderAccountLabel(item) : 'Funding Account'}
+                          </div>
+                          <div className="mt-1 font-mono text-[13px] font-bold tracking-[1.4px] text-[rgba(244,231,208,0.9)] sm:text-[14px]">
+                            {item ? item.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
+                          </div>
+                          <div className="truncate text-[8px] text-[rgba(233,214,186,0.62)] sm:text-[9px]">
+                            {item ? `${item.bank} • ${item.accountName}` : 'Funding account not available yet.'}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (index !== activeAccountIndex) selectAccount(index)
+                            void copyFundingAccount()
+                          }}
+                          disabled={!item?.accountNumber}
+                          className={`flex-shrink-0 border px-2.5 py-1 text-[8px] font-bold tracking-[1px] transition-all ${
+                            copied && index === activeAccountIndex
+                              ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
+                              : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
+                          } ${!item?.accountNumber ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
+                        >
+                          {copied && index === activeAccountIndex ? 'COPIED' : 'COPY'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {accounts.length > 1 ? (
+              <div className="mt-3 flex items-center justify-between gap-3 px-1">
+                <button
+                  type="button"
+                  onClick={() => moveAccount('prev')}
+                  className="border border-[rgba(224,196,138,0.2)] bg-[rgba(224,196,138,0.08)] px-2.5 py-1 text-[9px] font-bold text-[var(--gold2)]"
+                >
+                  Prev
+                </button>
+                <div className="flex items-center gap-1.5">
+                  {accounts.map((item, index) => (
+                    <button
+                      key={`${item.provider}-${item.accountNumber}-dot-${index}`}
+                      type="button"
+                      onClick={() => selectAccount(index)}
+                      className={`h-1.5 transition-all ${index === activeAccountIndex ? 'w-6 bg-[var(--gold2)]' : 'w-1.5 bg-[rgba(233,214,186,0.32)]'}`}
+                      aria-label={`Show ${renderAccountLabel(item)} funding account`}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => moveAccount('next')}
+                  className="border border-[rgba(224,196,138,0.2)] bg-[rgba(224,196,138,0.08)] px-2.5 py-1 text-[9px] font-bold text-[var(--gold2)]"
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => void copyFundingAccount()}
-        disabled={!account?.accountNumber}
-        className={`relative z-[1] mt-6 hidden overflow-hidden border text-left transition-all xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-3 xl:px-4 xl:py-4 ${
-          copied
-            ? 'border-[rgba(46,170,92,0.38)] bg-[rgba(46,170,92,0.14)] shadow-[0_0_0_1px_rgba(46,170,92,0.18)]'
-            : 'border-[rgba(224,196,138,0.2)] bg-[rgba(33,23,15,0.62)] hover:bg-[rgba(46,170,92,0.08)]'
-        } ${!account?.accountNumber ? 'xl:cursor-default xl:opacity-80' : 'xl:cursor-pointer'}`}
-      >
-        <div className="min-w-0">
-          <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Permanent Funding Account</div>
-          <div className="mt-1 font-mono text-[15px] font-bold tracking-[2px] text-[rgba(244,231,208,0.9)]">
-            {account ? account.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
-          </div>
-          <div className="truncate text-[9px] text-[rgba(244,231,208,0.88)]">{account?.accountName || 'Generate a deposit account to fund your wallet with NGN'}</div>
-          <div className="mt-1 text-[9px] text-[rgba(233,214,186,0.62)]">
-            {account ? account.bank : 'Permanent funding account not available yet.'}
-          </div>
+      <div className="relative z-[1] mt-6 hidden xl:block">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Funding Accounts</div>
+          <div className="text-[9px] text-[rgba(233,214,186,0.62)]">All available wallet funding routes</div>
         </div>
-        <span
-          className={`justify-self-start border px-3 py-1.5 text-[9px] font-bold tracking-wider transition-all xl:justify-self-end ${
-            copied
-              ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
-              : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
-          }`}
-        >
-          {copied ? 'COPIED' : 'COPY'}
-        </span>
-      </button>
+        <div className={`grid gap-3 ${accounts.length > 1 ? 'xl:grid-cols-2' : 'xl:grid-cols-1'}`}>
+          {(accounts.length ? accounts : [null]).map((item, index) => (
+            <div
+              key={item ? `${item.provider}-${item.accountNumber}-desktop-${index}` : 'empty-desktop'}
+              className={`overflow-hidden border px-4 py-4 text-left transition-all ${
+                copied && index === activeAccountIndex
+                  ? 'border-[rgba(46,170,92,0.38)] bg-[rgba(46,170,92,0.14)] shadow-[0_0_0_1px_rgba(46,170,92,0.18)]'
+                  : 'border-[rgba(224,196,138,0.2)] bg-[rgba(33,23,15,0.62)]'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
+                    {item ? renderAccountLabel(item) : 'Funding Account'}
+                  </div>
+                  <div className="mt-1 font-mono text-[15px] font-bold tracking-[2px] text-[rgba(244,231,208,0.9)]">
+                    {item ? item.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
+                  </div>
+                  <div className="truncate text-[9px] text-[rgba(244,231,208,0.88)]">
+                    {item?.accountName || 'Generate a deposit account to fund your wallet with NGN'}
+                  </div>
+                  <div className="mt-1 text-[9px] text-[rgba(233,214,186,0.62)]">
+                    {item ? item.bank : 'Funding account not available yet.'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (item && index !== activeAccountIndex) selectAccount(index)
+                    void copyFundingAccount()
+                  }}
+                  disabled={!item?.accountNumber}
+                  className={`flex-shrink-0 border px-3 py-1.5 text-[9px] font-bold tracking-wider transition-all ${
+                    copied && index === activeAccountIndex
+                      ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
+                      : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
+                  } ${!item?.accountNumber ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
+                >
+                  {copied && index === activeAccountIndex ? 'COPIED' : 'COPY'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </Card>
   )
 }

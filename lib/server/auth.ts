@@ -163,21 +163,21 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
       eligible: false,
       reason: 'account_already_assigned',
       hasPermanentAccount: true,
-      message: 'A permanent funding account is already assigned to this wallet.',
+      message: 'A permanent Flutterwave funding account is already assigned to this wallet.',
     }
   } else if (!kycSubmission) {
     fundingAccountEligibility = {
       eligible: false,
       reason: 'approved_identity_required',
       hasPermanentAccount: false,
-      message: 'Submit BVN or NIN KYC and get it approved before creating a permanent funding account.',
+      message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
     }
   } else if (kycSubmission.documentType !== 'bvn' && kycSubmission.documentType !== 'nin') {
     fundingAccountEligibility = {
       eligible: false,
       reason: 'unsupported_identity_type',
       hasPermanentAccount: false,
-      message: 'Permanent funding accounts require an approved BVN or NIN KYC record.',
+      message: 'Flutterwave funding accounts require an approved BVN or NIN KYC record.',
     }
   } else if (kycSubmission.status === 'approved') {
     fundingAccountEligibility = {
@@ -185,7 +185,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
       reason: 'ready',
       identityType: kycSubmission.documentType,
       hasPermanentAccount: false,
-      message: `Approved ${kycSubmission.documentType.toUpperCase()} is available for permanent funding account creation.`,
+      message: `Approved ${kycSubmission.documentType.toUpperCase()} is available for secondary Flutterwave funding account creation.`,
     }
   } else if (kycSubmission.status === 'pending') {
     fundingAccountEligibility = {
@@ -193,7 +193,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
       reason: 'identity_under_review',
       identityType: kycSubmission.documentType,
       hasPermanentAccount: false,
-      message: `${kycSubmission.documentType.toUpperCase()} is still under review. Permanent funding account creation is blocked until approval.`,
+      message: `${kycSubmission.documentType.toUpperCase()} is still under review. Flutterwave funding account creation is blocked until approval.`,
     }
   } else {
     fundingAccountEligibility = {
@@ -201,7 +201,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
       reason: 'identity_rejected',
       identityType: kycSubmission.documentType === 'bvn' || kycSubmission.documentType === 'nin' ? kycSubmission.documentType : undefined,
       hasPermanentAccount: false,
-      message: `${kycSubmission.documentType.toUpperCase()} review was rejected. Submit a valid BVN or NIN to continue.`,
+      message: `${kycSubmission.documentType.toUpperCase()} review was rejected. Submit a valid BVN or NIN to unlock a Flutterwave funding account.`,
     }
   }
 
