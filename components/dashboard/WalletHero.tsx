@@ -91,10 +91,10 @@ export function WalletHero() {
         className="pointer-events-none absolute inset-x-0 bottom-0 h-24 opacity-[0.22]"
         style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(202,165,96,0.12) 100%)' }}
       />
-      <div className="relative z-[1] grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+      <div className="relative z-[1] grid gap-3.5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0">
-          <div className="mb-2 text-[8px] font-bold uppercase tracking-[1.5px] text-[rgba(233,214,186,0.56)]">NGN Balance</div>
-          <div className="mb-3 flex flex-wrap items-end gap-2">
+          <div className="mb-1.5 text-[8px] font-bold uppercase tracking-[1.5px] text-[rgba(233,214,186,0.56)]">NGN Balance</div>
+          <div className="mb-2 flex flex-wrap items-end gap-2">
             <span className="font-display text-[20px] font-black text-[var(--gold2)]">₦</span>
             <span className={`font-display text-[clamp(2.5rem,7vw,3.75rem)] font-black leading-none text-[rgba(248,238,220,0.96)] transition-all ${!visible ? 'blur-sm select-none' : ''}`}>
               {wallet
@@ -114,7 +114,7 @@ export function WalletHero() {
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-3 xl:max-w-sm xl:items-end">
+        <div className="flex min-w-0 flex-col gap-2 xl:max-w-sm xl:items-end">
           <div className="flex flex-wrap gap-2 xl:justify-end">
             <Button variant="green" size="sm" onClick={() => openModal('deposit')}>⬇ Deposit</Button>
             <Button size="sm" onClick={() => openModal('send')}>↗ Send</Button>
@@ -122,11 +122,8 @@ export function WalletHero() {
           </div>
 
           <div className="xl:hidden">
-            <div className="mb-2 flex items-center justify-between px-1">
+            <div className="mb-1 flex items-center justify-between px-1">
               <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Funding Accounts</div>
-              {accounts.length > 1 ? (
-                <div className="text-[8px] text-[rgba(233,214,186,0.62)]">Swipe to switch</div>
-              ) : null}
             </div>
             <div className="overflow-hidden">
               <div
@@ -138,7 +135,7 @@ export function WalletHero() {
                 {(accounts.length ? accounts : [null]).map((item, index) => (
                   <div key={item ? `${item.provider}-${item.accountNumber}-${index}` : 'empty-mobile'} className="min-w-full pr-0.5">
                     <div
-                      className={`min-w-0 border px-3 py-3 text-left transition-all ${
+                      className={`min-w-0 border px-3 py-2.5 text-left transition-all ${
                         copied && index === activeAccountIndex
                           ? 'border-[rgba(46,170,92,0.38)] bg-[rgba(46,170,92,0.14)] shadow-[0_0_0_1px_rgba(46,170,92,0.18)]'
                           : 'border-[rgba(224,196,138,0.2)] bg-[rgba(33,23,15,0.62)]'
@@ -146,9 +143,6 @@ export function WalletHero() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
-                            {item ? renderAccountLabel(item) : 'Funding Account'}
-                          </div>
                           <div className="truncate text-[8px] text-[rgba(233,214,186,0.62)] sm:text-[9px]">
                             {item ? `${item.bank} • ${item.accountName}` : 'Funding account not available yet.'}
                           </div>
@@ -180,14 +174,7 @@ export function WalletHero() {
               </div>
             </div>
             {accounts.length > 1 ? (
-              <div className="mt-3 flex items-center justify-between gap-3 px-1">
-                <button
-                  type="button"
-                  onClick={() => moveAccount('prev')}
-                  className="border border-[rgba(224,196,138,0.2)] bg-[rgba(224,196,138,0.08)] px-2.5 py-1 text-[9px] font-bold text-[var(--gold2)]"
-                >
-                  Prev
-                </button>
+              <div className="mt-2 flex items-center justify-center gap-1.5 px-1">
                 <div className="flex items-center gap-1.5">
                   {accounts.map((item, index) => (
                     <button
@@ -199,21 +186,14 @@ export function WalletHero() {
                     />
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => moveAccount('next')}
-                  className="border border-[rgba(224,196,138,0.2)] bg-[rgba(224,196,138,0.08)] px-2.5 py-1 text-[9px] font-bold text-[var(--gold2)]"
-                >
-                  Next
-                </button>
               </div>
             ) : null}
           </div>
         </div>
       </div>
 
-      <div className="relative z-[1] mt-6 hidden xl:block">
-        <div className="mb-3 flex items-center justify-between">
+      <div className="relative z-[1] mt-4 hidden xl:block">
+        <div className="mb-2 flex items-center justify-between">
           <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Funding Accounts</div>
           <div className="text-[9px] text-[rgba(233,214,186,0.62)]">All available wallet funding routes</div>
         </div>
@@ -221,7 +201,7 @@ export function WalletHero() {
           {(accounts.length ? accounts : [null]).map((item, index) => (
             <div
               key={item ? `${item.provider}-${item.accountNumber}-desktop-${index}` : 'empty-desktop'}
-              className={`overflow-hidden border px-4 py-4 text-left transition-all ${
+              className={`overflow-hidden border px-4 py-3 text-left transition-all ${
                 copied && index === activeAccountIndex
                   ? 'border-[rgba(46,170,92,0.38)] bg-[rgba(46,170,92,0.14)] shadow-[0_0_0_1px_rgba(46,170,92,0.18)]'
                   : 'border-[rgba(224,196,138,0.2)] bg-[rgba(33,23,15,0.62)]'
@@ -229,9 +209,6 @@ export function WalletHero() {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
-                    {item ? renderAccountLabel(item) : 'Funding Account'}
-                  </div>
                   <div className="truncate text-[9px] text-[rgba(244,231,208,0.88)]">
                     {item?.accountName || 'Generate a deposit account to fund your wallet with NGN'}
                   </div>
