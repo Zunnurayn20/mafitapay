@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Copy } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { useAppStore } from '@/store'
@@ -61,67 +62,93 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     router.push('/kyc')
   }
 
+  async function copyAccountNumber(accountNumber: string) {
+    await navigator.clipboard?.writeText(accountNumber)
+    showToast('Funding account copied.')
+  }
+
+  function renderGeneratePanel(options: {
+    title: string
+    description: string
+    provider: 'palmpay' | 'flutterwave'
+    variant?: 'primary' | 'secondary'
+    eligible: boolean
+    blockedMessage: string
+  }) {
+    return (
+      <div className="border border-[var(--border)] bg-[var(--clay)] p-3.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">{options.title}</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">{options.description}</div>
+          </div>
+          {options.provider === 'palmpay' ? (
+            <span className="border border-[rgba(46,170,92,.24)] bg-[rgba(46,170,92,.1)] px-2 py-1 text-[8px] font-bold uppercase tracking-[1px] text-[var(--green2)]">
+              Default
+            </span>
+          ) : null}
+        </div>
+
+        {options.eligible ? (
+          <>
+            <div className="mt-3 text-[10px] text-[var(--muted)]">
+              Approved {kycSubmission?.documentType?.toUpperCase()} on file
+            </div>
+            <Button
+              variant={options.variant === 'secondary' ? 'secondary' : 'primary'}
+              className="mt-3 w-full py-2.5"
+              onClick={() => void generatePermanentAccount(options.provider)}
+              disabled={loadingProvider !== null}
+            >
+              {loadingProvider === options.provider
+                ? `Assigning ${options.provider === 'palmpay' ? 'PalmPay' : 'Flutterwave'}…`
+                : `Generate ${options.provider === 'palmpay' ? 'PalmPay' : 'Flutterwave'} Account`}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div className="mt-3 text-[10px] text-[rgba(233,214,186,0.62)]">{options.blockedMessage}</div>
+            <Button
+              variant={options.variant === 'secondary' ? 'secondary' : 'primary'}
+              className="mt-3 w-full py-2.5"
+              onClick={goToKyc}
+            >
+              Open KYC Page
+            </Button>
+          </>
+        )}
+      </div>
+    )
+  }
+
   return (
     <Modal open={open} onClose={onClose} title="Deposit Funds">
-      <div className="p-6 flex flex-col gap-4">
-        <div className="bg-[rgba(79,70,229,.06)] border border-[rgba(79,70,229,.18)] border-l-4 border-l-[var(--gold)] p-4">
-          <div className="text-[9px] font-bold text-[var(--gold2)] uppercase tracking-wider mb-1">Funding Notice</div>
-          <div className="text-[11px] text-[var(--text2)] leading-relaxed">PalmPay and Flutterwave funding accounts now both depend on approved BVN or NIN KYC. Wallet credit follows confirmed provider settlement.</div>
+      <div className="p-5 flex flex-col gap-3.5">
+        <div className="border border-[rgba(202,165,96,0.18)] bg-[rgba(202,165,96,0.06)] px-3 py-2.5 text-[10px] leading-relaxed text-[var(--text2)]">
+          Funding accounts require approved BVN or NIN KYC. Wallet credit follows confirmed provider settlement.
         </div>
         {!primaryAccount && !flutterwaveAccount ? (
-          <div className="space-y-4">
-            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="mb-3 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Default Funding Account</div>
-              {hasApprovedFundingIdentity ? (
-                <>
-                  <div className="rounded border border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] p-3 text-[11px] text-[var(--text2)]">
-                    Approved {kycSubmission?.documentType?.toUpperCase()} on file: <span className="font-mono text-[var(--text)]">{kycSubmission?.documentNumber}</span>
-                  </div>
-                  <Button className="mt-4 w-full py-3" onClick={() => void generatePermanentAccount('palmpay')} disabled={loadingProvider !== null}>
-                    {loadingProvider === 'palmpay' ? 'Assigning PalmPay…' : 'Generate PalmPay Account'}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <div className="rounded border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[11px] text-[var(--text2)]">
-                    An approved BVN or NIN KYC record is required before creating a PalmPay funding account.
-                  </div>
-                  <div className="mt-2 text-[10px] text-[var(--muted)]">Submit BVN or NIN first.</div>
-                  <Button className="mt-4 w-full py-3" onClick={goToKyc}>
-                    Open KYC Page
-                  </Button>
-                </>
-              )}
-            </div>
-
-            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="mb-3 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Second Account Option</div>
-              {fundingAccountEligibility.eligible ? (
-                <>
-                  <div className="rounded border border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] p-3 text-[11px] text-[var(--text2)]">
-                    Approved {kycSubmission?.documentType?.toUpperCase()} on file: <span className="font-mono text-[var(--text)]">{kycSubmission?.documentNumber}</span>
-                  </div>
-                  <Button variant="secondary" className="mt-4 w-full py-3" onClick={() => void generatePermanentAccount('flutterwave')} disabled={loadingProvider !== null}>
-                    {loadingProvider === 'flutterwave' ? 'Assigning Flutterwave…' : 'Generate Flutterwave Account'}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <div className="rounded border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[11px] text-[var(--text2)]">
-                    {fundingAccountEligibility.message}
-                  </div>
-                  <div className="mt-2 text-[10px] text-[var(--muted)]">Submit BVN or NIN first.</div>
-                  <Button variant="secondary" className="mt-4 w-full py-3" onClick={goToKyc}>
-                    Open KYC Page
-                  </Button>
-                </>
-              )}
-            </div>
+          <div className="space-y-3">
+            {renderGeneratePanel({
+              title: 'PalmPay Funding Account',
+              description: 'Primary wallet top-up route.',
+              provider: 'palmpay',
+              eligible: hasApprovedFundingIdentity,
+              blockedMessage: 'Submit approved BVN or NIN to unlock PalmPay.',
+            })}
+            {renderGeneratePanel({
+              title: 'Flutterwave Funding Account',
+              description: 'Optional second funding route.',
+              provider: 'flutterwave',
+              variant: 'secondary',
+              eligible: fundingAccountEligibility.eligible,
+              blockedMessage: fundingAccountEligibility.message,
+            })}
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {[palmpayAccount, flutterwaveAccount].filter((item): item is FundingAccount => Boolean(item)).map((account, index) => (
-            <div key={`${account.provider}-${account.accountNumber}-${index}`} className="relative overflow-hidden border border-[rgba(202,165,96,0.28)] bg-[linear-gradient(180deg,rgba(66,46,28,0.96)_0%,rgba(45,31,19,0.98)_100%)] p-4 sm:p-5">
+            <div key={`${account.provider}-${account.accountNumber}-${index}`} className="relative overflow-hidden border border-[rgba(202,165,96,0.28)] bg-[linear-gradient(180deg,rgba(66,46,28,0.96)_0%,rgba(45,31,19,0.98)_100%)] p-3.5 sm:p-4">
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 opacity-[0.16]"
@@ -148,97 +175,52 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
               <div className="relative z-[1]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[var(--gold2)]">{account.provider === 'palmpay' ? 'Default PalmPay Account' : 'Flutterwave Account'}</div>
-                    <div className="mt-1 text-[10px] text-[rgba(233,214,186,0.62)]">Bank transfer slip</div>
+                    <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[var(--gold2)]">{account.provider === 'palmpay' ? 'PalmPay' : 'Flutterwave'}</div>
+                    <div className="mt-1 text-[10px] text-[rgba(233,214,186,0.62)]">{account.bank}</div>
                   </div>
-                  <Button variant="secondary" size="sm" onClick={() => navigator.clipboard?.writeText(account.accountNumber)}>
-                    Copy
-                  </Button>
                 </div>
-                <div className="mt-4 border-y border-dashed border-[rgba(224,196,138,0.22)] py-4">
-                  <div className="text-[8px] font-bold uppercase tracking-[1px] text-[rgba(233,214,186,0.56)]">Account Number</div>
-                  <div className="mt-2 font-mono text-[24px] font-black tracking-[3px] text-[rgba(244,231,208,0.9)] sm:text-[28px]">
+                <button
+                  type="button"
+                  onClick={() => void copyAccountNumber(account.accountNumber)}
+                  className="mt-3 flex w-full items-center justify-between gap-3 border-y border-dashed border-[rgba(224,196,138,0.22)] py-3 text-left transition-colors hover:bg-[rgba(224,196,138,0.04)]"
+                >
+                  <div className="font-mono text-[22px] font-black tracking-[2.5px] text-[rgba(244,231,208,0.9)] sm:text-[26px]">
                     {account.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim()}
                   </div>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <div className="text-[8px] font-bold uppercase tracking-[1px] text-[rgba(233,214,186,0.56)]">Bank</div>
-                    <div className="mt-1 text-[11px] font-semibold text-[rgba(244,231,208,0.88)]">{account.bank}</div>
-                  </div>
-                  <div>
-                    <div className="text-[8px] font-bold uppercase tracking-[1px] text-[rgba(233,214,186,0.56)]">Account Name</div>
-                    <div className="mt-1 text-[11px] font-semibold text-[rgba(244,231,208,0.88)]">{account.accountName}</div>
-                  </div>
+                  <span className="inline-flex h-8 w-8 items-center justify-center border border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]">
+                    <Copy size={14} />
+                  </span>
+                </button>
+                <div className="mt-3 text-[11px] font-semibold text-[rgba(244,231,208,0.88)]">
+                  {account.accountName}
                 </div>
               </div>
             </div>
             ))}
 
-            <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Instructions</div>
-              <div className="grid gap-2 text-[11px] text-[var(--text2)]">
-                <div>Use PalmPay as your default wallet top-up account.</div>
-                <div>Wallet is credited after provider confirmation.</div>
-                <div>Wallet is credited net of confirmed provider charges where applicable.</div>
-                {palmpayAccount?.reference && <div>PalmPay reference: <span className="font-mono text-[var(--text)]">{palmpayAccount.reference}</span></div>}
-                {flutterwaveAccount?.reference && <div>Flutterwave reference: <span className="font-mono text-[var(--text)]">{flutterwaveAccount.reference}</span></div>}
-                {flutterwaveAccount?.expiresAt && <div>Flutterwave expiry: <span className="text-[var(--text)]">{new Date(flutterwaveAccount.expiresAt).toLocaleString()}</span></div>}
-              </div>
-            </div>
-
             {!palmpayAccount ? (
-              <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="mb-3 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Set PalmPay As Default</div>
-                {hasApprovedFundingIdentity ? (
-                  <>
-                    <div className="rounded border border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] p-3 text-[11px] text-[var(--text2)]">
-                      Your wallet can still add a PalmPay funding account as an available top-up route.
-                    </div>
-                    <Button className="mt-4 w-full py-3" onClick={() => void generatePermanentAccount('palmpay')} disabled={loadingProvider !== null}>
-                      {loadingProvider === 'palmpay' ? 'Assigning PalmPay…' : 'Generate PalmPay Account'}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <div className="rounded border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[11px] text-[var(--text2)]">
-                      An approved BVN or NIN KYC record is required before creating a PalmPay funding account.
-                    </div>
-                    <Button className="mt-4 w-full py-3" onClick={goToKyc}>
-                      Open KYC Page
-                    </Button>
-                  </>
-                )}
-              </div>
+              renderGeneratePanel({
+                title: 'Add PalmPay Account',
+                description: 'Create your primary funding route.',
+                provider: 'palmpay',
+                eligible: hasApprovedFundingIdentity,
+                blockedMessage: 'Submit approved BVN or NIN to unlock PalmPay.',
+              })
             ) : null}
 
             {!flutterwaveAccount ? (
-              <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-                <div className="mb-3 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Need A Second Account?</div>
-                {fundingAccountEligibility.eligible ? (
-                  <>
-                    <div className="rounded border border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] p-3 text-[11px] text-[var(--text2)]">
-                      Approved {kycSubmission?.documentType?.toUpperCase()} on file: <span className="font-mono text-[var(--text)]">{kycSubmission?.documentNumber}</span>
-                    </div>
-                    <Button variant="secondary" className="mt-4 w-full py-3" onClick={() => void generatePermanentAccount('flutterwave')} disabled={loadingProvider !== null}>
-                      {loadingProvider === 'flutterwave' ? 'Assigning Flutterwave…' : 'Generate Flutterwave Account'}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <div className="rounded border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[11px] text-[var(--text2)]">
-                      {fundingAccountEligibility.message}
-                    </div>
-                    <Button variant="secondary" className="mt-4 w-full py-3" onClick={goToKyc}>
-                      Open KYC Page
-                    </Button>
-                  </>
-                )}
-              </div>
+              renderGeneratePanel({
+                title: 'Add Flutterwave Account',
+                description: 'Optional second funding route.',
+                provider: 'flutterwave',
+                variant: 'secondary',
+                eligible: fundingAccountEligibility.eligible,
+                blockedMessage: fundingAccountEligibility.message,
+              })
             ) : null}
 
-            <div className="flex gap-3">
-              <Button className="flex-1" onClick={() => { closeModal(); onClose() }}>
+            <div className="flex gap-3 pt-1">
+              <Button className="flex-1 py-2.5" onClick={() => { closeModal(); onClose() }}>
                 Done
               </Button>
             </div>

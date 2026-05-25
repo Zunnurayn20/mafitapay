@@ -1,5 +1,6 @@
 'use client'
 import { useRef, useState } from 'react'
+import { Copy } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -148,29 +149,31 @@ export function WalletHero() {
                           <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
                             {item ? renderAccountLabel(item) : 'Funding Account'}
                           </div>
-                          <div className="mt-1 font-mono text-[13px] font-bold tracking-[1.4px] text-[rgba(244,231,208,0.9)] sm:text-[14px]">
-                            {item ? item.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
-                          </div>
                           <div className="truncate text-[8px] text-[rgba(233,214,186,0.62)] sm:text-[9px]">
                             {item ? `${item.bank} • ${item.accountName}` : 'Funding account not available yet.'}
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (index !== activeAccountIndex) selectAccount(index)
-                            void copyFundingAccount()
-                          }}
-                          disabled={!item?.accountNumber}
-                          className={`flex-shrink-0 border px-2.5 py-1 text-[8px] font-bold tracking-[1px] transition-all ${
-                            copied && index === activeAccountIndex
-                              ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
-                              : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
-                          } ${!item?.accountNumber ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
-                        >
-                          {copied && index === activeAccountIndex ? 'COPIED' : 'COPY'}
-                        </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (index !== activeAccountIndex) selectAccount(index)
+                          void copyFundingAccount()
+                        }}
+                        disabled={!item?.accountNumber}
+                        className="mt-3 flex w-full items-center justify-between gap-3 border-y border-dashed border-[rgba(224,196,138,0.22)] py-2.5 text-left transition-colors hover:bg-[rgba(224,196,138,0.04)]"
+                      >
+                        <div className="font-mono text-[13px] font-bold tracking-[1.4px] text-[rgba(244,231,208,0.9)] sm:text-[14px]">
+                          {item ? item.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
+                        </div>
+                        <span className={`inline-flex h-7 w-7 items-center justify-center border transition-all ${
+                          copied && index === activeAccountIndex
+                            ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
+                            : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
+                        } ${!item?.accountNumber ? 'opacity-80' : ''}`}>
+                          <Copy size={13} />
+                        </span>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -229,9 +232,6 @@ export function WalletHero() {
                   <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
                     {item ? renderAccountLabel(item) : 'Funding Account'}
                   </div>
-                  <div className="mt-1 font-mono text-[15px] font-bold tracking-[2px] text-[rgba(244,231,208,0.9)]">
-                    {item ? item.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
-                  </div>
                   <div className="truncate text-[9px] text-[rgba(244,231,208,0.88)]">
                     {item?.accountName || 'Generate a deposit account to fund your wallet with NGN'}
                   </div>
@@ -239,22 +239,27 @@ export function WalletHero() {
                     {item ? item.bank : 'Funding account not available yet.'}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (item && index !== activeAccountIndex) selectAccount(index)
-                    void copyFundingAccount()
-                  }}
-                  disabled={!item?.accountNumber}
-                  className={`flex-shrink-0 border px-3 py-1.5 text-[9px] font-bold tracking-wider transition-all ${
-                    copied && index === activeAccountIndex
-                      ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
-                      : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
-                  } ${!item?.accountNumber ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
-                >
-                  {copied && index === activeAccountIndex ? 'COPIED' : 'COPY'}
-                </button>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (item && index !== activeAccountIndex) selectAccount(index)
+                  void copyFundingAccount()
+                }}
+                disabled={!item?.accountNumber}
+                className="mt-3 flex w-full items-center justify-between gap-3 border-y border-dashed border-[rgba(224,196,138,0.22)] py-3 text-left transition-colors hover:bg-[rgba(224,196,138,0.04)]"
+              >
+                <div className="font-mono text-[15px] font-bold tracking-[2px] text-[rgba(244,231,208,0.9)]">
+                  {item ? item.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim() : '—'}
+                </div>
+                <span className={`inline-flex h-8 w-8 items-center justify-center border transition-all ${
+                  copied && index === activeAccountIndex
+                    ? 'border-[rgba(46,170,92,0.32)] bg-[rgba(46,170,92,0.12)] text-[var(--green2)]'
+                    : 'border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]'
+                } ${!item?.accountNumber ? 'opacity-80' : ''}`}>
+                  <Copy size={14} />
+                </span>
+              </button>
             </div>
           ))}
         </div>
