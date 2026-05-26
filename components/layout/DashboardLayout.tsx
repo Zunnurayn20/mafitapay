@@ -11,6 +11,7 @@ import { MobileNav } from './MobileNav'
 import { AdminShell } from './AdminShell'
 import { Toast } from '@/components/ui/Toast'
 import { ModalManager } from '@/components/modals/ModalManager'
+import { KycRequiredModal } from '@/components/modals/KycRequiredModal'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { FullScreenAppLoading } from '@/components/ui/RouteLoading'
 
@@ -33,7 +34,7 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, refreshSession, theme, user, securitySettings } = useAppStore()
+  const { authResolved, isAuthenticated, refreshSession, theme, user, securitySettings, kycSubmission } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
@@ -41,6 +42,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const isAdminRoute = pathname.startsWith('/admin')
   const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
   const isAdminUser = (user?.email ?? '').toLowerCase() === adminEmail
+  const requiresInitialKycSubmission = Boolean(
+    isAuthenticated
+    && user
+    && user.accountStatus === 'active'
+    && !kycSubmission
+    && pathname !== '/kyc'
+  )
   const title = pathname.startsWith('/admin')
     ? 'Admin'
     : TITLES[pathname] ?? 'Dashboard'
@@ -212,6 +220,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <MobileNav />
           </>
         )}
+        {requiresInitialKycSubmission ? <KycRequiredModal /> : null}
         <ModalManager />
         <Toast />
       </div>

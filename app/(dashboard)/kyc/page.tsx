@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { BadgeCheck } from 'lucide-react'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -10,6 +11,7 @@ import { useAppStore } from '@/store'
 
 export default function KycPage() {
   const { kycSubmission, refreshSession, showToast, user } = useAppStore()
+  const searchParams = useSearchParams()
   const [documentType, setDocumentType] = useState<'nin' | 'bvn' | 'passport' | 'drivers_license' | 'voters_card'>('nin')
   const [documentNumber, setDocumentNumber] = useState('')
   const [documentUrl, setDocumentUrl] = useState('')
@@ -22,13 +24,17 @@ export default function KycPage() {
   const uploadOptional = documentType === 'bvn' || documentType === 'nin'
 
   useEffect(() => {
-    setDocumentType(kycSubmission?.documentType ?? 'nin')
+    const requestedDocumentType = searchParams.get('documentType')
+    const preferredDocumentType = requestedDocumentType === 'bvn' || requestedDocumentType === 'nin'
+      ? requestedDocumentType
+      : null
+    setDocumentType(kycSubmission?.documentType ?? preferredDocumentType ?? 'nin')
     setDocumentNumber('')
     setDocumentUrl(kycSubmission?.documentUrl ?? '')
     setDocumentName(kycSubmission?.documentName ?? '')
     setMimeType(kycSubmission?.mimeType ?? '')
     setFileSize(kycSubmission?.fileSize)
-  }, [kycSubmission?.documentName, kycSubmission?.documentType, kycSubmission?.documentUrl, kycSubmission?.fileSize, kycSubmission?.mimeType])
+  }, [kycSubmission?.documentName, kycSubmission?.documentType, kycSubmission?.documentUrl, kycSubmission?.fileSize, kycSubmission?.mimeType, searchParams])
 
   const kycCopy = user?.kycStatus === 'verified'
     ? {
