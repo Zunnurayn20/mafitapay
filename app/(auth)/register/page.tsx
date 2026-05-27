@@ -122,7 +122,7 @@ export default function RegisterPage() {
         <div className="text-[10px] text-[var(--muted)] uppercase tracking-widest mt-1">Create Your Account</div>
       </div>
 
-      <div className="bg-[var(--coal)] border border-[var(--border)]">
+      <div className="relative overflow-hidden bg-[var(--coal)] border border-[var(--border)]">
         <div className="ank-strip" />
         <div className="p-7">
           <div className="flex gap-2 mb-6">
@@ -164,16 +164,6 @@ export default function RegisterPage() {
                 {error}
               </div>
             )}
-            {success && (
-              <div className="border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.08)] p-3 text-[11px] text-[var(--text2)]">
-                <div>{success}</div>
-                {verificationLink ? (
-                  <a className="mt-2 block break-all underline text-[var(--gold2)]" href={verificationLink}>
-                    Local verification link
-                  </a>
-                ) : null}
-              </div>
-            )}
             <Button type="submit" loading={loading} className="w-full py-3.5">
               {step === 1 ? 'Continue →' : 'Create Account'}
             </Button>
@@ -183,6 +173,32 @@ export default function RegisterPage() {
             <span className="text-[var(--gold2)] font-bold cursor-pointer" onClick={() => router.push('/login')}>Sign in →</span>
           </div>
         </div>
+        {success ? (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(8,7,5,.88)] px-5 backdrop-blur-md">
+            <div className="w-full border border-[rgba(202,165,96,.24)] bg-[var(--coal)] p-5 text-center shadow-[0_24px_70px_rgba(0,0,0,.35)]">
+              <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[rgba(46,170,92,.14)] text-[var(--green2)]">
+                ✓
+              </div>
+              <div className="mt-4 font-display text-[20px] font-black text-[var(--text)]">
+                Check your email
+              </div>
+              <div className="mt-2 text-[12px] leading-relaxed text-[var(--text2)]">
+                {success}
+              </div>
+              {verificationLink ? (
+                <a
+                  className="mt-4 block break-all border border-[rgba(202,165,96,.22)] bg-[rgba(202,165,96,.08)] px-3 py-3 text-[11px] font-bold text-[var(--gold2)] underline"
+                  href={verificationLink}
+                >
+                  Open local verification link
+                </a>
+              ) : null}
+              <Button className="mt-4 w-full py-3" onClick={() => router.push('/login')}>
+                Go To Login
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </AuthSplitShell>
   )

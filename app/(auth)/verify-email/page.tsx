@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { useAppStore } from '@/store'
 
 export default function VerifyEmailPage() {
-  const { authResolved, isAuthenticated, theme } = useAppStore()
+  const { authResolved, isAuthenticated, refreshSession, theme } = useAppStore()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
@@ -38,8 +38,10 @@ export default function VerifyEmailPage() {
           throw new Error(payload.error || 'Unable to verify email.')
         }
         if (!cancelled) {
-          setMessage(payload.data?.message || 'Email verified successfully. You can now sign in.')
+          setMessage(payload.data?.message || 'Email verified successfully. Continue your account setup.')
           setError('')
+          await refreshSession()
+          router.replace('/dashboard')
         }
       } catch (err) {
         if (!cancelled) {
@@ -57,7 +59,7 @@ export default function VerifyEmailPage() {
     return () => {
       cancelled = true
     }
-  }, [searchParams])
+  }, [refreshSession, router, searchParams])
 
   return (
     <div className="relative z-[1] flex min-h-screen items-center justify-center px-4">

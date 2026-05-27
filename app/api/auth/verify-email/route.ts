@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { buildSessionPayload, createSession } from '@/lib/server/auth'
 import { activateUserAccount, consumeAuthRateLimitAttempt, consumeEmailVerificationToken, getUserById } from '@/lib/server/data'
 
 function getRequestIpAddress(req: Request) {
@@ -42,9 +43,16 @@ export async function POST(req: Request) {
     await activateUserAccount(user.id)
   }
 
+  await createSession(user.id, {
+    userAgent: req.headers.get('user-agent') ?? undefined,
+    ipAddress: ipAddress || undefined,
+  })
+  const activeUser = await getUserById(user.id)
+
   return NextResponse.json({
     data: {
-      message: 'Email verified successfully. You can now sign in.',
+      message: 'Email verified successfully. Continue your account setup.',
+      session: activeUser ? await buildSessionPayload(activeUser) : null,
     },
     success: true,
   })
