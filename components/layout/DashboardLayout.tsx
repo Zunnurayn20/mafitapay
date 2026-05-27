@@ -75,13 +75,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !biometricSupportResolved) return
     if (pathname === '/security') return
+    if (user?.accountStatus === 'active' && !kycSubmission && pathname !== '/kyc') return
 
     const needsPin = securitySettings?.hasTransactionPin !== true
     const needsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
     if (needsPin || needsBiometric) {
       router.replace('/security?setup=1')
     }
-  }, [authResolved, biometricSupportResolved, biometricSupported, isAuthenticated, pathname, router, securitySettings])
+  }, [authResolved, biometricSupportResolved, biometricSupported, isAuthenticated, kycSubmission, pathname, router, securitySettings, user?.accountStatus])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return
@@ -183,7 +184,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   if (!isAuthenticated) return null
 
-  if (biometricSupportResolved && pathname !== '/security') {
+  if (biometricSupportResolved && pathname !== '/security' && !requiresInitialKycSubmission) {
     const needsPin = securitySettings?.hasTransactionPin !== true
     const needsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
     if (needsPin || needsBiometric) {

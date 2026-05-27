@@ -41,14 +41,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function getApprovedIdentityPayload(
-  approvedIdentity: Awaited<ReturnType<typeof getLatestKycSubmissionByUserId>>,
+function getFundingIdentityPayload(
+  submittedIdentity: Awaited<ReturnType<typeof getLatestKycSubmissionByUserId>>,
   sensitiveIdentity: Awaited<ReturnType<typeof getLatestSensitiveKycIdentityByUserId>>,
 ) {
   if (
-    approvedIdentity?.status !== 'approved'
+    !submittedIdentity
     || !sensitiveIdentity
-    || sensitiveIdentity.documentType !== approvedIdentity.documentType
+    || sensitiveIdentity.documentType !== submittedIdentity.documentType
     || (sensitiveIdentity.documentType !== 'bvn' && sensitiveIdentity.documentType !== 'nin')
   ) {
     return null
@@ -82,8 +82,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ data: { virtualAccount: existing, existing: true, provider }, success: true })
   }
 
-  const approvedIdentity = await getLatestKycSubmissionByUserId(user.id)
-  const sensitiveIdentity = approvedIdentity
+  const submittedIdentity = await getLatestKycSubmissionByUserId(user.id)
+  const sensitiveIdentity = submittedIdentity
     ? await getLatestSensitiveKycIdentityByUserId(user.id)
     : null
 
@@ -96,16 +96,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'PalmPay funding accounts are not configured.', success: false }, { status: 503 })
     }
 
-    const palmpayIdentity = getApprovedIdentityPayload(approvedIdentity, sensitiveIdentity)
+    const palmpayIdentity = getFundingIdentityPayload(submittedIdentity, sensitiveIdentity)
     if (!palmpayIdentity) {
       logDepositAccount('palmpay.eligibility_blocked', {
         userId: user.id,
-        hasApprovedIdentity: Boolean(approvedIdentity),
-        identityStatus: approvedIdentity?.status ?? null,
-        identityType: approvedIdentity?.documentType ?? null,
+        hasSubmittedIdentity: Boolean(submittedIdentity),
+        identityStatus: submittedIdentity?.status ?? null,
+        identityType: submittedIdentity?.documentType ?? null,
       })
       return NextResponse.json({
-        error: 'An approved BVN or NIN KYC record is required before creating a PalmPay funding account.',
+        error: 'Submit BVN or NIN before creating a PalmPay funding account.',
         success: false,
       }, { status: 403 })
     }
@@ -192,22 +192,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Flutterwave funding accounts are not configured.', success: false }, { status: 503 })
   }
 
-  if (!approvedIdentity || approvedIdentity.status !== 'approved' || (approvedIdentity.documentType !== 'bvn' && approvedIdentity.documentType !== 'nin')) {
+  if (!submittedIdentity || (submittedIdentity.documentType !== 'bvn' && submittedIdentity.documentType !== 'nin')) {
     logDepositAccount('flutterwave.eligibility_blocked', {
       userId: user.id,
-      hasApprovedIdentity: Boolean(approvedIdentity),
-      identityStatus: approvedIdentity?.status ?? null,
-      identityType: approvedIdentity?.documentType ?? null,
+      hasSubmittedIdentity: Boolean(submittedIdentity),
+      identityStatus: submittedIdentity?.status ?? null,
+      identityType: submittedIdentity?.documentType ?? null,
     })
     return NextResponse.json({
-      error: 'An approved BVN or NIN KYC record is required before creating a Flutterwave funding account.',
+      error: 'Submit BVN or NIN before creating a Flutterwave funding account.',
       success: false,
     }, { status: 403 })
   }
 
-  if (!sensitiveIdentity || sensitiveIdentity.documentType !== approvedIdentity.documentType) {
+  if (!sensitiveIdentity || sensitiveIdentity.documentType !== submittedIdentity.documentType) {
     return NextResponse.json({
-      error: 'Approved funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.',
+      error: 'Funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.',
       success: false,
     }, { status: 503 })
   }

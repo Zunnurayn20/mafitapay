@@ -43,8 +43,13 @@ function getRequestIpAddress(req: Request) {
   return forwarded.split(',')[0]?.trim() || req.headers.get('x-real-ip')?.trim() || ''
 }
 
-function buildEmailVerificationLink(token: string) {
-  const baseUrl = (process.env.MAFITAPAY_APP_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
+function buildEmailVerificationLink(token: string, req: Request) {
+  const requestOrigin = new URL(req.url).origin
+  const configuredBaseUrl = process.env.MAFITAPAY_APP_URL
+  const baseUrl = (process.env.NODE_ENV === 'production'
+    ? configuredBaseUrl ?? requestOrigin
+    : requestOrigin
+  ).replace(/\/+$/, '')
   return `${baseUrl}/verify-email?token=${encodeURIComponent(token)}`
 }
 
@@ -152,7 +157,7 @@ export async function PUT(req: Request) {
       userAgent: req.headers.get('user-agent') ?? undefined,
       ipAddress: getRequestIpAddress(req) || undefined,
     })
-    const verificationLink = buildEmailVerificationLink(emailVerification.token)
+    const verificationLink = buildEmailVerificationLink(emailVerification.token, req)
     const delivery = await deliverEmailVerification({
       email: user.email,
       verificationLink,
@@ -163,7 +168,7 @@ export async function PUT(req: Request) {
         message: 'Account created. Verify your email address before signing in.',
         requiresEmailVerification: true,
         email: user.email,
-        verificationLink: process.env.NODE_ENV === 'production' || delivery.delivered ? undefined : verificationLink,
+        verificationLink: process.env.NODE_ENV === 'production' ? undefined : verificationLink,
         delivery: process.env.NODE_ENV === 'production' ? undefined : delivery,
       },
       success: true,
