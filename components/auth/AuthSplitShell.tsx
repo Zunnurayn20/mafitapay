@@ -1,7 +1,7 @@
 'use client'
 
 import { ReactNode } from 'react'
-import { ArrowLeftRight, BadgeCheck, Receipt, ShieldCheck, Smartphone } from 'lucide-react'
+import { ArrowLeftRight, BadgeCheck, Receipt, ShieldCheck } from 'lucide-react'
 
 interface AuthSplitShellProps {
   children: ReactNode
@@ -49,7 +49,7 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
       <div className="relative mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-7xl items-center gap-10 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,.92fr)] lg:gap-14">
         <section className="relative pt-2">
           <div className="flex items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center overflow-hidden border border-[rgba(202,165,96,.2)] bg-[rgba(12,9,7,.38)] shadow-[0_14px_34px_rgba(0,0,0,.18)]">
+            <div className="flex h-16 w-16 items-center justify-center overflow-hidden border border-[rgba(202,165,96,.2)] bg-[var(--coal)] shadow-[0_14px_34px_rgba(0,0,0,.18)]">
               <img
                 src="/mafitapay-logo.png"
                 alt="MafitaPay logo"
@@ -85,7 +85,7 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             {features.map(item => {
               const Icon = item.icon
               return (
-                <div key={item.title} className="flex items-start gap-3 rounded-[1.4rem] border border-[rgba(202,165,96,.16)] bg-[rgba(24,19,15,.42)] px-4 py-4 shadow-[0_16px_36px_rgba(0,0,0,.12)] backdrop-blur">
+                <div key={item.title} className="flex items-start gap-3 rounded-[1.4rem] border border-[rgba(202,165,96,.16)] bg-[var(--clay)] px-4 py-4 shadow-[0_16px_36px_rgba(0,0,0,.12)] backdrop-blur">
                   <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(202,165,96,.12)] text-[var(--gold2)] shadow-[inset_0_0_0_1px_rgba(202,165,96,.12)]">
                     <Icon size={18} />
                   </span>
@@ -98,38 +98,26 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             })}
           </div>
 
-          <div className="mt-10 grid gap-3 sm:grid-cols-3">
-            {['Wallet funding', 'Instant transfers', 'Crypto purchase'].map(item => (
-              <div
-                key={item}
-                className="rounded-[1.4rem] border border-[rgba(202,165,96,.16)] bg-[rgba(24,19,15,.42)] px-4 py-4 shadow-[0_16px_36px_rgba(0,0,0,.12)] backdrop-blur"
-              >
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--gold2)]">Core flow</div>
-                <div className="mt-2 text-[13px] font-bold text-[var(--text)]">{item}</div>
-              </div>
-            ))}
-          </div>
-
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <button type="button" className="inline-flex items-center justify-center gap-3 rounded-2xl border border-[rgba(202,165,96,.2)] bg-[rgba(24,19,15,.52)] px-5 py-3 text-left text-[var(--text)] shadow-[0_16px_34px_rgba(0,0,0,.12)] transition-transform hover:-translate-y-0.5">
-              <Smartphone size={18} className="text-[var(--gold2)]" />
-              <span>
-                <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Get it on</span>
-                <span className="block text-[13px] font-bold">Google Play</span>
-              </span>
+            <button type="button" aria-label="Get MafitaPay on Google Play" className="transition-transform hover:-translate-y-0.5">
+              <img
+                src="/google-play.png"
+                alt="Get it on Google Play"
+                className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
+              />
             </button>
-            <button type="button" className="inline-flex items-center justify-center gap-3 rounded-2xl border border-[rgba(202,165,96,.2)] bg-[rgba(24,19,15,.52)] px-5 py-3 text-left text-[var(--text)] shadow-[0_16px_34px_rgba(0,0,0,.12)] transition-transform hover:-translate-y-0.5">
-              <Smartphone size={18} className="text-[var(--green2)]" />
-              <span>
-                <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Download on the</span>
-                <span className="block text-[13px] font-bold">App Store</span>
-              </span>
+            <button type="button" aria-label="Download MafitaPay on the App Store" className="transition-transform hover:-translate-y-0.5">
+              <img
+                src="/app-store.png"
+                alt="Download on the App Store"
+                className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
+              />
             </button>
           </div>
         </section>
 
         <section className="relative flex justify-center lg:justify-end">
-          <div className="w-full max-w-[440px] rounded-[2rem] border border-[rgba(202,165,96,.16)] bg-[rgba(16,13,10,.78)] p-5 shadow-[0_30px_80px_rgba(0,0,0,.28)] backdrop-blur sm:p-6 lg:p-7">
+          <div className="w-full max-w-[440px] rounded-[2rem] border border-[rgba(202,165,96,.16)] bg-[var(--coal)] p-5 shadow-[0_30px_80px_rgba(0,0,0,.28)] backdrop-blur sm:p-6 lg:p-7">
             {children}
           </div>
         </section>

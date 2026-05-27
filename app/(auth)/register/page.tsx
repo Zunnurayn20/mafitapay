@@ -5,6 +5,7 @@ import { useAppStore } from '@/store'
 import { AuthSplitShell } from '@/components/auth/AuthSplitShell'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { ArrowLeft } from 'lucide-react'
 
 export default function RegisterPage() {
   const { authResolved, isAuthenticated, register, theme } = useAppStore()
@@ -100,6 +101,13 @@ export default function RegisterPage() {
     }
   }
 
+  function handleBackToDetails() {
+    setError('')
+    setSuccess('')
+    setVerificationLink('')
+    setStep(1)
+  }
+
   return (
     <AuthSplitShell>
       <div className="lg:hidden text-center mb-8">
@@ -122,8 +130,20 @@ export default function RegisterPage() {
               <div key={s} className={`flex-1 h-1 ${s <= step ? 'bg-[var(--gold)]' : 'bg-[var(--border)]'}`} />
             ))}
           </div>
-          <div className="font-display font-black text-[20px] text-[var(--text)] mb-5">
-            {step === 1 ? 'Personal Details' : 'Secure Your Account'}
+          <div className="mb-5 flex items-center gap-3">
+            {step === 2 ? (
+              <button
+                type="button"
+                aria-label="Back to personal details"
+                onClick={handleBackToDetails}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[rgba(255,255,255,.03)] text-[var(--text)] transition hover:border-[var(--gold)] hover:text-[var(--gold2)]"
+              >
+                <ArrowLeft size={16} />
+              </button>
+            ) : null}
+            <div className="font-display font-black text-[20px] text-[var(--text)]">
+              {step === 1 ? 'Personal Details' : 'Secure Your Account'}
+            </div>
           </div>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             {step === 1 && (<>
