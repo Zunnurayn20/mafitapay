@@ -27,10 +27,13 @@ export default function SecurityPage() {
   const [currentPin, setCurrentPin] = useState('')
   const [newPin, setNewPin] = useState('')
   const [confirmPin, setConfirmPin] = useState('')
+  const [pinResetPassword, setPinResetPassword] = useState('')
+  const [pinResetMode, setPinResetMode] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
   const [managingPin, setManagingPin] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
   const [savingPin, setSavingPin] = useState(false)
+  const [resettingPin, setResettingPin] = useState(false)
   const [disablingPin, setDisablingPin] = useState(false)
   const [managingBiometric, setManagingBiometric] = useState(false)
   const [biometricSupported, setBiometricSupported] = useState(false)
@@ -260,6 +263,51 @@ export default function SecurityPage() {
     }
   }
 
+  async function resetTransactionPinWithPassword() {
+    if (!pinResetPassword || !newPin || !confirmPin) {
+      showToast('Account password and new PIN fields are required.', 'error')
+      return
+    }
+    if (newPin !== confirmPin) {
+      showToast('PIN confirmation does not match.', 'error')
+      return
+    }
+    if (!/^\d{4}$/.test(newPin)) {
+      showToast('Transaction PIN must be exactly 4 digits.', 'error')
+      return
+    }
+
+    setResettingPin(true)
+    try {
+      const response = await fetch('/api/security/transaction-pin', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          accountPassword: pinResetPassword,
+          newPin,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Transaction PIN reset failed.')
+      }
+
+      setCurrentPin('')
+      setNewPin('')
+      setConfirmPin('')
+      setPinResetPassword('')
+      setPinResetMode(false)
+      setManagingPin(false)
+      await refreshSession()
+      showToast('Transaction PIN reset successfully.')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Transaction PIN reset failed.', 'error')
+    } finally {
+      setResettingPin(false)
+    }
+  }
+
   async function removeTransactionPin() {
     if (!currentPin) {
       showToast('Current transaction PIN is required.', 'error')
@@ -445,7 +493,14 @@ export default function SecurityPage() {
             <Button
               size="sm"
               variant={managingPin ? 'secondary' : 'primary'}
-              onClick={() => setManagingPin(current => !current)}
+              onClick={() => {
+                setManagingPin(current => !current)
+                setPinResetMode(false)
+                setPinResetPassword('')
+                setCurrentPin('')
+                setNewPin('')
+                setConfirmPin('')
+              }}
             >
               {managingPin ? 'Close' : securitySettings?.hasTransactionPin ? 'Manage' : 'Set Up'}
             </Button>
@@ -453,8 +508,36 @@ export default function SecurityPage() {
 
           {managingPin ? (
             <>
+              {securitySettings?.hasTransactionPin ? (
+                <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl border border-[rgba(202,165,96,.14)] bg-[var(--clay)] p-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPinResetMode(false)
+                      setPinResetPassword('')
+                      setNewPin('')
+                      setConfirmPin('')
+                    }}
+                    className={`rounded-xl px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.12em] transition ${!pinResetMode ? 'bg-[var(--gold)] text-[var(--dark)]' : 'text-[var(--text2)] hover:text-[var(--gold2)]'}`}
+                  >
+                    Change PIN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPinResetMode(true)
+                      setCurrentPin('')
+                      setNewPin('')
+                      setConfirmPin('')
+                    }}
+                    className={`rounded-xl px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.12em] transition ${pinResetMode ? 'bg-[var(--gold)] text-[var(--dark)]' : 'text-[var(--text2)] hover:text-[var(--gold2)]'}`}
+                  >
+                    Reset PIN
+                  </button>
+                </div>
+              ) : null}
               <div className="mt-5 space-y-4">
-                {securitySettings?.hasTransactionPin ? (
+                {securitySettings?.hasTransactionPin && !pinResetMode ? (
                   <Input
                     label="Current PIN"
                     type="password"
@@ -464,8 +547,16 @@ export default function SecurityPage() {
                     onChange={event => setCurrentPin(event.target.value.replace(/\D/g, '').slice(0, 4))}
                   />
                 ) : null}
+                {securitySettings?.hasTransactionPin && pinResetMode ? (
+                  <Input
+                    label="Account Password"
+                    type="password"
+                    value={pinResetPassword}
+                    onChange={event => setPinResetPassword(event.target.value)}
+                  />
+                ) : null}
                 <Input
-                  label={securitySettings?.hasTransactionPin ? 'New PIN' : 'Transaction PIN'}
+                  label={securitySettings?.hasTransactionPin ? pinResetMode ? 'New PIN' : 'New PIN' : 'Transaction PIN'}
                   type="password"
                   inputMode="numeric"
                   maxLength={4}
@@ -481,14 +572,23 @@ export default function SecurityPage() {
                   onChange={event => setConfirmPin(event.target.value.replace(/\D/g, '').slice(0, 4))}
                 />
               </div>
+              {securitySettings?.hasTransactionPin && pinResetMode ? (
+                <div className="mt-4 border border-[rgba(202,165,96,.16)] bg-[rgba(202,165,96,.07)] p-3 text-[10px] leading-relaxed text-[var(--text2)]">
+                  Use reset only if you forgot your current PIN. Your account password confirms this change.
+                </div>
+              ) : null}
               <div className="mt-5 flex gap-3">
-                {securitySettings?.hasTransactionPin ? (
-                  <Button variant="secondary" className="flex-1 py-3" onClick={removeTransactionPin} disabled={disablingPin || savingPin}>
+                {securitySettings?.hasTransactionPin && !pinResetMode ? (
+                  <Button variant="secondary" className="flex-1 py-3" onClick={removeTransactionPin} disabled={disablingPin || savingPin || resettingPin}>
                     {disablingPin ? 'Removing…' : 'Remove PIN'}
                   </Button>
                 ) : null}
-                <Button className="flex-1 py-3" onClick={saveTransactionPin} disabled={savingPin || disablingPin}>
-                  {savingPin ? 'Saving…' : securitySettings?.hasTransactionPin ? 'Update PIN' : 'Create PIN'}
+                <Button
+                  className="flex-1 py-3"
+                  onClick={pinResetMode ? resetTransactionPinWithPassword : saveTransactionPin}
+                  disabled={savingPin || disablingPin || resettingPin}
+                >
+                  {resettingPin ? 'Resetting…' : savingPin ? 'Saving…' : pinResetMode ? 'Reset PIN' : securitySettings?.hasTransactionPin ? 'Update PIN' : 'Create PIN'}
                 </Button>
               </div>
             </>
@@ -577,9 +677,9 @@ export default function SecurityPage() {
                           size="sm"
                           variant="secondary"
                           onClick={() => void removeBiometricCredentialById(credential.credentialId)}
-                          disabled={removingBiometricId === credential.id}
+                          disabled={removingBiometricId === credential.credentialId}
                         >
-                          {removingBiometricId === credential.id ? 'Removing…' : 'Remove'}
+                          {removingBiometricId === credential.credentialId ? 'Removing…' : 'Remove'}
                         </Button>
                       </div>
                     ))}

@@ -6505,6 +6505,43 @@ export async function upsertTransactionPin(userId: string, nextPin: string, curr
   return record
 }
 
+export async function resetTransactionPin(userId: string, nextPin: string) {
+  await ensureDbReady()
+  assertValidTransactionPin(nextPin)
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
+  const now = new Date().toISOString()
+  const { transactionPinHash, transactionPinSalt } = createTransactionPinRecord(nextPin)
+
+  db.prepare(`
+    INSERT INTO security_settings (
+      user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      transaction_pin_enabled = excluded.transaction_pin_enabled,
+      transaction_pin_hash = excluded.transaction_pin_hash,
+      transaction_pin_salt = excluded.transaction_pin_salt,
+      transaction_pin_failed_attempts = excluded.transaction_pin_failed_attempts,
+      transaction_pin_locked_until = excluded.transaction_pin_locked_until,
+      updated_at = excluded.updated_at
+  `).run(
+    userId,
+    1,
+    transactionPinHash,
+    transactionPinSalt,
+    0,
+    null,
+    row?.two_factor_enabled ?? 0,
+    row?.biometric_enabled ?? 1,
+    row?.created_at ?? now,
+    now
+  )
+
+  const record = await getSecuritySettingsByUserId(userId)
+  if (!record) throw new Error('Unable to reset transaction PIN.')
+  return record
+}
+
 export async function disableTransactionPin(userId: string, currentPin: string) {
   await ensureDbReady()
   assertValidTransactionPin(currentPin)
