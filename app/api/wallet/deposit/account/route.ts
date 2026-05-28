@@ -101,13 +101,17 @@ export async function POST(req: Request) {
       logDepositAccount('palmpay.eligibility_blocked', {
         userId: user.id,
         hasSubmittedIdentity: Boolean(submittedIdentity),
+        hasSensitiveIdentity: Boolean(sensitiveIdentity),
         identityStatus: submittedIdentity?.status ?? null,
         identityType: submittedIdentity?.documentType ?? null,
+        sensitiveIdentityType: sensitiveIdentity?.documentType ?? null,
       })
       return NextResponse.json({
-        error: 'Submit BVN or NIN before creating a PalmPay funding account.',
+        error: sensitiveIdentity
+          ? 'Submit BVN or NIN before creating a PalmPay funding account.'
+          : 'Funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.',
         success: false,
-      }, { status: 403 })
+      }, { status: sensitiveIdentity ? 403 : 503 })
     }
 
     const providerAccount = await createPalmPayVirtualAccount({

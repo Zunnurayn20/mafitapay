@@ -5929,7 +5929,7 @@ export async function getLatestSensitiveKycIdentityByUserId(userId: string): Pro
     SELECT ks.submission_id, ks.document_type, ks.encrypted_document_number
     FROM kyc_sensitive_identities ks
     INNER JOIN kyc_submissions k ON k.id = ks.submission_id
-    WHERE ks.user_id = ? AND k.status = 'approved'
+    WHERE ks.user_id = ?
     ORDER BY k.created_at DESC
     LIMIT 1
   `).get(userId) as Pick<KycSensitiveIdentityRow, 'submission_id' | 'document_type' | 'encrypted_document_number'> | undefined
