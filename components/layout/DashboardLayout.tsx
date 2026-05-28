@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { canUseBiometrics } from '@/lib/client/biometric'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
@@ -34,11 +34,12 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, refreshSession, theme, user, securitySettings, kycSubmission } = useAppStore()
+  const { authResolved, isAuthenticated, refreshSession, theme, user, wallet, securitySettings, kycSubmission } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
   const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
+  const fundingProvisionKeyRef = useRef('')
   const isAdminRoute = pathname.startsWith('/admin')
   const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
   const isAdminUser = (user?.email ?? '').toLowerCase() === adminEmail
@@ -125,6 +126,56 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       window.removeEventListener('focus', handleFocus)
     }
   }, [authResolved, isAuthenticated, refreshSession])
+
+  useEffect(() => {
+    if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return
+    if (!kycSubmission || (kycSubmission.documentType !== 'bvn' && kycSubmission.documentType !== 'nin')) return
+
+    const permanentAccounts = wallet?.virtualAccounts.filter(item => item.isPermanent) ?? []
+    const missingProviders = (['palmpay', 'flutterwave'] as const).filter(
+      provider => !permanentAccounts.some(item => item.provider === provider)
+    )
+    if (!missingProviders.length) return
+
+    const provisionKey = `${user.id}:${kycSubmission.id}:${missingProviders.join(',')}`
+    if (fundingProvisionKeyRef.current === provisionKey) return
+    fundingProvisionKeyRef.current = provisionKey
+
+    let cancelled = false
+    void (async () => {
+      for (const provider of missingProviders) {
+        try {
+          const response = await fetch('/api/wallet/deposit/account', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ provider }),
+          })
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null)
+            console.warn('[funding-account-provision] failed', {
+              provider,
+              status: response.status,
+              error: payload?.error ?? null,
+            })
+          }
+        } catch (error) {
+          console.warn('[funding-account-provision] request_error', {
+            provider,
+            error: error instanceof Error ? error.message : 'Request failed',
+          })
+        }
+      }
+
+      if (!cancelled) {
+        await refreshSession()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authResolved, isAuthenticated, kycSubmission, refreshSession, user, wallet?.virtualAccounts])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return

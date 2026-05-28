@@ -14,20 +14,6 @@ export function KycRequiredModal() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  async function createFundingAccounts() {
-    const providers = ['palmpay', 'flutterwave'] as const
-    return Promise.allSettled(
-      providers.map(provider => (
-        fetch('/api/wallet/deposit/account', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ provider }),
-        })
-      ))
-    )
-  }
-
   async function submitIdentity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const normalizedNumber = documentNumber.replace(/\D/g, '')
@@ -55,9 +41,6 @@ export function KycRequiredModal() {
       }
 
       await refreshSession()
-      void createFundingAccounts().finally(() => {
-        void refreshSession()
-      })
       showToast('Identity submitted. Funding accounts are being prepared.', 'success')
       router.replace('/security?setup=1')
     } catch (error) {
