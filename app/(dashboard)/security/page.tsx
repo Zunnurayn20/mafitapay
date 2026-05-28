@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { AlertCircle, CheckCircle2, Fingerprint, KeyRound, LockKeyhole, ShieldCheck, Smartphone, Sparkles } from 'lucide-react'
 import { Card, CardAction, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -359,33 +360,59 @@ export default function SecurityPage() {
 
   const setupNeedsPin = securitySettings?.hasTransactionPin !== true
   const setupNeedsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
-  const setupComplete = !setupNeedsPin && !setupNeedsBiometric
+  const setupComplete = !setupNeedsPin
 
   return (
-    <div className="max-w-3xl">
+    <div className="mx-auto max-w-5xl">
       <div>
         {setupMode ? (
-          <Card className="mb-4 border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.08)] p-5">
-            <div className="text-[11px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)]">Security Setup Required</div>
-            <div className="mt-2 text-[12px] text-[var(--text2)]">
-              Finish your transaction PIN{biometricSupported ? ' and biometric approval' : ''} before using the platform.
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
-              <span className={`border px-2.5 py-1 ${setupNeedsPin ? 'border-[rgba(196,52,26,.2)] bg-[rgba(196,52,26,.08)] text-[var(--red2)]' : 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.1)] text-[var(--green2)]'}`}>
-                PIN {setupNeedsPin ? 'Pending' : 'Ready'}
-              </span>
-              {biometricSupported ? (
-                <span className={`border px-2.5 py-1 ${setupNeedsBiometric ? 'border-[rgba(196,52,26,.2)] bg-[rgba(196,52,26,.08)] text-[var(--red2)]' : 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.1)] text-[var(--green2)]'}`}>
-                  Biometrics {setupNeedsBiometric ? 'Pending' : 'Ready'}
-                </span>
-              ) : (
-                <span className="border border-[var(--border)] bg-[var(--clay)] px-2.5 py-1 text-[var(--muted)]">
-                  Biometrics not available on this device
-                </span>
-              )}
+          <Card className="mb-5 overflow-hidden border-[rgba(202,165,96,.3)] bg-[linear-gradient(135deg,rgba(66,46,28,.98),rgba(18,14,10,.96)_48%,rgba(28,56,35,.92))] p-0">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 opacity-30"
+              style={{
+                backgroundImage:
+                  'radial-gradient(circle at 18% 18%, rgba(202,165,96,.32), transparent 28%), radial-gradient(circle at 84% 20%, rgba(46,170,92,.22), transparent 24%), repeating-linear-gradient(45deg, rgba(202,165,96,.08) 0 2px, transparent 2px 22px)',
+              }}
+            />
+            <div className="relative z-[1] grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-[rgba(202,165,96,.26)] bg-[rgba(202,165,96,.12)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--gold2)]">
+                  <ShieldCheck size={14} />
+                  Security Setup Required
+                </div>
+                <div className="mt-4 font-display text-[28px] font-black leading-tight text-[rgba(248,238,220,.98)] sm:text-[34px]">
+                  Protect every wallet action before you continue.
+                </div>
+                <div className="mt-2 max-w-2xl text-[12px] leading-relaxed text-[rgba(233,214,186,.76)]">
+                  Create your transaction PIN to unlock the platform. Biometrics are optional and can be enrolled now or later from security settings.
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[22rem] lg:grid-cols-1">
+                <div className={`flex items-center gap-3 border px-4 py-3 ${setupNeedsPin ? 'border-[rgba(196,52,26,.28)] bg-[rgba(196,52,26,.14)]' : 'border-[rgba(46,170,92,.3)] bg-[rgba(46,170,92,.14)]'}`}>
+                  <span className={`grid h-10 w-10 place-items-center rounded-full ${setupNeedsPin ? 'bg-[var(--red)] text-white' : 'bg-[var(--green)] text-white'}`}>
+                    {setupNeedsPin ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+                  </span>
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-[0.12em] text-[rgba(248,238,220,.95)]">Transaction PIN</div>
+                    <div className="mt-0.5 text-[10px] text-[rgba(233,214,186,.68)]">{setupNeedsPin ? 'Pending setup' : 'Ready for approvals'}</div>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-3 border px-4 py-3 ${!biometricSupported ? 'border-[rgba(233,214,186,.16)] bg-[rgba(233,214,186,.07)]' : setupNeedsBiometric ? 'border-[rgba(202,165,96,.24)] bg-[rgba(202,165,96,.11)]' : 'border-[rgba(46,170,92,.3)] bg-[rgba(46,170,92,.14)]'}`}>
+                  <span className={`grid h-10 w-10 place-items-center rounded-full ${!biometricSupported ? 'bg-[rgba(233,214,186,.14)] text-[rgba(233,214,186,.75)]' : setupNeedsBiometric ? 'bg-[var(--gold)] text-[var(--dark)]' : 'bg-[var(--green)] text-white'}`}>
+                    {!biometricSupported ? <Smartphone size={18} /> : setupNeedsBiometric ? <Sparkles size={18} /> : <CheckCircle2 size={18} />}
+                  </span>
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-[0.12em] text-[rgba(248,238,220,.95)]">Biometric Approval</div>
+                    <div className="mt-0.5 text-[10px] text-[rgba(233,214,186,.68)]">
+                      {!biometricSupported ? 'Not available here' : setupNeedsBiometric ? 'Optional enrollment' : 'Device enrolled'}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             {setupComplete ? (
-              <div className="mt-4">
+              <div className="relative z-[1] border-t border-[rgba(202,165,96,.16)] bg-[rgba(10,8,6,.28)] p-5">
                 <Button className="w-full py-3" onClick={() => router.push('/dashboard')}>
                   Continue to Dashboard
                 </Button>
@@ -394,17 +421,25 @@ export default function SecurityPage() {
           </Card>
         ) : null}
 
-        <Card className="mb-4 p-6">
+        <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="mb-4 overflow-hidden border-[rgba(202,165,96,.18)] bg-[linear-gradient(180deg,var(--coal),rgba(33,23,15,.88))] p-6">
+          <div aria-hidden="true" className="absolute right-[-2rem] top-[-2rem] h-24 w-24 rounded-full bg-[rgba(202,165,96,.12)] blur-2xl" />
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-bold text-[var(--text)]">Transaction PIN</div>
+            <div className="flex min-w-0 items-start gap-3">
+              <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${securitySettings?.hasTransactionPin ? 'bg-[rgba(46,170,92,.16)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.14)] text-[var(--gold2)]'}`}>
+                <KeyRound size={22} />
+              </span>
+              <div className="min-w-0">
+              <div className="text-[14px] font-black text-[var(--text)]">Transaction PIN</div>
               <div className="mt-1 text-[10px] text-[var(--muted)]">
                 {securitySettings?.hasTransactionPin
                   ? 'Protects transfers, withdrawals, bill payments, and in-app crypto execution.'
                   : 'Set a 4-digit PIN for sensitive transactions.'}
               </div>
-              <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)]">
+              <div className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] ${securitySettings?.hasTransactionPin ? 'bg-[rgba(46,170,92,.14)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'}`}>
+                {securitySettings?.hasTransactionPin ? <CheckCircle2 size={12} /> : <LockKeyhole size={12} />}
                 {securitySettings?.hasTransactionPin ? 'Configured' : 'Not set'}
+              </div>
               </div>
             </div>
             <Button
@@ -460,15 +495,22 @@ export default function SecurityPage() {
           ) : null}
         </Card>
 
-        <Card className="mb-4 p-6">
+        <Card className="mb-4 overflow-hidden border-[rgba(46,170,92,.18)] bg-[linear-gradient(180deg,var(--coal),rgba(12,32,20,.72))] p-6">
+          <div aria-hidden="true" className="absolute right-[-2rem] top-[-2rem] h-24 w-24 rounded-full bg-[rgba(46,170,92,.12)] blur-2xl" />
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-bold text-[var(--text)]">Biometric Approval</div>
+            <div className="flex min-w-0 items-start gap-3">
+              <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${securitySettings?.hasBiometricCredential ? 'bg-[rgba(46,170,92,.16)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.14)] text-[var(--gold2)]'}`}>
+                <Fingerprint size={23} />
+              </span>
+              <div className="min-w-0">
+              <div className="text-[14px] font-black text-[var(--text)]">Biometric Approval</div>
               <div className="mt-1 text-[10px] text-[var(--muted)]">
                 Use Face ID, fingerprint, or passkey as a real WebAuthn approval path for sensitive transactions.
               </div>
-              <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)]">
+              <div className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] ${securitySettings?.hasBiometricCredential ? 'bg-[rgba(46,170,92,.14)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'}`}>
+                {securitySettings?.hasBiometricCredential ? <CheckCircle2 size={12} /> : <Sparkles size={12} />}
                 {securitySettings?.hasBiometricCredential ? 'Configured' : 'Not set'}
+              </div>
               </div>
             </div>
             <Button
@@ -559,6 +601,7 @@ export default function SecurityPage() {
             </>
           ) : null}
         </Card>
+        </div>
 
         <Card className="mb-4">
           <CardHeader><CardTitle>Authentication</CardTitle></CardHeader>

@@ -79,11 +79,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (user?.accountStatus === 'active' && !kycSubmission && pathname !== '/kyc') return
 
     const needsPin = securitySettings?.hasTransactionPin !== true
-    const needsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
-    if (needsPin || needsBiometric) {
+    if (needsPin) {
       router.replace('/security?setup=1')
     }
-  }, [authResolved, biometricSupportResolved, biometricSupported, isAuthenticated, kycSubmission, pathname, router, securitySettings, user?.accountStatus])
+  }, [authResolved, biometricSupportResolved, isAuthenticated, kycSubmission, pathname, router, securitySettings, user?.accountStatus])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return
@@ -237,12 +236,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   if (biometricSupportResolved && pathname !== '/security' && !requiresInitialKycSubmission) {
     const needsPin = securitySettings?.hasTransactionPin !== true
-    const needsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
-    if (needsPin || needsBiometric) {
+    if (needsPin) {
       return (
         <FullScreenAppLoading
           title="Completing security setup"
-          detail="Redirecting you to transaction PIN and biometric onboarding."
+          detail="Redirecting you to transaction PIN setup."
         />
       )
     }
