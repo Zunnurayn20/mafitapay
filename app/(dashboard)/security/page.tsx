@@ -470,13 +470,10 @@ export default function SecurityPage() {
         ) : null}
 
         <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="mb-4 overflow-hidden border-[rgba(202,165,96,.18)] bg-[linear-gradient(180deg,var(--coal),rgba(33,23,15,.88))] p-6">
-          <div aria-hidden="true" className="absolute right-[-2rem] top-[-2rem] h-24 w-24 rounded-full bg-[rgba(202,165,96,.12)] blur-2xl" />
+        <Card className="mb-4 border-[rgba(202,165,96,.18)] p-6">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
-              <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${securitySettings?.hasTransactionPin ? 'bg-[rgba(46,170,92,.16)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.14)] text-[var(--gold2)]'}`}>
-                <KeyRound size={22} />
-              </span>
+              <KeyRound size={24} className={`mt-0.5 shrink-0 ${securitySettings?.hasTransactionPin ? 'text-[var(--green2)]' : 'text-[var(--gold2)]'}`} />
               <div className="min-w-0">
               <div className="text-[14px] font-black text-[var(--text)]">Transaction PIN</div>
               <div className="mt-1 text-[10px] text-[var(--muted)]">
@@ -595,13 +592,10 @@ export default function SecurityPage() {
           ) : null}
         </Card>
 
-        <Card className="mb-4 overflow-hidden border-[rgba(46,170,92,.18)] bg-[linear-gradient(180deg,var(--coal),rgba(12,32,20,.72))] p-6">
-          <div aria-hidden="true" className="absolute right-[-2rem] top-[-2rem] h-24 w-24 rounded-full bg-[rgba(46,170,92,.12)] blur-2xl" />
+        <Card className="mb-4 border-[rgba(46,170,92,.18)] p-6">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
-              <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${securitySettings?.hasBiometricCredential ? 'bg-[rgba(46,170,92,.16)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.14)] text-[var(--gold2)]'}`}>
-                <Fingerprint size={23} />
-              </span>
+              <Fingerprint size={25} className={`mt-0.5 shrink-0 ${securitySettings?.hasBiometricCredential ? 'text-[var(--green2)]' : 'text-[var(--gold2)]'}`} />
               <div className="min-w-0">
               <div className="text-[14px] font-black text-[var(--text)]">Biometric Approval</div>
               <div className="mt-1 text-[10px] text-[var(--muted)]">
