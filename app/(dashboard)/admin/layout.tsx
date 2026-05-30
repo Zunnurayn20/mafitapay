@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { AdminQuickAccess } from './_components/AdminQuickAccess'
 
 const ADMIN_SECTIONS = [
   { href: '/admin', label: 'Overview', description: 'Administration index and module shortcuts.' },
@@ -46,6 +47,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </section>
         </>
       )}
+
+      <AdminQuickAccess />
 
       {children}
     </div>

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import type { FundingAccountEligibility } from '@/types'
+import { isAdminEmail } from '@/lib/admin-access'
 import {
   NotificationRecord,
   createNotification,
@@ -135,8 +136,7 @@ export async function requireAdminUser() {
   const user = await requireUser()
   if (!user) return null
 
-  const adminEmail = (process.env.MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
-  return user.email.toLowerCase() === adminEmail ? user : null
+  return isAdminEmail(user.email) ? user : null
 }
 
 export async function buildSessionPayload(user: StoredUser): Promise<SessionPayload> {

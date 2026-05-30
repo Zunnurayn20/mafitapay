@@ -29,34 +29,36 @@ const ADMIN_MODULES = [
 
 export default function AdminIndexPage() {
   return (
-    <div className="space-y-6">
-      <section className="border border-[var(--border)] bg-[var(--coal)] p-5">
-        <div className="text-[10px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">Administration</div>
-        <div className="mt-2 text-[16px] font-black text-[var(--text)]">Site Administration</div>
-        <div className="mt-2 max-w-3xl text-[11px] leading-relaxed text-[var(--muted)]">
-          Select a module below. Each module is isolated so operators are not working inside one oversized page anymore.
+    <div className="space-y-4">
+      <section className="border border-[var(--border)] bg-[var(--coal)] p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">Administration</div>
+            <div className="mt-1 text-[16px] font-black text-[var(--text)]">Site Administration</div>
+          </div>
+          <div className="max-w-xl text-[10px] leading-relaxed text-[var(--muted)]">
+            Pick a module or use the superuser cards above for direct operational access.
+          </div>
         </div>
       </section>
 
-      <section className="overflow-hidden border border-[var(--border)] bg-[var(--coal)]">
-        <div className="grid grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,20rem)] border-b border-[var(--border)] bg-[rgba(255,255,255,.02)] px-4 py-3 text-[9px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">
-          <div>Module</div>
-          <div>Purpose</div>
-          <div>Includes</div>
-        </div>
+      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         {ADMIN_MODULES.map(module => (
           <Link
             key={module.href}
             href={module.href}
-            className="grid grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,20rem)] gap-4 border-b border-[var(--border)] px-4 py-4 transition-colors last:border-b-0 hover:bg-[rgba(255,255,255,.03)]"
+            className="border border-[var(--border)] bg-[var(--coal)] p-3 transition-all hover:-translate-y-0.5 hover:border-[var(--gold2)] hover:bg-[rgba(255,255,255,.03)]"
           >
-            <div className="text-[12px] font-bold text-[var(--text)]">{module.label}</div>
-            <div className="text-[11px] leading-relaxed text-[var(--muted)]">{module.summary}</div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-[12px] font-bold text-[var(--text)]">{module.label}</div>
+              <div className="text-[9px] font-bold uppercase tracking-[.8px] text-[var(--gold2)]">Open</div>
+            </div>
+            <div className="mt-2 line-clamp-2 min-h-8 text-[10px] leading-relaxed text-[var(--muted)]">{module.summary}</div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
               {module.items.map(item => (
                 <span
                   key={item}
-                  className="border border-[var(--border)] bg-[var(--coal)] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[.8px] text-[var(--muted)]"
+                  className="border border-[var(--border)] bg-[var(--clay)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[.7px] text-[var(--muted)]"
                 >
                   {item}
                 </span>

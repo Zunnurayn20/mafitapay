@@ -15,6 +15,7 @@ export interface User {
   accountStatus: 'active' | 'pending_verification' | 'deactivated'
   kycStatus: 'pending' | 'verified' | 'rejected'
   tier: 'basic' | 'verified' | 'premium'
+  isAdmin?: boolean
   createdAt: string
 }
 
@@ -150,6 +151,8 @@ export type TransactionType =
   | 'crypto_sell'
   | 'referral_bonus'
   | 'reward_bonus'
+  | 'admin_credit'
+  | 'admin_debit'
   | 'p2p_deposit'
   | 'p2p_withdrawal'
 export type TransactionStatus = 'pending' | 'success' | 'failed' | 'processing'

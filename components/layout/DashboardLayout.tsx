@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { canUseBiometrics } from '@/lib/client/biometric'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
+import { isAdminEmail } from '@/lib/admin-access'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { Ticker } from './Ticker'
@@ -41,8 +42,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
   const fundingProvisionKeyRef = useRef('')
   const isAdminRoute = pathname.startsWith('/admin')
-  const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
-  const isAdminUser = (user?.email ?? '').toLowerCase() === adminEmail
+  const isAdminUser = Boolean(user?.isAdmin || isAdminEmail(user?.email))
   const requiresInitialKycSubmission = Boolean(
     isAuthenticated
     && user
@@ -233,6 +233,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }
 
   if (!isAuthenticated) return null
+
+  if (isAdminRoute && !isAdminUser) {
+    return (
+      <FullScreenAppLoading
+        title="Admin access restricted"
+        detail="This account is signed in, but it is not configured as an admin account."
+      />
+    )
+  }
 
   if (biometricSupportResolved && pathname !== '/security' && !requiresInitialKycSubmission) {
     const needsPin = securitySettings?.hasTransactionPin !== true

@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/store'
+import { isAdminEmail } from '@/lib/admin-access'
 import { formatNGN } from '@/lib/utils'
 import {
   LayoutDashboard, ClipboardList, ArrowLeftRight, Zap,
@@ -33,8 +34,7 @@ const NAV = [
 export function Sidebar() {
   const pathname  = usePathname()
   const { user, wallet, logout, transactions } = useAppStore()
-  const adminEmail = (process.env.NEXT_PUBLIC_MAFITAPAY_ADMIN_EMAIL ?? 'aminu@mafitapay.ng').toLowerCase()
-  const isAdmin = (user?.email ?? '').toLowerCase() === adminEmail
+  const isAdmin = Boolean(user?.isAdmin || isAdminEmail(user?.email))
   const [seenPendingTransactionIds, setSeenPendingTransactionIds] = useState<string[]>(() => {
     if (typeof window === 'undefined') return []
     try {

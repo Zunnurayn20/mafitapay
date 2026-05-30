@@ -16,6 +16,7 @@ import { getExecutionRailForAsset } from '../crypto-execution'
 import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '../crypto-market'
 import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../routed-assets'
 import { generateRef } from '../utils'
+import { isAdminEmail } from '../admin-access'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
 import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoOrder, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, P2PMerchant, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
 
@@ -161,7 +162,11 @@ const DEFAULT_REWARD_RULES: RewardRule[] = [
 ]
 
 function isReferralRewardEligibleTransaction(transaction: Pick<Transaction, 'id' | 'type' | 'status'>) {
-  return transaction.status === 'success' && transaction.type !== 'referral_bonus' && transaction.type !== 'reward_bonus'
+  return transaction.status === 'success'
+    && transaction.type !== 'referral_bonus'
+    && transaction.type !== 'reward_bonus'
+    && transaction.type !== 'admin_credit'
+    && transaction.type !== 'admin_debit'
 }
 
 function readReferralBonusMetadata(metadata: Record<string, unknown> | undefined) {
@@ -6699,6 +6704,7 @@ export function sanitizeUser(user: StoredUser): User {
   return {
     ...safeUser,
     accountStatus: safeUser.accountStatus ?? 'active',
+    isAdmin: isAdminEmail(safeUser.email),
   }
 }
 
