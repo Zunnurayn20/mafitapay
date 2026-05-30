@@ -223,7 +223,13 @@ export function AdminQuickAccess() {
           {error}
         </div>
       ) : (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-9">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-10">
+          <QuickAccessLink
+            href="/admin/analytics"
+            label="Analytics"
+            value="Live"
+            detail="Money movement, users, wallets, product mix, and provider reliability"
+          />
           <QuickAccessCard
             label="All App Transactions"
             value={data.transactions.length.toString()}
@@ -736,6 +742,32 @@ function QuickAccessCard({
       <div className="mt-2 text-[22px] font-black leading-none text-[var(--text)]">{value}</div>
       <div className="mt-2 line-clamp-2 text-[9px] leading-relaxed text-[var(--muted)]">{detail}</div>
     </button>
+  )
+}
+
+function QuickAccessLink({
+  href,
+  label,
+  value,
+  detail,
+}: {
+  href: string
+  label: string
+  value: string
+  detail: string
+}) {
+  return (
+    <Link
+      href={href}
+      className="group min-h-[5.75rem] border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--gold2)] hover:bg-[rgba(255,255,255,.035)]"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 text-[9px] font-bold uppercase tracking-[.9px] text-[var(--muted)]">{label}</div>
+        <div className="shrink-0 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--gold2)] group-hover:text-[var(--green2)]">Open</div>
+      </div>
+      <div className="mt-2 text-[22px] font-black leading-none text-[var(--text)]">{value}</div>
+      <div className="mt-2 line-clamp-2 text-[9px] leading-relaxed text-[var(--muted)]">{detail}</div>
+    </Link>
   )
 }
 

@@ -2,6 +2,12 @@ import Link from 'next/link'
 
 const ADMIN_MODULES = [
   {
+    href: '/admin/analytics',
+    label: 'Analytics',
+    summary: 'Track money movement, user growth, wallet float, product mix, and provider reliability.',
+    items: ['Volume', 'Wallets', 'Users', 'Provider risk'],
+  },
+  {
     href: '/admin/catalogs',
     label: 'Catalogs',
     summary: 'Manage crypto assets, reward rules, bill providers, and network catalogs.',
@@ -42,7 +48,7 @@ export default function AdminIndexPage() {
         </div>
       </section>
 
-      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
         {ADMIN_MODULES.map(module => (
           <Link
             key={module.href}
