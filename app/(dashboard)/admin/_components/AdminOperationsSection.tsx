@@ -81,6 +81,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const selectedCryptoOrder = cryptoOrders.find(item => item.id === selectedCryptoOrderId) ?? null
   const selectedSettlement = [...depositIntents, ...payoutRequests].find(item => item.reference === selectedSettlementReference) ?? null
   const selectedProviderEvent = providerEvents.find(item => item.id === selectedProviderEventId) ?? null
+  const isOperationsIndex = !submodule
   const supportCards = [
     {
       key: 'webhook',
@@ -120,7 +121,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             {syncingAllBaseReceipts ? 'Scanning Base…' : 'Sync All Base Receipts'}
           </Button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3">
           {cryptoOrders.length === 0 ? (
             <div className="text-[11px] text-[var(--muted)]">No pending crypto orders.</div>
           ) : cryptoOrders.map(item => (
@@ -128,7 +129,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               key={item.id}
               type="button"
               onClick={() => setSelectedCryptoOrderId(item.id)}
-              className="border border-[var(--border)] bg-[var(--clay)] p-4 text-left transition-all hover:border-[var(--border2)]"
+              className="grid gap-4 border border-[var(--border)] bg-[var(--clay)] p-4 text-left transition-all hover:border-[var(--border2)] lg:grid-cols-[minmax(0,1fr)_auto]"
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -151,7 +152,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                   {item.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {item.providerReference}</div>}
                 </div>
               </div>
-              <div className="mt-3 text-[10px] text-[var(--gold2)]">Open Order Actions</div>
+              <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)] lg:self-center">Open Order Actions</div>
             </button>
           ))}
         </div>
@@ -331,10 +332,10 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
         </div>
       </Card>}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className={`grid gap-6 ${isOperationsIndex ? '2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]' : ''}`}>
       {showSettlements && <Card className="p-5">
           <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Settlement Operations</div>
-          <div className="mb-4 flex gap-2">
+          <div className="mb-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem_10rem] xl:grid-cols-[minmax(0,1fr)_10rem_10rem_auto_auto_auto]">
             <input
               value={settlementSearch}
               onChange={event => setSettlementSearch(event.target.value)}
@@ -375,40 +376,63 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               {loadingReferenceCase === settlementSearch.trim() && settlementSearch.trim() ? 'Opening…' : 'Open Case'}
             </Button>
           </div>
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4">
             <div>
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Deposit Intents</div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3">
                 {depositIntents.length === 0 ? (
                   <div className="text-[10px] text-[var(--muted)]">No deposit intents found.</div>
                 ) : depositIntents.map(item => (
-                  <button key={item.id} type="button" onClick={() => setSelectedSettlementReference(item.reference)} className="border border-[var(--border)] bg-[var(--clay)] p-3 text-left transition-all hover:border-[var(--border2)]">
-                    <div className="text-[11px] font-bold text-[var(--text)]">{item.reference}</div>
-                    <div className="mt-1 text-[10px] text-[var(--muted)]">{item.provider} · {item.status.toUpperCase()} · Net ₦{item.netAmount.toLocaleString('en-NG')}</div>
-                    {item.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {item.providerReference}</div>}
-                    {item.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {item.providerStatus}</div>}
-                    <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {item.retryCount ?? 0}</div>
-                    {item.failureReason && <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {item.failureReason}</div>}
-                    <div className="mt-2 text-[10px] text-[var(--gold2)]">Open Case</div>
+                  <button key={item.id} type="button" onClick={() => setSelectedSettlementReference(item.reference)} className="grid gap-3 border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-all hover:border-[var(--border2)] xl:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)_minmax(0,1.25fr)_auto] xl:items-center">
+                    <div className="min-w-0">
+                      <div className="break-all text-[11px] font-bold text-[var(--text)]">{item.reference}</div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5 text-[9px] font-bold uppercase tracking-[.7px]">
+                        <span className="border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[var(--gold2)]">{item.provider}</span>
+                        <span className="border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[var(--text2)]">{item.status}</span>
+                      </div>
+                    </div>
+                    <div className="min-w-0 text-[10px] leading-relaxed text-[var(--muted)]">
+                      <div className="font-bold text-[var(--text)]">Net ₦{item.netAmount.toLocaleString('en-NG')}</div>
+                      <div>Gross ₦{item.grossAmount.toLocaleString('en-NG')} · Fee ₦{item.fee.toLocaleString('en-NG')}</div>
+                      <div>Method: {item.fundingMethod} · Retries: {item.retryCount ?? 0}</div>
+                    </div>
+                    <div className="min-w-0 text-[10px] leading-relaxed text-[var(--muted)]">
+                      {item.accountNumber && <div>Account: {item.bankName || 'Bank'} · {item.accountNumber}</div>}
+                      {item.providerReference && <div className="break-all">Provider ref: {item.providerReference}</div>}
+                      {item.providerStatus && <div>Provider status: {item.providerStatus}</div>}
+                      {item.failureReason && <div className="text-[var(--red2)]">Failure: {item.failureReason}</div>}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)] xl:text-right">Open Case</div>
                   </button>
                 ))}
               </div>
             </div>
             <div>
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Payout Requests</div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3">
                 {payoutRequests.length === 0 ? (
                   <div className="text-[10px] text-[var(--muted)]">No payout requests found.</div>
                 ) : payoutRequests.map(item => (
-                  <button key={item.id} type="button" onClick={() => setSelectedSettlementReference(item.reference)} className="border border-[var(--border)] bg-[var(--clay)] p-3 text-left transition-all hover:border-[var(--border2)]">
-                    <div className="text-[11px] font-bold text-[var(--text)]">{item.reference}</div>
-                    <div className="mt-1 text-[10px] text-[var(--muted)]">{item.provider} · {item.status.toUpperCase()} · ₦{item.amount.toLocaleString('en-NG')}</div>
-                    {item.beneficiary && <div className="mt-1 text-[10px] text-[var(--muted)]">Beneficiary: {item.beneficiary}</div>}
-                    {item.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {item.providerReference}</div>}
-                    {item.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {item.providerStatus}</div>}
-                    <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {item.retryCount ?? 0}</div>
-                    {item.failureReason && <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {item.failureReason}</div>}
-                    <div className="mt-2 text-[10px] text-[var(--gold2)]">Open Case</div>
+                  <button key={item.id} type="button" onClick={() => setSelectedSettlementReference(item.reference)} className="grid gap-3 border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-all hover:border-[var(--border2)] xl:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)_minmax(0,1.25fr)_auto] xl:items-center">
+                    <div className="min-w-0">
+                      <div className="break-all text-[11px] font-bold text-[var(--text)]">{item.reference}</div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5 text-[9px] font-bold uppercase tracking-[.7px]">
+                        <span className="border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[var(--gold2)]">{item.provider}</span>
+                        <span className="border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[var(--text2)]">{item.status}</span>
+                      </div>
+                    </div>
+                    <div className="min-w-0 text-[10px] leading-relaxed text-[var(--muted)]">
+                      <div className="font-bold text-[var(--text)]">₦{item.amount.toLocaleString('en-NG')}</div>
+                      <div>Retries: {item.retryCount ?? 0}</div>
+                      {item.beneficiary && <div>Beneficiary: {item.beneficiary}</div>}
+                    </div>
+                    <div className="min-w-0 text-[10px] leading-relaxed text-[var(--muted)]">
+                      {item.merchantId && <div>Merchant: {item.merchantId}</div>}
+                      {item.providerReference && <div className="break-all">Provider ref: {item.providerReference}</div>}
+                      {item.providerStatus && <div>Provider status: {item.providerStatus}</div>}
+                      {item.failureReason && <div className="text-[var(--red2)]">Failure: {item.failureReason}</div>}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)] xl:text-right">Open Case</div>
                   </button>
                 ))}
               </div>
@@ -494,7 +518,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             </div>
           </div>
         )}
-        <div className="mb-4 flex gap-2">
+        <div className="mb-4 grid gap-2 md:grid-cols-[10rem_10rem_minmax(0,1fr)_auto]">
             <select
               value={providerEventStatusFilter}
               onChange={event => setProviderEventStatusFilter(event.target.value as typeof providerEventStatusFilter)}
@@ -521,7 +545,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               {refreshingProviderEvents ? 'Filtering…' : 'Filter'}
             </Button>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3">
             {providerEvents.length === 0 ? (
               <div className="text-[11px] text-[var(--muted)]">No provider events recorded yet.</div>
             ) : providerEvents.map(item => (
@@ -529,17 +553,22 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                 key={item.id}
                 type="button"
                 onClick={() => setSelectedProviderEventId(item.id)}
-                className="border border-[var(--border)] bg-[var(--clay)] p-3 text-left transition-all hover:border-[var(--border2)]"
+                className="grid gap-3 border border-[var(--border)] bg-[var(--clay)] p-4 text-left transition-all hover:border-[var(--border2)] lg:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto] lg:items-center"
               >
-                <div className="text-[11px] font-bold text-[var(--text)]">{item.provider} · {item.status.toUpperCase()}</div>
-                <div className="mt-1 text-[10px] text-[var(--muted)]">Reference: {item.reference}</div>
-                <div className="mt-1 text-[10px] text-[var(--muted)]">Event: {item.externalEventId}</div>
-                <div className="mt-1 text-[10px] text-[var(--muted)]">Retries: {item.retryCount ?? 0}</div>
-                {item.failureReason && <div className="mt-1 text-[10px] text-[var(--red2)]">Failure: {item.failureReason}</div>}
-                <div className="mt-1 text-[10px] text-[var(--muted)]">
-                  {item.processedAt ? `Processed ${new Date(item.processedAt).toLocaleString('en-NG')}` : 'Pending processing'}
+                <div>
+                  <div className="text-[11px] font-bold text-[var(--text)]">{item.provider}</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px] font-bold uppercase tracking-[.7px]">
+                    <span className="border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[var(--text2)]">{item.status}</span>
+                    <span className="border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[var(--text2)]">{item.retryCount ?? 0} retries</span>
+                  </div>
                 </div>
-                <div className="mt-2 text-[10px] text-[var(--gold2)]">Open Event</div>
+                <div className="min-w-0 text-[10px] leading-relaxed text-[var(--muted)]">
+                  <div className="break-all">Reference: {item.reference}</div>
+                  <div className="break-all">Event: {item.externalEventId}</div>
+                  <div>{item.processedAt ? `Processed ${new Date(item.processedAt).toLocaleString('en-NG')}` : 'Pending processing'}</div>
+                  {item.failureReason && <div className="text-[var(--red2)]">Failure: {item.failureReason}</div>}
+                </div>
+                <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Open Event</div>
               </button>
             ))}
           </div>

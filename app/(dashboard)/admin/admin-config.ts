@@ -25,7 +25,6 @@ export type ReferenceCase = {
 }
 
 export const ADMIN_SECTIONS = [
-  { id: 'analytics', label: 'Analytics' },
   { id: 'operations', label: 'Operations' },
   { id: 'health', label: 'Health' },
   { id: 'users', label: 'Users' },
@@ -48,7 +47,6 @@ export type AdminSubmodule =
   | 'rails'
   | 'providers'
   | 'market'
-  | 'analytics'
 export type CryptoCatalogFilter = 'all' | 'active' | 'archived'
 export type BillCatalogFilter = 'all' | 'active' | 'archived'
 
@@ -57,7 +55,6 @@ export const ADMIN_MODULE_TREE = [
     label: 'Administration',
     items: [
       { href: '/admin', label: 'Overview', description: 'Admin index and module summary' },
-      { href: '/admin/analytics', label: 'Analytics', description: 'Money movement, users, wallets, and provider performance' },
     ],
   },
   {

@@ -6,7 +6,6 @@ import { AdminQuickAccess } from './_components/AdminQuickAccess'
 
 const ADMIN_SECTIONS = [
   { href: '/admin', label: 'Overview', description: 'Administration index and module shortcuts.' },
-  { href: '/admin/analytics', label: 'Analytics', description: 'Money movement, users, wallets, and provider performance.' },
   { href: '/admin/catalogs', label: 'Catalogs', description: 'Assets, rewards, bill services, and network catalog data.' },
   { href: '/admin/users', label: 'Users', description: 'Users, KYC, audit activity, and ledger traces.' },
   { href: '/admin/operations', label: 'Operations', description: 'Crypto orders, settlements, syncs, and provider actions.' },
@@ -27,7 +26,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           </section>
 
-          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <section className="grid gap-3 lg:grid-cols-5">
             {ADMIN_SECTIONS.map(item => {
               const active = pathname === item.href
               return (

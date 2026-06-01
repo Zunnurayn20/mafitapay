@@ -7,7 +7,7 @@ import { isAdminEmail } from '@/lib/admin-access'
 import { formatNGN } from '@/lib/utils'
 import {
   LayoutDashboard, ClipboardList, ArrowLeftRight, Zap,
-  Receipt, Users, UserCircle, ShieldCheck, LogOut, ChevronRight
+  Receipt, Users, UserCircle, ShieldCheck, LogOut, ChevronRight, BarChart3
 } from 'lucide-react'
 
 const SEEN_TRANSACTION_BADGE_KEY = 'mafitapay-history-badge-seen'
@@ -52,7 +52,13 @@ export function Sidebar() {
   const navGroups = isAdmin
     ? [
         ...NAV,
-        { section: 'Admin', items: [{ href: '/admin', label: 'Admin', Icon: ShieldCheck }] },
+        {
+          section: 'Admin',
+          items: [
+            { href: '/admin', label: 'Admin', Icon: ShieldCheck },
+            { href: '/analytics', label: 'Analytics', Icon: BarChart3 },
+          ],
+        },
       ]
     : NAV
 

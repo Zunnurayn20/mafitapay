@@ -17,6 +17,7 @@ const DASHBOARD_PREFIXES = [
   '/send',
   '/withdraw',
   '/admin',
+  '/analytics',
 ]
 
 export function proxy(request: NextRequest) {

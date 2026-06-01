@@ -71,6 +71,16 @@ function formatDate(value: string) {
   })
 }
 
+function formatCompactNaira(value: number) {
+  if (!Number.isFinite(value)) return '₦0'
+  const formatted = new Intl.NumberFormat('en-NG', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: value >= 1_000_000 ? 1 : 0,
+  }).format(value)
+  return `₦${formatted}`
+}
+
 function statusTone(status: string) {
   const normalized = status.toLowerCase()
   if (normalized === 'success' || normalized === 'fulfilled' || normalized === 'active') return 'text-[var(--green2)]'
@@ -223,29 +233,20 @@ export function AdminQuickAccess() {
           {error}
         </div>
       ) : (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-10">
-          <QuickAccessLink
-            href="/admin/analytics"
-            label="Analytics"
-            value="Live"
-            detail="Money movement, users, wallets, product mix, and provider reliability"
-          />
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-9">
           <QuickAccessCard
-            label="All App Transactions"
+            label="Transactions"
             value={data.transactions.length.toString()}
-            detail={latestTransaction ? `${latestTransaction.status.toUpperCase()} · ${latestTransaction.type} · ₦${latestTransaction.amount.toLocaleString('en-NG')}` : 'No recent transaction'}
             onClick={() => setActiveModal('transactions')}
           />
           <QuickAccessCard
             label="Recent Activity"
             value={data.auditLogs.length.toString()}
-            detail={latestAudit ? latestAudit.action : 'No audit activity'}
             onClick={() => setActiveModal('activity')}
           />
           <QuickAccessCard
             label="Wallet Control"
-            value={`₦${totalWalletBalance.toLocaleString('en-NG', { maximumFractionDigits: 0 })}`}
-            detail={`${data.walletRows.length} wallets · credit/debit with audit log`}
+            value={formatCompactNaira(totalWalletBalance)}
             onClick={() => {
               if (!walletForm.userId && selectedWalletRow) {
                 setWalletForm(current => ({ ...current, userId: selectedWalletRow.user.id }))
@@ -256,37 +257,31 @@ export function AdminQuickAccess() {
           <QuickAccessCard
             label="Users & KYC"
             value={data.users.length.toString()}
-            detail={`${pendingKyc.length} pending KYC · ${blockedUsers.length} restricted accounts`}
             onClick={() => setActiveModal('users')}
           />
           <QuickAccessCard
             label="Settlements"
             value={(pendingDeposits.length + pendingPayouts.length).toString()}
-            detail={`${pendingDeposits.length} deposits · ${pendingPayouts.length} payouts pending`}
             onClick={() => setActiveModal('settlements')}
           />
           <QuickAccessCard
             label="Provider Events"
             value={(data.providerDiagnostics?.totalPendingEvents ?? data.providerEvents.length).toString()}
-            detail={`${data.providerDiagnostics?.totalFailedEvents24h ?? failedProviderEvents.length} failures in 24h`}
             onClick={() => setActiveModal('providers')}
           />
           <QuickAccessCard
             label="Bills"
             value={activeBillProviders.length.toString()}
-            detail={`${data.billProviders.length - activeBillProviders.length} archived providers`}
             onClick={() => setActiveModal('bills')}
           />
           <QuickAccessCard
             label="Crypto"
             value={data.cryptoOrders.length.toString()}
-            detail={`${liveCryptoAssets.length} active assets · ${failedProviderEvents.length} failed events`}
             onClick={() => setActiveModal('crypto')}
           />
           <QuickAccessCard
             label="System Health"
             value={data.providerDiagnostics ? 'Live' : '—'}
-            detail={`${data.providerDiagnostics?.totalRetryingEvents ?? 0} retrying events · ${data.providerDiagnostics?.providers.length ?? 0} providers`}
             onClick={() => setActiveModal('health')}
           />
         </div>
@@ -356,34 +351,45 @@ export function AdminQuickAccess() {
         title="Wallet Control"
         subtitle="Audited manual credits and debits with transaction and ledger records"
         size="lg"
-        className="max-w-5xl"
+        className="w-[min(96vw,96rem)] max-w-none"
       >
-        <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(22rem,.9fr)]">
-          <div className="space-y-2">
-            <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Wallets</div>
-            {data.walletRows.length === 0 ? (
-              <EmptyState label="No wallets available." />
-            ) : data.walletRows.map(item => (
-              <button
-                key={item.user.id}
-                type="button"
-                onClick={() => setWalletForm(current => ({ ...current, userId: item.user.id }))}
-                className={`grid w-full gap-2 border px-3 py-2 text-left transition-all sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${
-                  (walletForm.userId || selectedWalletRow?.user.id) === item.user.id
-                    ? 'border-[var(--gold)] bg-[rgba(202,165,96,.10)]'
-                    : 'border-[var(--border)] bg-[var(--clay)] hover:border-[var(--border2)]'
-                }`}
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-[12px] font-bold text-[var(--text)]">{item.user.name}</div>
-                  <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{item.user.email} · {item.user.id}</div>
-                </div>
-                <div className="text-left sm:text-right">
-                  <div className="text-[12px] font-black text-[var(--text)]">₦{(item.wallet?.balance ?? 0).toLocaleString('en-NG')}</div>
-                  <div className="mt-1 text-[9px] uppercase tracking-[.8px] text-[var(--muted)]">Locked ₦{(item.wallet?.lockedBalance ?? 0).toLocaleString('en-NG')}</div>
-                </div>
-              </button>
-            ))}
+        <div className="grid gap-4 p-4 xl:grid-cols-2 xl:items-start">
+          <div className="border border-[var(--border)] bg-[rgba(255,255,255,.015)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Wallets</div>
+              <div className="text-[9px] font-bold uppercase tracking-[.8px] text-[var(--muted)]">{data.walletRows.length} users</div>
+            </div>
+            <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+              {data.walletRows.length === 0 ? (
+                <EmptyState label="No wallets available." />
+              ) : data.walletRows.map(item => (
+                <button
+                  key={item.user.id}
+                  type="button"
+                  onClick={() => setWalletForm(current => ({ ...current, userId: item.user.id }))}
+                  className={`grid w-full gap-3 border px-3 py-2.5 text-left transition-all md:grid-cols-[minmax(0,1.2fr)_minmax(0,.75fr)_minmax(0,.55fr)] md:items-center ${
+                    (walletForm.userId || selectedWalletRow?.user.id) === item.user.id
+                      ? 'border-[var(--gold)] bg-[rgba(202,165,96,.10)]'
+                      : 'border-[var(--border)] bg-[var(--clay)] hover:border-[var(--border2)]'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-[12px] font-bold text-[var(--text)]">{item.user.name}</div>
+                    <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{item.user.email}</div>
+                    <div className="mt-0.5 font-mono text-[9px] text-[var(--muted)]">{item.user.id}</div>
+                  </div>
+                  <div className="min-w-0 text-[10px] leading-relaxed text-[var(--muted)]">
+                    <div className="font-bold uppercase tracking-[.8px] text-[var(--text2)]">{item.user.accountStatus}</div>
+                    <div>KYC: {item.user.kycStatus}</div>
+                    <div>Tier: {item.user.tier}</div>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <div className="text-[12px] font-black text-[var(--text)]">₦{(item.wallet?.balance ?? 0).toLocaleString('en-NG')}</div>
+                    <div className="mt-1 text-[9px] uppercase tracking-[.8px] text-[var(--muted)]">Locked ₦{(item.wallet?.lockedBalance ?? 0).toLocaleString('en-NG')}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
 
           <form onSubmit={submitWalletAdjustment} className="border border-[var(--border)] bg-[var(--clay)] p-4">
@@ -721,53 +727,23 @@ export function AdminQuickAccess() {
 function QuickAccessCard({
   label,
   value,
-  detail,
   onClick,
 }: {
   label: string
   value: string
-  detail: string
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group min-h-[5.75rem] border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--gold2)] hover:bg-[rgba(255,255,255,.035)]"
+      className="group min-h-[4.4rem] border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--gold2)] hover:bg-[rgba(255,255,255,.035)]"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 text-[9px] font-bold uppercase tracking-[.9px] text-[var(--muted)]">{label}</div>
-        <div className="shrink-0 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--gold2)] group-hover:text-[var(--green2)]">Open</div>
       </div>
       <div className="mt-2 text-[22px] font-black leading-none text-[var(--text)]">{value}</div>
-      <div className="mt-2 line-clamp-2 text-[9px] leading-relaxed text-[var(--muted)]">{detail}</div>
     </button>
-  )
-}
-
-function QuickAccessLink({
-  href,
-  label,
-  value,
-  detail,
-}: {
-  href: string
-  label: string
-  value: string
-  detail: string
-}) {
-  return (
-    <Link
-      href={href}
-      className="group min-h-[5.75rem] border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--gold2)] hover:bg-[rgba(255,255,255,.035)]"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 text-[9px] font-bold uppercase tracking-[.9px] text-[var(--muted)]">{label}</div>
-        <div className="shrink-0 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--gold2)] group-hover:text-[var(--green2)]">Open</div>
-      </div>
-      <div className="mt-2 text-[22px] font-black leading-none text-[var(--text)]">{value}</div>
-      <div className="mt-2 line-clamp-2 text-[9px] leading-relaxed text-[var(--muted)]">{detail}</div>
-    </Link>
   )
 }
 

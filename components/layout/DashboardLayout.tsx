@@ -42,6 +42,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
   const fundingProvisionKeyRef = useRef('')
   const isAdminRoute = pathname.startsWith('/admin')
+  const isAnalyticsRoute = pathname.startsWith('/analytics')
   const isAdminUser = Boolean(user?.isAdmin || isAdminEmail(user?.email))
   const requiresInitialKycSubmission = Boolean(
     isAuthenticated
@@ -234,7 +235,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   if (!isAuthenticated) return null
 
-  if (isAdminRoute && !isAdminUser) {
+  if ((isAdminRoute || isAnalyticsRoute) && !isAdminUser) {
     return (
       <FullScreenAppLoading
         title="Admin access restricted"
