@@ -18,7 +18,7 @@ import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
-import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoOrder, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, P2PMerchant, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
+import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CryptoOrder, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, P2PMerchant, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
 
 type SqliteStatement = {
   run: (...args: unknown[]) => { changes?: number }
@@ -250,6 +250,46 @@ type WalletRow = {
   locked_balance: number
   currency: Wallet['currency']
   virtual_accounts: string
+}
+
+type CryptoDepositAddressRow = {
+  id: string
+  user_id: string
+  address_family: CryptoDepositAddress['addressFamily']
+  network_label: string
+  address: string
+  encrypted_secret: string
+  key_version: string
+  derivation_path: string | null
+  is_active: number | null
+  created_at: string
+  updated_at: string
+}
+
+type CryptoDepositEventRow = {
+  id: string
+  external_event_id: string
+  user_id: string
+  address_id: string
+  address_family: CryptoDepositEvent['addressFamily']
+  pair_id: string
+  network: string
+  asset_symbol: string
+  amount_crypto: number
+  amount_units: string
+  tx_hash: string
+  block_number: string | null
+  log_index: number | null
+  status: string
+  sweep_status: string | null
+  sweep_tx_hash: string | null
+  sweep_error: string | null
+  swept_at: string | null
+  crypto_order_id: string | null
+  transaction_id: string | null
+  payload: string | null
+  created_at: string
+  updated_at: string
 }
 
 type TransactionRow = {
@@ -1215,6 +1255,50 @@ function mapPersistedCryptoSnapshot(asset: CryptoAsset): CryptoAsset {
   }
 }
 
+function mapCryptoDepositAddressRow(row: CryptoDepositAddressRow): CryptoDepositAddress {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    addressFamily: row.address_family,
+    networkLabel: row.network_label,
+    address: row.address,
+    derivationPath: row.derivation_path ?? undefined,
+    isActive: row.is_active !== 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapCryptoDepositEventRow(row: CryptoDepositEventRow): CryptoDepositEvent {
+  return {
+    id: row.id,
+    externalEventId: row.external_event_id,
+    userId: row.user_id,
+    addressId: row.address_id,
+    addressFamily: row.address_family,
+    pairId: row.pair_id as CryptoDepositEvent['pairId'],
+    network: row.network,
+    assetSymbol: row.asset_symbol,
+    amountCrypto: Number(row.amount_crypto),
+    amountUnits: row.amount_units,
+    txHash: row.tx_hash,
+    blockNumber: row.block_number ?? undefined,
+    logIndex: row.log_index ?? undefined,
+    status: row.status === 'matched' || row.status === 'ignored' ? row.status : 'unmatched',
+    sweepStatus: row.sweep_status === 'sweeping' || row.sweep_status === 'swept' || row.sweep_status === 'failed' || row.sweep_status === 'skipped'
+      ? row.sweep_status
+      : 'pending',
+    sweepTxHash: row.sweep_tx_hash ?? undefined,
+    sweepError: row.sweep_error ?? undefined,
+    sweptAt: row.swept_at ?? undefined,
+    cryptoOrderId: row.crypto_order_id ?? undefined,
+    transactionId: row.transaction_id ?? undefined,
+    payload: parseJson(row.payload, undefined),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function mapBillProviderRow(row: BillProviderRow): BillProvider {
   return {
     id: row.id,
@@ -1792,6 +1876,53 @@ function initSchema(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS idx_crypto_orders_user_created_at
       ON crypto_orders(user_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS crypto_deposit_addresses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      address_family TEXT NOT NULL,
+      network_label TEXT NOT NULL,
+      address TEXT NOT NULL,
+      encrypted_secret TEXT NOT NULL,
+      key_version TEXT NOT NULL,
+      derivation_path TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, address_family)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crypto_deposit_addresses_address
+      ON crypto_deposit_addresses(address_family, address);
+
+    CREATE TABLE IF NOT EXISTS crypto_deposit_events (
+      id TEXT PRIMARY KEY,
+      external_event_id TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      address_id TEXT NOT NULL REFERENCES crypto_deposit_addresses(id) ON DELETE CASCADE,
+      address_family TEXT NOT NULL,
+      pair_id TEXT NOT NULL,
+      network TEXT NOT NULL,
+      asset_symbol TEXT NOT NULL,
+      amount_crypto REAL NOT NULL,
+      amount_units TEXT NOT NULL,
+      tx_hash TEXT NOT NULL,
+      block_number TEXT,
+      log_index INTEGER,
+      status TEXT NOT NULL,
+      sweep_status TEXT NOT NULL DEFAULT 'pending',
+      sweep_tx_hash TEXT,
+      sweep_error TEXT,
+      swept_at TEXT,
+      crypto_order_id TEXT,
+      transaction_id TEXT,
+      payload TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crypto_deposit_events_user_created_at
+      ON crypto_deposit_events(user_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS bill_providers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -2129,6 +2260,10 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'crypto_orders', 'execution_status', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'execution_reference', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'destination_tx_hash', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'sweep_status', "TEXT NOT NULL DEFAULT 'pending'")
+  ensureColumn(db, 'crypto_deposit_events', 'sweep_tx_hash', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'sweep_error', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'swept_at', 'TEXT')
   ensureColumn(db, 'crypto_quotes', 'provider_payload', 'TEXT')
   ensureColumn(db, 'security_settings', 'transaction_pin_hash', 'TEXT')
   ensureColumn(db, 'security_settings', 'transaction_pin_salt', 'TEXT')
@@ -4065,6 +4200,275 @@ export async function updateWalletVirtualAccounts(userId: string, virtualAccount
   db.prepare('UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?')
     .run(JSON.stringify(virtualAccounts), userId)
   return getWalletByUserId(userId)
+}
+
+export async function listCryptoDepositAddressesByUserId(userId: string): Promise<CryptoDepositAddress[]> {
+  await ensureDbReady()
+  const rows = getDb().prepare(`
+    SELECT * FROM crypto_deposit_addresses
+    WHERE user_id = ? AND is_active = 1
+    ORDER BY
+      CASE address_family
+        WHEN 'evm' THEN 1
+        WHEN 'solana' THEN 2
+        WHEN 'ton' THEN 3
+        WHEN 'near' THEN 4
+        WHEN 'sui' THEN 5
+        ELSE 9
+      END,
+      created_at ASC
+  `).all(userId) as CryptoDepositAddressRow[]
+  return rows.map(mapCryptoDepositAddressRow)
+}
+
+export async function listCryptoDepositAddressesByFamily(addressFamily: CryptoDepositAddress['addressFamily']): Promise<CryptoDepositAddress[]> {
+  await ensureDbReady()
+  const rows = getDb().prepare(`
+    SELECT * FROM crypto_deposit_addresses
+    WHERE address_family = ? AND is_active = 1
+    ORDER BY created_at ASC
+  `).all(addressFamily) as CryptoDepositAddressRow[]
+  return rows.map(mapCryptoDepositAddressRow)
+}
+
+export async function getCryptoDepositAddressByUserAndFamily(
+  userId: string,
+  addressFamily: CryptoDepositAddress['addressFamily'],
+): Promise<CryptoDepositAddress | null> {
+  await ensureDbReady()
+  const row = getDb().prepare(`
+    SELECT * FROM crypto_deposit_addresses
+    WHERE user_id = ? AND address_family = ? AND is_active = 1
+    LIMIT 1
+  `).get(userId, addressFamily) as CryptoDepositAddressRow | undefined
+  return row ? mapCryptoDepositAddressRow(row) : null
+}
+
+export async function getCryptoDepositAddressSecretById(id: string): Promise<{
+  record: CryptoDepositAddress
+  secret: string
+  keyVersion: string
+} | null> {
+  await ensureDbReady()
+  const row = getDb().prepare(`
+    SELECT * FROM crypto_deposit_addresses
+    WHERE id = ? AND is_active = 1
+    LIMIT 1
+  `).get(id) as CryptoDepositAddressRow | undefined
+  if (!row) return null
+
+  return {
+    record: mapCryptoDepositAddressRow(row),
+    secret: decryptSensitiveValue(row.encrypted_secret),
+    keyVersion: row.key_version,
+  }
+}
+
+export async function createCryptoDepositAddress(input: {
+  userId: string
+  addressFamily: CryptoDepositAddress['addressFamily']
+  networkLabel: string
+  address: string
+  secret: string
+  derivationPath?: string
+}): Promise<CryptoDepositAddress> {
+  await ensureDbReady()
+  const existing = await getCryptoDepositAddressByUserAndFamily(input.userId, input.addressFamily)
+  if (existing) return existing
+
+  const now = new Date().toISOString()
+  const encrypted = encryptSensitiveValue(input.secret)
+  const id = `cda_${randomBytes(6).toString('hex')}`
+
+  getDb().prepare(`
+    INSERT INTO crypto_deposit_addresses (
+      id, user_id, address_family, network_label, address, encrypted_secret, key_version, derivation_path, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, address_family) DO NOTHING
+  `).run(
+    id,
+    input.userId,
+    input.addressFamily,
+    input.networkLabel,
+    input.address,
+    encrypted.payload,
+    encrypted.keyVersion,
+    input.derivationPath ?? null,
+    1,
+    now,
+    now
+  )
+
+  const record = await getCryptoDepositAddressByUserAndFamily(input.userId, input.addressFamily)
+  if (!record) throw new Error('Unable to create crypto deposit address.')
+  return record
+}
+
+export async function getCryptoDepositEventByExternalId(externalEventId: string): Promise<CryptoDepositEvent | null> {
+  await ensureDbReady()
+  const row = getDb().prepare(`
+    SELECT * FROM crypto_deposit_events
+    WHERE external_event_id = ?
+    LIMIT 1
+  `).get(externalEventId) as CryptoDepositEventRow | undefined
+  return row ? mapCryptoDepositEventRow(row) : null
+}
+
+export async function createCryptoDepositEvent(input: {
+  externalEventId: string
+  userId: string
+  addressId: string
+  addressFamily: CryptoDepositEvent['addressFamily']
+  pairId: CryptoDepositEvent['pairId']
+  network: string
+  assetSymbol: string
+  amountCrypto: number
+  amountUnits: string
+  txHash: string
+  blockNumber?: string
+  logIndex?: number
+  status: CryptoDepositEvent['status']
+  cryptoOrderId?: string
+  transactionId?: string
+  payload?: Record<string, unknown>
+}): Promise<CryptoDepositEvent> {
+  await ensureDbReady()
+  const existing = await getCryptoDepositEventByExternalId(input.externalEventId)
+  if (existing) return existing
+
+  const now = new Date().toISOString()
+  const id = `cde_${randomBytes(6).toString('hex')}`
+  getDb().prepare(`
+    INSERT INTO crypto_deposit_events (
+      id, external_event_id, user_id, address_id, address_family, pair_id, network, asset_symbol, amount_crypto, amount_units, tx_hash, block_number, log_index, status, sweep_status, crypto_order_id, transaction_id, payload, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(external_event_id) DO NOTHING
+  `).run(
+    id,
+    input.externalEventId,
+    input.userId,
+    input.addressId,
+    input.addressFamily,
+    input.pairId,
+    input.network,
+    input.assetSymbol,
+    input.amountCrypto,
+    input.amountUnits,
+    input.txHash,
+    input.blockNumber ?? null,
+    input.logIndex ?? null,
+    input.status,
+    input.status === 'matched' ? 'pending' : 'skipped',
+    input.cryptoOrderId ?? null,
+    input.transactionId ?? null,
+    input.payload ? JSON.stringify(input.payload) : null,
+    now,
+    now
+  )
+
+  const event = await getCryptoDepositEventByExternalId(input.externalEventId)
+  if (!event) throw new Error('Unable to create crypto deposit event.')
+  return event
+}
+
+export async function markCryptoDepositEventMatched(input: {
+  externalEventId: string
+  cryptoOrderId: string
+  transactionId: string
+}): Promise<CryptoDepositEvent | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE crypto_deposit_events
+    SET status = 'matched',
+        sweep_status = CASE WHEN sweep_status = 'skipped' THEN 'pending' ELSE sweep_status END,
+        crypto_order_id = ?,
+        transaction_id = ?,
+        updated_at = ?
+    WHERE external_event_id = ?
+      AND status = 'unmatched'
+  `).run(input.cryptoOrderId, input.transactionId, now, input.externalEventId)
+  return getCryptoDepositEventByExternalId(input.externalEventId)
+}
+
+export async function claimCryptoDepositEventSweep(externalEventId: string): Promise<CryptoDepositEvent | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE crypto_deposit_events
+    SET sweep_status = 'sweeping',
+        sweep_error = NULL,
+        updated_at = ?
+    WHERE external_event_id = ?
+      AND status = 'matched'
+      AND (sweep_status IS NULL OR sweep_status = 'pending' OR sweep_status = 'failed')
+  `).run(now, externalEventId)
+  const event = await getCryptoDepositEventByExternalId(externalEventId)
+  return event?.sweepStatus === 'sweeping' ? event : null
+}
+
+export async function markCryptoDepositEventSwept(input: {
+  externalEventId: string
+  txHash: string
+}): Promise<CryptoDepositEvent | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE crypto_deposit_events
+    SET sweep_status = 'swept',
+        sweep_tx_hash = ?,
+        sweep_error = NULL,
+        swept_at = ?,
+        updated_at = ?
+    WHERE external_event_id = ?
+  `).run(input.txHash, now, now, input.externalEventId)
+  return getCryptoDepositEventByExternalId(input.externalEventId)
+}
+
+export async function markCryptoDepositEventSweepFailed(input: {
+  externalEventId: string
+  error: string
+}): Promise<CryptoDepositEvent | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE crypto_deposit_events
+    SET sweep_status = 'failed',
+        sweep_error = ?,
+        updated_at = ?
+    WHERE external_event_id = ?
+  `).run(input.error.slice(0, 500), now, input.externalEventId)
+  return getCryptoDepositEventByExternalId(input.externalEventId)
+}
+
+export async function findPendingCryptoSellOrderForDeposit(input: {
+  userId: string
+  pairId: CryptoOrder['pairId']
+  amountCrypto: number
+  tolerancePercent?: number
+}): Promise<CryptoOrder | null> {
+  await ensureDbReady()
+  const tolerancePercent = input.tolerancePercent ?? 0.02
+  const rows = getDb().prepare(`
+    SELECT * FROM crypto_orders
+    WHERE user_id = ?
+      AND pair_id = ?
+      AND side = 'sell'
+      AND status = 'pending'
+    ORDER BY created_at ASC
+    LIMIT 20
+  `).all(input.userId, input.pairId) as CryptoOrderRow[]
+
+  for (const row of rows) {
+    const order = mapCryptoOrderRow(row)
+    const expected = Number(order.cryptoAmount)
+    if (!Number.isFinite(expected) || expected <= 0) continue
+    const diff = Math.abs(expected - input.amountCrypto)
+    const allowed = Math.max(0.00000001, expected * (tolerancePercent / 100))
+    if (diff <= allowed) return order
+  }
+
+  return null
 }
 
 export async function createSettledDepositFromProvider(input: {

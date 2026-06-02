@@ -35,12 +35,13 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, refreshSession, theme, user, wallet, securitySettings, kycSubmission } = useAppStore()
+  const { authResolved, isAuthenticated, refreshSession, theme, user, wallet, securitySettings, kycSubmission, cryptoDepositAddresses } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
   const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
   const fundingProvisionKeyRef = useRef('')
+  const cryptoDepositProvisionKeyRef = useRef('')
   const isAdminRoute = pathname.startsWith('/admin')
   const isAnalyticsRoute = pathname.startsWith('/analytics')
   const isAdminUser = Boolean(user?.isAdmin || isAdminEmail(user?.email))
@@ -176,6 +177,43 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       cancelled = true
     }
   }, [authResolved, isAuthenticated, kycSubmission, refreshSession, user, wallet?.virtualAccounts])
+
+  useEffect(() => {
+    if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return
+    if (cryptoDepositAddresses.length > 0) return
+
+    const provisionKey = `${user.id}:crypto-deposit-addresses`
+    if (cryptoDepositProvisionKeyRef.current === provisionKey) return
+    cryptoDepositProvisionKeyRef.current = provisionKey
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const response = await fetch('/api/crypto/deposit-addresses', {
+          method: 'POST',
+          credentials: 'include',
+        })
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null)
+          console.warn('[crypto-deposit-address-provision] failed', {
+            status: response.status,
+            error: payload?.error ?? null,
+          })
+          return
+        }
+
+        if (!cancelled) await refreshSession()
+      } catch (error) {
+        console.warn('[crypto-deposit-address-provision] request_error', {
+          error: error instanceof Error ? error.message : 'Request failed',
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authResolved, cryptoDepositAddresses.length, isAuthenticated, refreshSession, user])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return

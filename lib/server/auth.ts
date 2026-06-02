@@ -9,6 +9,7 @@ import {
   deleteSessionByToken,
   getNotificationsForUser,
   getLatestKycSubmissionByUserId,
+  listCryptoDepositAddressesByUserId,
   getSessionByToken,
   getSessionsForUser,
   getSecuritySettingsByUserId,
@@ -37,6 +38,7 @@ export interface SessionPayload {
   securitySettings: Awaited<ReturnType<typeof getSecuritySettingsByUserId>>
   kycSubmission: Awaited<ReturnType<typeof getLatestKycSubmissionByUserId>>
   fundingAccountEligibility: FundingAccountEligibility
+  cryptoDepositAddresses: Awaited<ReturnType<typeof listCryptoDepositAddressesByUserId>>
   currentSessionToken: string | null
 }
 
@@ -141,13 +143,14 @@ export async function requireAdminUser() {
 
 export async function buildSessionPayload(user: StoredUser): Promise<SessionPayload> {
   const currentSessionToken = await getSessionToken()
-  const [wallet, transactions, notifications, sessions, securitySettings, kycSubmission] = await Promise.all([
+  const [wallet, transactions, notifications, sessions, securitySettings, kycSubmission, cryptoDepositAddresses] = await Promise.all([
     getWalletByUserId(user.id),
     getTransactionsByUserId(user.id),
     getNotificationsByUserId(user.id),
     getSessionsByUserId(user.id),
     getSecuritySettingsByUserId(user.id),
     getLatestKycSubmissionByUserId(user.id),
+    listCryptoDepositAddressesByUserId(user.id),
   ])
   const safeKycSubmission = kycSubmission
     ? {
@@ -214,6 +217,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
     securitySettings,
     kycSubmission: safeKycSubmission,
     fundingAccountEligibility,
+    cryptoDepositAddresses,
     currentSessionToken,
   }
 }

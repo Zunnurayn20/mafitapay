@@ -1,30 +1,40 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
-import { EXCHANGES, DEPOSIT_UIDS } from '@/lib/constants'
 import { formatCrypto, formatNGN } from '@/lib/utils'
-import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
+import { CryptoAsset, CryptoDepositAddressFamily, CryptoPairId, CryptoQuote } from '@/types'
 
 type Step = 'form' | 'deposit' | 'processing' | 'success'
-type ReceiveMethod = 'exchange' | 'wallet'
 const QUICK_NGN_AMOUNTS = [1000, 2000, 5000, 10000]
 
+function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFamily | null {
+  if (!asset) return null
+  const network = asset.network.trim().toLowerCase()
+  if (asset.routedAddressFamily === 'solana' || network === 'solana') return 'solana'
+  if (network === 'ton') return 'ton'
+  if (network === 'near') return 'near'
+  if (network === 'sui') return 'sui'
+  if (network === 'base' || network === 'bsc' || network === 'ethereum' || asset.routedAddressFamily === 'evm') return 'evm'
+  return null
+}
+
 export function SellModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { refreshSession, showToast, modalData } = useAppStore()
+  const { refreshSession, showToast, modalData, cryptoDepositAddresses } = useAppStore()
   const assets = useCryptoAssets()
-  const sellableAssets = assets.filter(asset => Object.values(DEPOSIT_UIDS).some(exchangeMap => Boolean(exchangeMap[asset.id])))
+  const sellableAssets = useMemo(
+    () => assets.filter(asset => Boolean(getAddressFamilyForAsset(asset))),
+    [assets],
+  )
+  const initializedPairRef = useRef(false)
   const [step, setStep]           = useState<Step>('form')
   const [pairId, setPairId]       = useState<CryptoPairId>('USDT_BSC')
   const [showAssetPicker, setShowAssetPicker] = useState(false)
   const [amount, setAmount]       = useState('')
-  const [method, setMethod]       = useState<ReceiveMethod>('exchange')
-  const [exchange, setExchange]   = useState('Binance')
-  const [walletAddr, setWalletAddr] = useState('')
   const [ref, setRef]             = useState('')
   const [time, setTime]           = useState(30 * 60)
   const [quote, setQuote]         = useState<CryptoQuote | null>(null)
@@ -39,26 +49,41 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const crypto = quote?.cryptoAmount ?? (asset ? amt / asset.sellRate : 0)
   const fee    = 0
   const receive = amt - fee
-
-  const uid = (DEPOSIT_UIDS[exchange] || DEPOSIT_UIDS.Binance)[asset?.id] || '—'
+  const addressFamily = getAddressFamilyForAsset(asset)
+  const depositAddress = cryptoDepositAddresses.find(item => item.addressFamily === addressFamily && item.isActive)
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      initializedPairRef.current = false
+      return
+    }
+
+    if (initializedPairRef.current) return
+
     const presetPairId = typeof modalData.cryptoPairId === 'string' ? modalData.cryptoPairId : ''
     if (presetPairId) {
       setPairId(presetPairId as CryptoPairId)
+      initializedPairRef.current = true
       return
     }
 
     if (modalAsset?.id) {
       setPairId(modalAsset.id)
+      initializedPairRef.current = true
       return
     }
 
     if (sellableAssets[0]?.id) {
       setPairId(sellableAssets[0].id)
+      initializedPairRef.current = true
     }
-  }, [modalAsset, modalData, open, sellableAssets])
+  }, [modalAsset?.id, modalData.cryptoPairId, open, sellableAssets])
+
+  useEffect(() => {
+    if (!open || sellableAssets.length === 0) return
+    if (sellableAssets.some(item => item.id === pairId)) return
+    setPairId(sellableAssets[0].id)
+  }, [open, pairId, sellableAssets])
 
   useEffect(() => {
     if (step !== 'deposit' || !quote) return
@@ -79,11 +104,16 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   function handleClose() {
     onClose()
+    initializedPairRef.current = false
     setTimeout(() => { setStep('form'); setAmount(''); setQuote(null); setShowAssetPicker(false) }, 400)
   }
 
   async function goDeposit() {
     if (!amt || !asset) { showToast('Enter a valid amount', 'error'); return }
+    if (!depositAddress) {
+      showToast('Your crypto deposit address is still being prepared. Try again shortly.', 'error')
+      return
+    }
     if (lockingQuote) return
 
     setLockingQuote(true)
@@ -120,6 +150,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       if (!asset || !quote) {
         throw new Error('Quote is missing. Refresh and try again.')
       }
+      if (!depositAddress) {
+        throw new Error('Your crypto deposit address is still being prepared. Try again shortly.')
+      }
       const response = await fetch('/api/crypto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -130,9 +163,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
           pairId: asset.id,
           amount: amt,
           quoteId: quote.id,
-          receiveMethod: method,
-          exchange,
-          walletAddress: walletAddr,
+          receiveMethod: 'wallet',
+          walletAddress: depositAddress.address,
         }),
       })
       const payload = await response.json()
@@ -227,39 +259,19 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               <span className="text-[14px] font-bold font-display text-[var(--gold)]">{formatCrypto(crypto, asset.symbol)}</span>
             </div>
           </div>
-          <div>
-            <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Receive Method</div>
-            <div className="grid grid-cols-2 gap-2">
-              {(['exchange', 'wallet'] as ReceiveMethod[]).map(m => (
-                <div key={m} onClick={() => setMethod(m)}
-                  className={`flex items-center gap-2.5 p-3 border cursor-pointer transition-all ${method === m ? 'bg-[rgba(79,70,229,.08)] border-[var(--gold)]' : 'bg-[var(--clay2)] border-[var(--border)]'}`}>
-                  <span className="text-lg">{m === 'exchange' ? '🏦' : '🦊'}</span>
-                  <div><div className="text-[11px] font-bold text-[var(--text)]">{m === 'exchange' ? 'Exchange' : 'Web3 Wallet'}</div>
-                    <div className="text-[8px] text-[var(--muted)]">{m === 'exchange' ? 'Binance, Bybit…' : 'MetaMask, Trust…'}</div>
-                  </div>
-                </div>
-              ))}
+          <div className="border border-[var(--border)] bg-[var(--clay)] p-3">
+            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Your dedicated deposit address</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
+              Send only {asset.symbol} on {asset.network}. This address is assigned to your MafitaPay account.
             </div>
-            {method === 'exchange' && (
-              <div className="grid grid-cols-3 gap-1.5 mt-2">
-                {EXCHANGES.map(ex => (
-                  <div key={ex} onClick={() => setExchange(ex)}
-                    className={`p-2 text-center text-[10px] font-bold cursor-pointer border transition-all ${exchange === ex ? 'bg-[rgba(79,70,229,.1)] border-[var(--gold)] text-[var(--text)]' : 'bg-[var(--clay2)] border-[var(--border)] text-[var(--text2)]'}`}>
-                    {ex}
-                  </div>
-                ))}
-              </div>
-            )}
-            {method === 'wallet' && (
-              <div className="mt-2">
-                <Input placeholder="0x… or TRC address" value={walletAddr} onChange={e => setWalletAddr(e.target.value)} className="text-[11px] font-mono" suffix="PASTE" />
-              </div>
-            )}
+            <div className="mt-2 break-all font-mono text-[11px] font-bold text-[var(--gold2)]">
+              {depositAddress?.address ?? 'Preparing address…'}
+            </div>
           </div>
           <div className="bg-[var(--clay)] border border-[rgba(202,165,96,.24)] p-3 text-[11px]">
             <div className="flex justify-between py-1 font-bold"><span className="text-[var(--text)]">You receive (NGN)</span><span className="font-mono text-[var(--green)]">{formatNGN(receive)}</span></div>
           </div>
-          <Button variant="green" disabled={lockingQuote} onClick={() => void goDeposit().catch(error => showToast(error instanceof Error ? error.message : 'Quote request failed.', 'error'))} className="w-full py-3.5">{lockingQuote ? 'Locking Quote…' : 'Lock Quote →'}</Button>
+          <Button variant="green" disabled={lockingQuote || !depositAddress} onClick={() => void goDeposit().catch(error => showToast(error instanceof Error ? error.message : 'Quote request failed.', 'error'))} className="w-full py-3.5">{lockingQuote ? 'Locking Quote…' : 'Lock Quote →'}</Button>
         </div>
       )}
 
@@ -268,7 +280,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
           <div className="bg-[var(--clay)] border border-[var(--border)] border-l-4 border-l-[var(--gold)] p-4">
             <div className="text-[9px] font-bold text-[var(--gold2)] uppercase tracking-wider mb-1">How to complete</div>
             <div className="text-[11px] text-[var(--text2)] leading-[1.7]">
-              {method === 'exchange' ? `Log in to ${exchange} → Withdraw → paste our deposit address → send exactly ${formatCrypto(crypto, asset.symbol)} on ${asset.network}.` : `Open your wallet → send exactly ${formatCrypto(crypto, asset.symbol)} on ${asset.network} to our address below.`}
+              Send exactly {formatCrypto(crypto, asset.symbol)} on {asset.network} to your dedicated MafitaPay deposit address below.
             </div>
           </div>
           <div className="flex items-center justify-between bg-[var(--clay)] border border-[var(--border)] p-3">
@@ -276,15 +288,15 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             <div className="text-right"><div className="text-[9px] text-[var(--muted)] mb-1">You receive</div><div className="text-[14px] font-bold font-mono text-[var(--green2)]">{formatNGN(receive)} NGN</div></div>
           </div>
           <div>
-            <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-1.5">{exchange} Deposit Address ({asset.symbol} · {asset.network})</div>
+            <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-1.5">Deposit Address ({asset.symbol} · {asset.network})</div>
             <div className="bg-[var(--clay2)] border border-[var(--border)] p-3.5 flex items-start gap-3">
-              <div className="flex-1 text-[12px] font-bold font-mono text-[var(--gold2)] break-all">{uid}</div>
-              <Button variant="secondary" size="sm" onClick={() => navigator.clipboard?.writeText(uid)} className="flex-shrink-0">COPY</Button>
+              <div className="flex-1 text-[12px] font-bold font-mono text-[var(--gold2)] break-all">{depositAddress?.address ?? 'Preparing address…'}</div>
+              <Button variant="secondary" size="sm" onClick={() => depositAddress?.address && navigator.clipboard?.writeText(depositAddress.address)} className="flex-shrink-0">COPY</Button>
             </div>
           </div>
           <div className="bg-[rgba(196,52,26,.06)] border border-[rgba(196,52,26,.2)] border-l-4 border-l-[var(--red2)] p-3">
             <div className="text-[10px] font-bold text-[var(--red2)] mb-1">⚠ Send on the correct network</div>
-            <div className="text-[10px] text-[var(--muted)] leading-relaxed">Make sure you select {asset.network} on {exchange}. Wrong network = lost funds.</div>
+            <div className="text-[10px] text-[var(--muted)] leading-relaxed">Make sure you select {asset.network}. Wrong network = lost funds.</div>
           </div>
           <div className="flex items-center justify-between bg-[var(--clay)] border border-[var(--border)] px-4 py-3">
             <div className="text-[10px] text-[var(--muted)]">Order expires in</div>

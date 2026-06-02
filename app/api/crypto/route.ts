@@ -15,6 +15,7 @@ import { ensureSuiReceiptAutoSyncWatchdog, kickSuiReceiptAutoSync } from '@/lib/
 import { assertSuiTreasuryCanExecuteBuy, getSuiQuotedReceiveForBuy } from '@/lib/server/sui-treasury'
 import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
 import { ensureTonReceiptAutoSyncWatchdog, kickTonReceiptAutoSync } from '@/lib/server/ton-receipt-sync'
+import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
 import { validateWalletAddressForAsset } from '@/lib/crypto-addresses'
 import { getMaxQuoteDriftPercentForAsset, getMinimumBuyNgnForAsset, getQuoteDriftPercent } from '@/lib/crypto-rules'
 import { formatCrypto, generateRef } from '@/lib/utils'
@@ -546,7 +547,6 @@ export async function POST(req: Request) {
       },
     }
   } else {
-    const receiveMethod = body.receiveMethod === 'wallet' ? 'wallet' : 'exchange'
     const netCredit = quotedAmount - fee
     if (netCredit <= 0) {
       return NextResponse.json({ error: 'Amount is too small after fees', success: false }, { status: 400 })
@@ -559,6 +559,11 @@ export async function POST(req: Request) {
         success: false,
       }, { status: 400 })
     }
+    const userDepositAddress = await getCryptoDepositAddressForAsset(user.id, liveAsset)
+    if (!userDepositAddress) {
+      return NextResponse.json({ error: 'Crypto deposit address is not available for this asset yet.', success: false }, { status: 503 })
+    }
+    const depositAddress = userDepositAddress.address
 
     transaction = {
       id: ref,
@@ -579,9 +584,7 @@ export async function POST(req: Request) {
         settlementFlow: 'credit_on_success',
         settlementKind: 'crypto_sell_order',
         walletAsset: 'NGN',
-        receiveMethod,
-        exchange: typeof body.exchange === 'string' ? body.exchange : undefined,
-        walletAddress: typeof body.walletAddress === 'string' ? body.walletAddress : undefined,
+        depositAddress,
         cryptoAmount,
         unitRate: quote.unitRate,
         liveRate: liveAsset.sellRate,
@@ -606,14 +609,10 @@ export async function POST(req: Request) {
     amountNgn: quotedAmount,
     cryptoAmount,
     unitRate: quote.unitRate,
-    destinationType: action === 'buy' || body.receiveMethod === 'wallet' ? 'wallet' : 'exchange',
+    destinationType: 'wallet',
     destinationLabel: action === 'buy'
       ? `${liveAsset.symbol} wallet on ${liveAsset.network}`
-      : body.receiveMethod === 'wallet'
-        ? `${liveAsset.symbol} wallet on ${liveAsset.network}`
-        : typeof body.exchange === 'string'
-          ? body.exchange
-          : 'Exchange',
+      : `${liveAsset.symbol} deposit address on ${liveAsset.network}`,
     walletAddress: typeof body.walletAddress === 'string' ? body.walletAddress.trim() : undefined,
     exchange: typeof body.exchange === 'string' ? body.exchange : undefined,
     provider: action === 'buy'

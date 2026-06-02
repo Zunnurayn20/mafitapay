@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { FundingAccountEligibility, Theme, Transaction, User, Wallet } from '@/types'
+import { CryptoDepositAddress, FundingAccountEligibility, Theme, Transaction, User, Wallet } from '@/types'
 
 interface SessionData {
   user: User
@@ -38,6 +38,7 @@ interface SessionData {
     updatedAt: string
   } | null
   fundingAccountEligibility: FundingAccountEligibility
+  cryptoDepositAddresses: CryptoDepositAddress[]
   notifications: {
     id: string
     title: string
@@ -87,6 +88,7 @@ interface AppStore {
   securitySettings: SessionData['securitySettings']
   kycSubmission: SessionData['kycSubmission']
   fundingAccountEligibility: FundingAccountEligibility
+  cryptoDepositAddresses: CryptoDepositAddress[]
   markNotificationsRead: () => Promise<void>
 
   // UI
@@ -133,6 +135,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
         hasPermanentAccount: false,
         message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
       },
+      cryptoDepositAddresses: [],
     })
     return
   }
@@ -149,6 +152,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
     securitySettings: data.securitySettings,
     kycSubmission: data.kycSubmission,
     fundingAccountEligibility: data.fundingAccountEligibility,
+    cryptoDepositAddresses: data.cryptoDepositAddresses ?? [],
   })
 }
 
@@ -215,6 +219,7 @@ export const useAppStore = create<AppStore>()(
         hasPermanentAccount: false,
         message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
       },
+      cryptoDepositAddresses: [],
       notifications: [],
       sessions: [],
       markNotificationsRead: async () => {

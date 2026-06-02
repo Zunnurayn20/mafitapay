@@ -283,6 +283,46 @@ export interface CryptoOrder {
   updatedAt: string
 }
 
+export type CryptoDepositAddressFamily = 'evm' | 'solana' | 'ton' | 'near' | 'sui'
+
+export interface CryptoDepositAddress {
+  id: string
+  userId: string
+  addressFamily: CryptoDepositAddressFamily
+  networkLabel: string
+  address: string
+  derivationPath?: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CryptoDepositEvent {
+  id: string
+  externalEventId: string
+  userId: string
+  addressId: string
+  addressFamily: CryptoDepositAddressFamily
+  pairId: CryptoPairId
+  network: string
+  assetSymbol: string
+  amountCrypto: number
+  amountUnits: string
+  txHash: string
+  blockNumber?: string
+  logIndex?: number
+  status: 'matched' | 'unmatched' | 'ignored'
+  sweepStatus?: 'pending' | 'sweeping' | 'swept' | 'failed' | 'skipped'
+  sweepTxHash?: string
+  sweepError?: string
+  sweptAt?: string
+  cryptoOrderId?: string
+  transactionId?: string
+  payload?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
 export interface BillProvider {
   id: string
   name: string

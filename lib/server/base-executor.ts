@@ -33,6 +33,10 @@ const DATA_SUFFIX = Attribution.toDataSuffix({
   codes: [BUILDER_CODE],
 }) as Hex
 
+export function getBaseBuilderDataSuffix() {
+  return DATA_SUFFIX
+}
+
 export function getBaseExecutorConfig() {
   const rpcUrls = (process.env.MAFITAPAY_BASE_RPC_URLS?.trim() || process.env.MAFITAPAY_BASE_RPC_URL?.trim() || DEFAULT_BASE_RPC_URL)
     .split(',')
