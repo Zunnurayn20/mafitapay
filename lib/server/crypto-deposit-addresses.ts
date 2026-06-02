@@ -2,7 +2,7 @@ import { WalletContractV4 } from '@ton/ton'
 import { mnemonicNew, mnemonicToPrivateKey } from '@ton/crypto'
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
 import { base58 } from '@scure/base'
-import { ed25519 } from '@noble/curves/ed25519'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { KeyPair, keyToImplicitAddress } from 'near-api-js'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import type { CryptoAsset, CryptoDepositAddress, CryptoDepositAddressFamily } from '@/types'
@@ -67,7 +67,7 @@ async function generateAddressForFamily(family: CryptoDepositAddressFamily) {
   }
 
   if (family === 'solana') {
-    const privateKey = ed25519.utils.randomPrivateKey()
+    const privateKey = ed25519.utils.randomSecretKey()
     const publicKey = ed25519.getPublicKey(privateKey)
     return {
       address: base58.encode(publicKey),

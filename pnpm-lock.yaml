@@ -11,6 +11,12 @@ importers:
       '@mysten/sui':
         specifier: ^2.16.0
         version: 2.16.0(typescript@5.9.3)
+      '@noble/curves':
+        specifier: ^2.2.0
+        version: 2.2.0
+      '@scure/base':
+        specifier: ^2.2.0
+        version: 2.2.0
       '@simplewebauthn/browser':
         specifier: ^13.3.0
         version: 13.3.0
@@ -2941,19 +2947,19 @@ snapshots:
   '@mysten/bcs@2.0.3':
     dependencies:
       '@mysten/utils': 0.3.1
-      '@scure/base': 2.0.0
+      '@scure/base': 2.2.0
 
   '@mysten/sui@2.16.0(typescript@5.9.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.14.0)
       '@mysten/bcs': 2.0.3
       '@mysten/utils': 0.3.1
-      '@noble/curves': 2.0.1
+      '@noble/curves': 2.2.0
       '@noble/hashes': 2.0.1
       '@protobuf-ts/grpcweb-transport': 2.11.1
       '@protobuf-ts/runtime': 2.11.1
       '@protobuf-ts/runtime-rpc': 2.11.1
-      '@scure/base': 2.0.0
+      '@scure/base': 2.2.0
       '@scure/bip32': 2.2.0
       '@scure/bip39': 2.2.0
       gql.tada: 1.9.2(graphql@16.14.0)(typescript@5.9.3)
@@ -2967,7 +2973,7 @@ snapshots:
 
   '@mysten/utils@0.3.1':
     dependencies:
-      '@scure/base': 2.0.0
+      '@scure/base': 2.2.0
 
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
