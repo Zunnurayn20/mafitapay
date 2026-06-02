@@ -4373,7 +4373,7 @@ export async function createCryptoDepositEvent(input: {
 
 export async function markCryptoDepositEventMatched(input: {
   externalEventId: string
-  cryptoOrderId: string
+  cryptoOrderId?: string
   transactionId: string
 }): Promise<CryptoDepositEvent | null> {
   await ensureDbReady()
@@ -4387,7 +4387,7 @@ export async function markCryptoDepositEventMatched(input: {
         updated_at = ?
     WHERE external_event_id = ?
       AND status = 'unmatched'
-  `).run(input.cryptoOrderId, input.transactionId, now, input.externalEventId)
+  `).run(input.cryptoOrderId ?? null, input.transactionId, now, input.externalEventId)
   return getCryptoDepositEventByExternalId(input.externalEventId)
 }
 

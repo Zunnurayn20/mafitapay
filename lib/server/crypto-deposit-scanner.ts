@@ -13,15 +13,19 @@ import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
+import { appendNotification, createNotification } from '@/lib/server/auth'
 import {
+  applyWalletMutation,
   createCryptoDepositEvent,
   findPendingCryptoSellOrderForDeposit,
+  getCryptoAssets,
   getCryptoDepositEventByExternalId,
   listCryptoDepositAddressesByFamily,
   markCryptoDepositEventMatched,
   updateCryptoOrderExecution,
   updateCryptoOrderProviderState,
 } from '@/lib/server/data'
+import { formatCrypto } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
 const SCAN_BLOCK_WINDOW = BigInt(180)
@@ -161,7 +165,12 @@ async function persistAndSettleDeposit(input: {
       amountCrypto: existing.amountCrypto,
     })
     if (!order) {
-      return { event: existing, settled: false, duplicate: true }
+      const direct = await settleDirectCryptoDeposit({
+        event: existing,
+        asset: input.asset,
+      })
+      await sweepCryptoDepositEvent(direct)
+      return { event: direct, settled: true, duplicate: true }
     }
 
     await settleCryptoSellDeposit({
@@ -229,7 +238,14 @@ async function persistAndSettleDeposit(input: {
     payload: input.payload,
   })
 
-  if (!order) return { event, settled: false, duplicate: false }
+  if (!order) {
+    const direct = await settleDirectCryptoDeposit({
+      event,
+      asset: input.asset,
+    })
+    await sweepCryptoDepositEvent(direct)
+    return { event: direct, settled: true, duplicate: false }
+  }
 
   await settleCryptoSellDeposit({
     order,
@@ -243,6 +259,73 @@ async function persistAndSettleDeposit(input: {
   await sweepCryptoDepositEvent(event)
 
   return { event, settled: true, duplicate: false }
+}
+
+async function settleDirectCryptoDeposit(input: {
+  event: CryptoDepositEvent
+  asset: SupportedDepositAsset
+}) {
+  const assets = await getCryptoAssets({ forceRefresh: true, liveOnly: true })
+  const liveAsset = assets.find(item => item.id === input.asset.pairId)
+  const sellRate = typeof liveAsset?.sellRate === 'number' ? liveAsset.sellRate : 0
+  if (!liveAsset || !Number.isFinite(sellRate) || sellRate <= 0) {
+    throw new Error(`Live sell rate is unavailable for ${input.asset.pairId}.`)
+  }
+
+  const amountNgn = Number((input.event.amountCrypto * sellRate).toFixed(2))
+  if (!Number.isFinite(amountNgn) || amountNgn <= 0) {
+    throw new Error(`Calculated NGN credit is invalid for ${input.asset.pairId}.`)
+  }
+
+  const now = new Date().toISOString()
+  const transactionId = `tx_${input.event.externalEventId.replace(/[^a-zA-Z0-9]/g, '').slice(-24)}`
+  await applyWalletMutation({
+    userId: input.event.userId,
+    asset: 'NGN',
+    balanceDelta: amountNgn,
+    transaction: {
+      id: transactionId,
+      type: 'crypto_sell',
+      status: 'success',
+      amount: amountNgn,
+      fee: 0,
+      description: `Sell ${formatCrypto(input.event.amountCrypto, input.asset.symbol)}`,
+      reference: transactionId,
+      recipient: 'MafitaPay crypto deposit',
+      narration: `${input.asset.symbol} deposit auto-credited`,
+      createdAt: now,
+      icon: '₿',
+      metadata: {
+        pairId: input.asset.pairId,
+        symbol: input.asset.symbol,
+        network: input.asset.network,
+        settlementFlow: 'direct_crypto_deposit',
+        settlementKind: 'crypto_sell_auto_credit',
+        walletAsset: 'NGN',
+        depositEventId: input.event.id,
+        depositTxHash: input.event.txHash,
+        depositAddressId: input.event.addressId,
+        amountCrypto: input.event.amountCrypto,
+        amountUnits: input.event.amountUnits,
+        unitRate: sellRate,
+        liveRate: sellRate,
+      },
+    },
+  })
+
+  const matched = await markCryptoDepositEventMatched({
+    externalEventId: input.event.externalEventId,
+    transactionId,
+  })
+
+  await appendNotification(input.event.userId, createNotification({
+    userId: input.event.userId,
+    title: 'Crypto deposit credited',
+    message: `${formatCrypto(input.event.amountCrypto, input.asset.symbol)} was received and credited to your NGN balance.`,
+    type: 'success',
+  }))
+
+  return matched ?? input.event
 }
 
 async function settleCryptoSellDeposit(input: {
