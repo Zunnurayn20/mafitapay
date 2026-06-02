@@ -1,13 +1,26 @@
 'use client'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Copy } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
+import { AssetLogo } from '@/components/ui/AssetLogo'
+import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
-import type { Wallet } from '@/types'
+import type { CryptoAsset, CryptoDepositAddressFamily, Wallet } from '@/types'
 
 type FundingAccount = Wallet['virtualAccounts'][number]
+
+function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFamily | null {
+  if (!asset) return null
+  const network = asset.network.trim().toLowerCase()
+  if (asset.routedAddressFamily === 'solana' || network === 'solana') return 'solana'
+  if (network === 'ton') return 'ton'
+  if (network === 'near') return 'near'
+  if (network === 'sui') return 'sui'
+  if (network === 'base' || network === 'bsc' || network === 'ethereum' || asset.routedAddressFamily === 'evm') return 'evm'
+  return null
+}
 
 export function DepositModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter()
@@ -17,6 +30,9 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const closeModal = useAppStore(state => state.closeModal)
   const refreshSession = useAppStore(state => state.refreshSession)
   const showToast = useAppStore(state => state.showToast)
+  const openModal = useAppStore(state => state.openModal)
+  const setModalData = useAppStore(state => state.setModalData)
+  const cryptoDepositAddresses = useAppStore(state => state.cryptoDepositAddresses)
   const palmpayAccount = wallet?.virtualAccounts.find(item => item.provider === 'palmpay' && item.isPermanent)
   const flutterwaveAccount = wallet?.virtualAccounts.find(item => item.provider === 'flutterwave' && item.isPermanent)
   const primaryAccount = palmpayAccount ?? flutterwaveAccount ?? null
@@ -25,6 +41,12 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     kycSubmission
     && kycSubmission.status === 'approved'
     && (kycSubmission.documentType === 'bvn' || kycSubmission.documentType === 'nin')
+  )
+
+  const assets = useCryptoAssets()
+  const sellableAssets = useMemo(
+    () => assets.filter(asset => Boolean(getAddressFamilyForAsset(asset))),
+    [assets]
   )
 
   async function generatePermanentAccount(provider: 'palmpay' | 'flutterwave') {
@@ -65,6 +87,13 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   async function copyAccountNumber(accountNumber: string) {
     await navigator.clipboard?.writeText(accountNumber)
     showToast('Funding account copied.')
+  }
+
+  function depositWithCrypto(asset: CryptoAsset) {
+    closeModal()
+    onClose()
+    setModalData({ cryptoAsset: asset, cryptoPairId: asset.id })
+    openModal('sell')
   }
 
   function renderGeneratePanel(options: {
@@ -218,12 +247,55 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
                 blockedMessage: fundingAccountEligibility.message,
               })
             ) : null}
+          </div>
+        )}
 
-            <div className="flex gap-3 pt-1">
-              <Button className="flex-1 py-2.5" onClick={() => { closeModal(); onClose() }}>
-                Done
-              </Button>
+        {/* Crypto deposit options */}
+        <div className="border border-[rgba(202,165,96,.24)] bg-[var(--clay)] p-4">
+          <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Crypto Deposits</div>
+          <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
+            Send supported cryptocurrencies. MafitaPay detects the deposit and credits your NGN balance at the live sell rate.
+          </div>
+          {sellableAssets.length === 0 ? (
+            <div className="mt-3 text-[10px] text-[var(--muted)]">No crypto deposit options available yet.</div>
+          ) : (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {sellableAssets.map(asset => {
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => depositWithCrypto(asset)}
+                    className="flex items-center gap-2 border border-[var(--border)] bg-[var(--clay2)] p-2 text-left hover:border-[var(--gold)] hover:bg-[var(--clay)]"
+                  >
+                    <AssetLogo
+                      src={asset.icon}
+                      alt={`${asset.symbol} logo`}
+                      fallback={asset.symbol.slice(0, 1)}
+                      className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden"
+                      imgClassName="h-6 w-6 object-contain"
+                      textClassName="text-sm"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-[11px] font-bold">{asset.symbol}</span>
+                        <span className="text-[8px] text-[var(--text2)]">{asset.network}</span>
+                      </div>
+                    </div>
+                    <div className="text-[8px] text-[var(--muted)]">Deposit →</div>
+                  </button>
+                )
+              })}
             </div>
+          )}
+          <div className="mt-2 text-[9px] text-[var(--muted)]">Tap any to view deposit address and QR code.</div>
+        </div>
+
+        {(primaryAccount || flutterwaveAccount) && (
+          <div className="flex gap-3 pt-1">
+            <Button className="flex-1 py-2.5" onClick={() => { closeModal(); onClose() }}>
+              Done
+            </Button>
           </div>
         )}
       </div>

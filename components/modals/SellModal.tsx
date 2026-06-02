@@ -170,7 +170,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
           <div className="border border-[rgba(202,165,96,.24)] bg-[var(--clay)] p-4">
             <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Send any amount</div>
             <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
-              Send only {asset.symbol} on {asset.network}. Once the network confirms it, MafitaPay detects the deposit, credits your NGN balance, and sweeps the crypto to treasury.
+              Send only {asset.symbol} on {asset.network}. Once the network confirms it, MafitaPay detects the deposit and credits your NGN balance.
             </div>
           </div>
 
