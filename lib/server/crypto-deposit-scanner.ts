@@ -28,6 +28,19 @@ import {
 import { formatCrypto } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
+/** Redact API keys / tokens from RPC URLs when logging (e.g. Alchemy /v2/KEY) */
+function sanitizeUrlForLogs(url: string): string {
+  if (!url) return url
+  try {
+    // Redact common patterns: /v2/KEY , /KEY at path end, or long tokens
+    return url
+      .replace(/\/v2\/[A-Za-z0-9_-]{10,}/, '/v2/[REDACTED]')
+      .replace(/\/[A-Za-z0-9_-]{20,}(?=[?#/]|$)/, '/[REDACTED]')
+  } catch {
+    return url.replace(/([A-Za-z0-9_-]{20,})/g, '[REDACTED]')
+  }
+}
+
 const SCAN_BLOCK_WINDOW = BigInt(64) // reduced to avoid RPC log query limits on public nodes and speed up native scans
 const WATCHDOG_INTERVAL_MS = 30_000
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
@@ -132,7 +145,7 @@ function createPolygonClient() {
   const transport = rpcUrls.length > 1
     ? fallback(rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
     : http(rpcUrls[0] || BROKEN_POLYGON_DEFAULT, { retryCount: 1, timeout: 10_000 })
-  console.log(`[crypto-deposit-scanner] polygon RPCs configured (after filtering broken defaults): ${rpcUrls.join(' | ')}`)
+  console.log(`[crypto-deposit-scanner] polygon RPCs configured (after filtering broken defaults): ${rpcUrls.map(sanitizeUrlForLogs).join(' | ')}`)
   return createPublicClient({ chain: polygon, transport })
 }
 
@@ -509,7 +522,7 @@ async function scanErc20Deposits(input: {
     if (!warnedOnce.has('bsc-usdt-logs')) {
       warnedOnce.add('bsc-usdt-logs')
       const bscCfg = getBscExecutorConfig()
-      console.warn(`[crypto-deposit-scanner] WARNING: USDT_BSC getLogs returning 0 (limits exceeded) using RPCs starting with ${bscCfg.rpcUrls[0]}. For reliable detection set MAFITAPAY_BSC_RPC_URLS to include a permissive one e.g. https://bsc-rpc.publicnode.com,https://rpc.ankr.com/bsc (or dedicated). Native BNB works because it uses getBlock not getLogs.`)
+      console.warn(`[crypto-deposit-scanner] WARNING: USDT_BSC getLogs returning 0 (limits exceeded) using RPCs starting with ${sanitizeUrlForLogs(bscCfg.rpcUrls[0])}. For reliable detection set MAFITAPAY_BSC_RPC_URLS to include a permissive one e.g. https://bsc-rpc.publicnode.com,https://rpc.ankr.com/bsc (or dedicated). Native BNB works because it uses getBlock not getLogs.`)
     }
   }
 
@@ -601,7 +614,7 @@ export async function syncCryptoDepositEventsOnce() {
     const baseCfg = getBaseExecutorConfig()
     const bscCfg = getBscExecutorConfig()
     const polyRpcRaw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
-    console.log(`[crypto-deposit-scanner] RPCs base[0]=${baseCfg.rpcUrls[0]} bsc[0]=${bscCfg.rpcUrls[0]} polygon[0]=${polyRpcRaw.split(',')[0]}`)
+    console.log(`[crypto-deposit-scanner] RPCs base[0]=${sanitizeUrlForLogs(baseCfg.rpcUrls[0])} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(polyRpcRaw.split(',')[0])}`)
     let detected = 0
     let settled = 0
     const errors: string[] = []
