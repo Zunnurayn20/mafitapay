@@ -23,6 +23,7 @@ import type { CryptoDepositEvent, CryptoOrder } from '@/types'
 
 const BASE_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
 const BSC_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
+const POL_GAS_BUFFER_WEI = parseUnits('0.01', 18) // lowered because Polygon gas is extremely cheap; small test deposits should still be sweepable
 const BASE_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
 const BSC_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
 
@@ -146,7 +147,7 @@ function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
       chain: 'polygon',
       pairId,
       kind: 'native',
-      gasBufferWei: parseUnits('0.1', 18), // buffer for polygon gas (in POL)
+      gasBufferWei: POL_GAS_BUFFER_WEI,
       tokenGasTopupWei: parseUnits('0', 18),
     }
   }

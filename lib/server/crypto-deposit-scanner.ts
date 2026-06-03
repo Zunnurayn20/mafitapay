@@ -606,25 +606,34 @@ export async function syncCryptoDepositEventsOnce() {
     let settled = 0
     const errors: string[] = []
 
-    for (const asset of getSupportedAssets()) {
-      try {
-        console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
-        const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
-        const result = asset.kind === 'erc20'
-          ? await scanErc20Deposits({ asset, client, lookup })
-          : await scanNativeDeposits({ asset, client, lookup })
-        console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-        detected += result.detected
-        settled += result.settled
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : 'scan failed'
-        console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
-        errors.push(`${asset.pairId}: ${msg}`)
-        if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
-          warnedOnce.add('polygon-rpc')
-          console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. We auto-use ALCHEMY_API_KEY if present (https://polygon-mainnet.g.alchemy.com/v2/KEY). Set MAFITAPAY_POLYGON_RPC_URL or _URLS (or ensure Alchemy app includes Polygon) and restart.`)
+    // Run chain scans in parallel so that later assets (e.g. POL) are not delayed by heavy earlier scans
+    // (USDT_BSC log fetches or large catch-up native block batches on BSC/Base).
+    const assetResults = await Promise.all(
+      getSupportedAssets().map(async (asset) => {
+        try {
+          console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
+          const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
+          const result = asset.kind === 'erc20'
+            ? await scanErc20Deposits({ asset, client, lookup })
+            : await scanNativeDeposits({ asset, client, lookup })
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+          return { detected: result.detected, settled: result.settled, error: null as string | null }
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'scan failed'
+          console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
+          if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
+            warnedOnce.add('polygon-rpc')
+            console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. We auto-use ALCHEMY_API_KEY if present (https://polygon-mainnet.g.alchemy.com/v2/KEY). Set MAFITAPAY_POLYGON_RPC_URL or _URLS (or ensure Alchemy app includes Polygon) and restart.`)
+          }
+          return { detected: 0, settled: 0, error: `${asset.pairId}: ${msg}` }
         }
-      }
+      })
+    )
+
+    for (const r of assetResults) {
+      detected += r.detected
+      settled += r.settled
+      if (r.error) errors.push(r.error)
     }
 
     console.log(`[crypto-deposit-scanner] sync complete: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}`)
