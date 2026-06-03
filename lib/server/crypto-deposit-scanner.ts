@@ -25,21 +25,8 @@ import {
   updateCryptoOrderExecution,
   updateCryptoOrderProviderState,
 } from '@/lib/server/data'
-import { formatCrypto } from '@/lib/utils'
+import { formatCrypto, sanitizeUrlForLogs } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
-
-/** Redact API keys / tokens from RPC URLs when logging (e.g. Alchemy /v2/KEY) */
-function sanitizeUrlForLogs(url: string): string {
-  if (!url) return url
-  try {
-    // Redact common patterns: /v2/KEY , /KEY at path end, or long tokens
-    return url
-      .replace(/\/v2\/[A-Za-z0-9_-]{10,}/, '/v2/[REDACTED]')
-      .replace(/\/[A-Za-z0-9_-]{20,}(?=[?#/]|$)/, '/[REDACTED]')
-  } catch {
-    return url.replace(/([A-Za-z0-9_-]{20,})/g, '[REDACTED]')
-  }
-}
 
 const SCAN_BLOCK_WINDOW = BigInt(64) // reduced to avoid RPC log query limits on public nodes and speed up native scans
 const WATCHDOG_INTERVAL_MS = 30_000

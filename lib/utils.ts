@@ -79,3 +79,15 @@ export function fmtDate(iso: string): string {
 export function calcCryptoFee(amount: number): number {
   return Math.max(50, amount * 0.005)
 }
+
+/** Redact API keys / tokens from URLs (e.g. Alchemy RPC /v2/KEY) for safe logging */
+export function sanitizeUrlForLogs(url: string): string {
+  if (!url) return url
+  try {
+    return url
+      .replace(/\/v2\/[A-Za-z0-9_-]{10,}/, '/v2/[REDACTED]')
+      .replace(/\/[A-Za-z0-9_-]{20,}(?=[?#/]|$)/, '/[REDACTED]')
+  } catch {
+    return url.replace(/([A-Za-z0-9_-]{20,})/g, '[REDACTED]')
+  }
+}
