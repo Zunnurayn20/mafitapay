@@ -657,7 +657,7 @@ async function scanTonDeposits(input: {
         const src = info.src ? info.src.toString() : ''
         const txHash = tx.hash().toString('hex')
         // Use normalized for external id
-        const externalEventId = `ton:TON_TON:${txHash}:native`
+        const externalEventId = `ton:${input.asset.pairId}:${txHash}:native`
         console.log(`[crypto-deposit-scanner] TON_TON matched native deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
         const result = await persistAndSettleDeposit({
           asset: input.asset,
