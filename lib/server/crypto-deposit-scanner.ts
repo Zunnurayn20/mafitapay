@@ -113,7 +113,15 @@ function createBscClient() {
 }
 
 function createPolygonClient() {
-  let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
+  let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || '')
+  if (!raw) {
+    const alchemyKey = process.env.ALCHEMY_API_KEY?.trim()
+    if (alchemyKey) {
+      raw = `https://polygon-mainnet.g.alchemy.com/v2/${alchemyKey}`
+    } else {
+      raw = DEFAULT_POLYGON_RPC_URL
+    }
+  }
   let rpcUrls = raw.split(',').map(item => item.trim()).filter(Boolean)
   // Avoid falling back all the way to the known-broken public polygon-rpc.com if user listed better ones first
   const BROKEN_POLYGON_DEFAULT = 'https://polygon-rpc.com'
@@ -614,7 +622,7 @@ export async function syncCryptoDepositEventsOnce() {
         errors.push(`${asset.pairId}: ${msg}`)
         if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
           warnedOnce.add('polygon-rpc')
-          console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. Set MAFITAPAY_POLYGON_RPC_URL or MAFITAPAY_POLYGON_RPC_URLS to a reliable provider (paid Alchemy/Infura, or a working public one) and restart.`)
+          console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. We auto-use ALCHEMY_API_KEY if present (https://polygon-mainnet.g.alchemy.com/v2/KEY). Set MAFITAPAY_POLYGON_RPC_URL or _URLS (or ensure Alchemy app includes Polygon) and restart.`)
         }
       }
     }

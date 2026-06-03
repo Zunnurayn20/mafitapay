@@ -69,7 +69,15 @@ function createBscClientsFromPrivateKey(privateKey: Hex) {
 }
 
 function createPolygonClientsFromPrivateKey(privateKey: Hex) {
-  let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || 'https://rpc.ankr.com/polygon')
+  let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || '')
+  if (!raw) {
+    const alchemyKey = process.env.ALCHEMY_API_KEY?.trim()
+    if (alchemyKey) {
+      raw = `https://polygon-mainnet.g.alchemy.com/v2/${alchemyKey}`
+    } else {
+      raw = 'https://rpc.ankr.com/polygon'
+    }
+  }
   let rpcUrls = raw.split(',').map(item => item.trim()).filter(Boolean)
   const BROKEN_POLYGON_DEFAULT = 'https://polygon-rpc.com'
   if (rpcUrls.length > 1) {
