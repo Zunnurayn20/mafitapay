@@ -11,8 +11,11 @@ import {
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { base, bsc, polygon } from 'viem/chains'
+import { Address as TonAddress, TonClient, WalletContractV4, internal, toNano } from '@ton/ton'
+import { mnemonicToPrivateKey } from '@ton/crypto'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
+import { getTonExecutorConfig } from '@/lib/server/ton-executor'
 import {
   claimCryptoDepositEventSweep,
   getCryptoDepositAddressSecretById,
@@ -24,11 +27,12 @@ import type { CryptoDepositEvent, CryptoOrder } from '@/types'
 const BASE_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
 const BSC_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
 const POL_GAS_BUFFER_WEI = parseUnits('0.01', 18) // lowered because Polygon gas is extremely cheap; small test deposits should still be sweepable
+const TON_GAS_BUFFER_NANO = toNano('0.05')
 const BASE_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
 const BSC_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
 
 type SweepAsset = {
-  chain: 'base' | 'bsc' | 'polygon'
+  chain: 'base' | 'bsc' | 'polygon' | 'ton'
   pairId: CryptoOrder['pairId']
   kind: 'erc20' | 'native'
   tokenAddress?: Address
@@ -96,6 +100,29 @@ function createPolygonClientsFromPrivateKey(privateKey: Hex) {
   }
 }
 
+async function createTonSweepFromMnemonic(mnemonic: string) {
+  const words = mnemonic.trim().split(/\s+/)
+  if (words.length !== 24) {
+    throw new Error('TON deposit secret must be a 24-word mnemonic.')
+  }
+  const keyPair = await mnemonicToPrivateKey(words)
+  const wallet = WalletContractV4.create({ workchain: 0, publicKey: keyPair.publicKey })
+  const config = getTonExecutorConfig()
+  const tonClient = new TonClient({
+    endpoint: config.rpcUrl,
+    apiKey: config.apiKeyConfigured ? config.apiKey : undefined,
+    timeout: 12_000,
+  })
+  const contract = tonClient.open(wallet)
+  return {
+    keyPair,
+    wallet,
+    tonClient,
+    contract,
+    depositAddress: wallet.address.toString({ bounceable: false, urlSafe: true }),
+  }
+}
+
 function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
   const baseConfig = getBaseExecutorConfig()
   const bscConfig = getBscExecutorConfig()
@@ -152,6 +179,16 @@ function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
     }
   }
 
+  if (pairId === 'TON_TON') {
+    return {
+      chain: 'ton',
+      pairId,
+      kind: 'native',
+      gasBufferWei: TON_GAS_BUFFER_NANO,
+      tokenGasTopupWei: toNano('0'),
+    }
+  }
+
   return null
 }
 
@@ -192,6 +229,7 @@ async function ensureTokenSweepGas(input: {
   }
 
   // polygon etc not needing for native POL, for erc20 would need similar
+  // ton native also no gas topup from treasury (deposit pays its own)
   return null
 }
 
@@ -233,6 +271,35 @@ async function sweepNative(input: {
     to: input.treasuryAddress,
     value,
   })
+}
+
+async function sweepTonNative(input: {
+  mnemonic: string
+  treasuryAddress: string
+  amountUnits: bigint
+}) {
+  const gasBuffer = TON_GAS_BUFFER_NANO
+  if (input.amountUnits <= gasBuffer) {
+    throw new Error('Native TON deposit is too small to sweep after reserving gas.')
+  }
+
+  const value = input.amountUnits - gasBuffer
+  const sweep = await createTonSweepFromMnemonic(input.mnemonic)
+  const seqno = await sweep.contract.getSeqno()
+  await sweep.contract.sendTransfer({
+    seqno,
+    secretKey: sweep.keyPair.secretKey,
+    messages: [internal({
+      to: TonAddress.parse(input.treasuryAddress),
+      value: value,
+      bounce: true,
+    })],
+  })
+  // TON sendTransfer is async fire, no immediate hash. Use a pseudo identifier based on seqno.
+  // In practice, the tx can be looked up via toncenter or ston using the wallet + seqno.
+  // For the deposit event, we record this pseudo as sweepTxHash.
+  const pseudoHash = `ton-sweep-seq${seqno}-${Date.now().toString(36)}`
+  return pseudoHash
 }
 
 async function sweepErc20(input: {
@@ -308,33 +375,65 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     const secret = await getCryptoDepositAddressSecretById(event.addressId)
     if (!secret) throw new Error('Deposit address secret is unavailable for sweep.')
 
-    const privateKey = secret.secret.trim() as Hex
-    const depositAccount = privateKeyToAccount(privateKey)
-    const depositAddress = getAddress(secret.record.address)
-    if (depositAccount.address.toLowerCase() !== depositAddress.toLowerCase()) {
-      throw new Error('Deposit address private key does not match the stored address.')
+    const family = secret.record.addressFamily
+    let depositAddressStr = secret.record.address
+    let privateKeyForEvm: Hex | undefined
+    let mnemonicForTon: string | undefined
+
+    if (family === 'evm' || asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon') {
+      privateKeyForEvm = secret.secret.trim() as Hex
+      const depositAccount = privateKeyToAccount(privateKeyForEvm)
+      const depositAddress = getAddress(secret.record.address)
+      if (depositAccount.address.toLowerCase() !== depositAddress.toLowerCase()) {
+        throw new Error('Deposit address private key does not match the stored address.')
+      }
+      depositAddressStr = depositAddress
+    } else if (family === 'ton' || asset.chain === 'ton') {
+      mnemonicForTon = secret.secret.trim()
+      // verify later in sweep
+    } else {
+      throw new Error(`Sweep not supported for address family ${family} yet.`)
     }
 
-    const treasuryAddress = asset.chain === 'base'
-      ? getBaseExecutorConfig().configuredAddress
-      : asset.chain === 'bsc'
-      ? (() => {
-          const config = getBscExecutorConfig()
-          if (config.configuredAddress) return config.configuredAddress
-          if (!config.privateKey) throw new Error('MAFITAPAY_BSC_EXECUTOR_PRIVATE_KEY is required to resolve BSC treasury address.')
-          return privateKeyToAccount(config.privateKey).address
-        })()
-      : (() => {
-          const addr = process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS?.trim()
-          if (addr) return getAddress(addr)
-          const pk = process.env.MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined
-          if (!pk) throw new Error('MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY or ADDRESS is required to resolve Polygon treasury address.')
-          return privateKeyToAccount(pk).address
-        })()
+    let treasuryAddress: string | Address
+    if (asset.chain === 'base') {
+      treasuryAddress = getBaseExecutorConfig().configuredAddress
+    } else if (asset.chain === 'bsc') {
+      const config = getBscExecutorConfig()
+      if (config.configuredAddress) treasuryAddress = config.configuredAddress
+      else if (!config.privateKey) throw new Error('MAFITAPAY_BSC_EXECUTOR_PRIVATE_KEY is required to resolve BSC treasury address.')
+      else treasuryAddress = privateKeyToAccount(config.privateKey).address
+    } else if (asset.chain === 'polygon') {
+      const addr = process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS?.trim()
+      if (addr) treasuryAddress = getAddress(addr)
+      else {
+        const pk = process.env.MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined
+        if (!pk) throw new Error('MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY or ADDRESS is required to resolve Polygon treasury address.')
+        treasuryAddress = privateKeyToAccount(pk).address
+      }
+    } else if (asset.chain === 'ton') {
+      const addr = process.env.MAFITAPAY_TON_EXECUTOR_ADDRESS?.trim()
+      if (addr) {
+        treasuryAddress = TonAddress.parse(addr).toString({ bounceable: false, urlSafe: true })
+      } else {
+        throw new Error('MAFITAPAY_TON_EXECUTOR_ADDRESS is required to resolve TON treasury address.')
+      }
+    } else {
+      throw new Error(`No treasury resolution for chain ${asset.chain}`)
+    }
     const amountUnits = BigInt(event.amountUnits)
-    const hash = asset.kind === 'erc20'
-      ? await sweepErc20({ asset, privateKey, depositAddress, treasuryAddress, amountUnits })
-      : await sweepNative({ asset, privateKey, treasuryAddress, amountUnits })
+    let hash: any
+    if (asset.kind === 'erc20') {
+      if (!privateKeyForEvm) throw new Error('EVM private key required for ERC20 sweep.')
+      hash = await sweepErc20({ asset, privateKey: privateKeyForEvm, depositAddress: getAddress(depositAddressStr), treasuryAddress: getAddress(treasuryAddress as string), amountUnits })
+    } else if (asset.chain === 'ton') {
+      if (!mnemonicForTon) throw new Error('TON mnemonic required for sweep.')
+      // treasuryAddress for ton is string
+      hash = await sweepTonNative({ mnemonic: mnemonicForTon, treasuryAddress: treasuryAddress as string, amountUnits })
+    } else {
+      if (!privateKeyForEvm) throw new Error('EVM private key required for native sweep.')
+      hash = await sweepNative({ asset, privateKey: privateKeyForEvm, treasuryAddress: getAddress(treasuryAddress as string), amountUnits })
+    }
 
     await markCryptoDepositEventSwept({
       externalEventId: event.externalEventId,
