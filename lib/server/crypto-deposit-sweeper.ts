@@ -15,7 +15,7 @@ import { Address as TonAddress, TonClient, WalletContractV4, internal, toNano } 
 import { mnemonicToPrivateKey } from '@ton/crypto'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
-import { getTonExecutorConfig } from '@/lib/server/ton-executor'
+import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import {
   claimCryptoDepositEventSweep,
   getCryptoDepositAddressSecretById,
@@ -108,10 +108,12 @@ async function createTonSweepFromMnemonic(mnemonic: string) {
   const keyPair = await mnemonicToPrivateKey(words)
   const wallet = WalletContractV4.create({ workchain: 0, publicKey: keyPair.publicKey })
   const config = getTonExecutorConfig()
+  const httpAdapter = createTonHttpAdapter() as any
   const tonClient = new TonClient({
     endpoint: config.rpcUrl,
     apiKey: config.apiKeyConfigured ? config.apiKey : undefined,
     timeout: 12_000,
+    httpAdapter,
   })
   const contract = tonClient.open(wallet)
   return {

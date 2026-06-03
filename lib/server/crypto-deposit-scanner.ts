@@ -12,7 +12,7 @@ import { base, bsc, polygon } from 'viem/chains'
 import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
-import { getTonExecutorConfig } from '@/lib/server/ton-executor'
+import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { appendNotification, createNotification } from '@/lib/server/auth'
@@ -141,10 +141,12 @@ function createPolygonClient() {
 function createTonClient() {
   // Reuse ton executor config for RPC (read-only for deposit scans; no mnemonic needed)
   const config = getTonExecutorConfig()
+  const httpAdapter = createTonHttpAdapter() as any
   return new TonClient({
     endpoint: config.rpcUrl,
     apiKey: config.apiKeyConfigured ? config.apiKey : undefined,
     timeout: 12_000,
+    httpAdapter,
   })
 }
 

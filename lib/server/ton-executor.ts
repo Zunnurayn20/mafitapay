@@ -212,7 +212,7 @@ async function postJsonViaCurl<T>(input: string, body: string, headers?: Record<
   }
 }
 
-function createTonHttpAdapter(): AxiosAdapter {
+export function createTonHttpAdapter(): AxiosAdapter {
   return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
     const headers = Object.fromEntries(
       Object.entries(config.headers?.toJSON ? config.headers.toJSON() as Record<string, unknown> : (config.headers as Record<string, unknown> | undefined) ?? {})
