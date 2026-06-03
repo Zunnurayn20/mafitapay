@@ -9,8 +9,10 @@ import {
   type Address,
 } from 'viem'
 import { base, bsc, polygon } from 'viem/chains'
+import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
+import { getTonExecutorConfig } from '@/lib/server/ton-executor'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { appendNotification, createNotification } from '@/lib/server/auth'
@@ -63,7 +65,7 @@ async function getLogsChunked(
   return { logs, coveredTo }
 }
 
-type ScanChain = 'base' | 'bsc' | 'polygon'
+type ScanChain = 'base' | 'bsc' | 'polygon' | 'solana' | 'ton' | 'sui' | 'near'
 type ScanState = {
   lastBlockByKey: Partial<Record<string, bigint>>
   running: boolean
@@ -76,8 +78,8 @@ type SupportedDepositAsset = {
   network: string
   symbol: string
   decimals: number
-  kind: 'erc20' | 'native'
-  tokenAddress?: Address
+  kind: 'erc20' | 'native' | 'spl' | 'jetton' | 'coin' | 'token' // extended for non-EVM
+  tokenAddress?: Address | string
 }
 
 type AnyClient = ReturnType<typeof createBaseClient> | ReturnType<typeof createBscClient> | ReturnType<typeof createPolygonClient>
@@ -136,6 +138,16 @@ function createPolygonClient() {
   return createPublicClient({ chain: polygon, transport })
 }
 
+function createTonClient() {
+  // Reuse ton executor config for RPC (read-only for deposit scans; no mnemonic needed)
+  const config = getTonExecutorConfig()
+  return new TonClient({
+    endpoint: config.rpcUrl,
+    apiKey: config.apiKeyConfigured ? config.apiKey : undefined,
+    timeout: 12_000,
+  })
+}
+
 function getSupportedAssets(): SupportedDepositAsset[] {
   const baseConfig = getBaseExecutorConfig()
   const bscConfig = getBscExecutorConfig()
@@ -182,6 +194,48 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       decimals: 18,
       kind: 'native',
     },
+    // Non-EVM (scanning logic pending / partial implementation)
+    {
+      chain: 'solana',
+      pairId: 'USDC_SOLANA',
+      network: 'Solana',
+      symbol: 'USDC',
+      decimals: 6,
+      kind: 'spl',
+      tokenAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' as any,
+    },
+    {
+      chain: 'solana',
+      pairId: 'SOL_SOLANA',
+      network: 'Solana',
+      symbol: 'SOL',
+      decimals: 9,
+      kind: 'native',
+    },
+    {
+      chain: 'ton',
+      pairId: 'TON_TON',
+      network: 'TON',
+      symbol: 'TON',
+      decimals: 9,
+      kind: 'native',
+    },
+    {
+      chain: 'sui',
+      pairId: 'SUI_SUI',
+      network: 'Sui',
+      symbol: 'SUI',
+      decimals: 9,
+      kind: 'native',
+    },
+    {
+      chain: 'near',
+      pairId: 'NEAR_NEAR',
+      network: 'NEAR',
+      symbol: 'NEAR',
+      decimals: 24,
+      kind: 'native',
+    },
   ]
 }
 
@@ -189,7 +243,12 @@ function buildAddressLookup(addresses: CryptoDepositAddress[]) {
   const lookup = new Map<string, CryptoDepositAddress>()
   for (const item of addresses) {
     try {
-      lookup.set(getAddress(item.address).toLowerCase(), item)
+      if (item.addressFamily === 'evm') {
+        lookup.set(getAddress(item.address).toLowerCase(), item)
+      } else {
+        // Other families use their native address format (base58 etc); store normalized lower for matching
+        lookup.set(item.address.toLowerCase(), item)
+      }
     } catch {
       // Ignore malformed historical rows.
     }
@@ -464,7 +523,7 @@ async function scanErc20Deposits(input: {
   const { fromBlock, toBlock } = getScanRange(rangeKey, latestBlock)
   const erc20ChunkSize = input.asset.chain === 'bsc' ? BigInt(16) : BigInt(100)
   const { logs, coveredTo } = await getLogsChunked(input.client, {
-    address: input.asset.tokenAddress!,
+    address: input.asset.tokenAddress as Address,
     event: TRANSFER_EVENT,
     fromBlock,
     toBlock,
@@ -570,6 +629,62 @@ async function scanNativeDeposits(input: {
   return { detected, settled }
 }
 
+async function scanTonDeposits(input: {
+  asset: SupportedDepositAsset
+  client: TonClient
+  lookup: Map<string, CryptoDepositAddress>
+}) {
+  const tonAddrs = Array.from(input.lookup.values()).filter(a => a.addressFamily === 'ton')
+  if (tonAddrs.length === 0) return { detected: 0, settled: 0 }
+
+  let detected = 0
+  let settled = 0
+  const tonClient = input.client
+
+  for (const addr of tonAddrs) {
+    try {
+      // Normalize the stored address (from provisioning: bounceable false, urlSafe true)
+      const destAddr = TonAddress.parse(addr.address)
+      const normalized = destAddr.toString({ bounceable: false, urlSafe: true }).toLowerCase()
+      // Fetch recent txs (re-scan ok, duplicate check in persist handles)
+      const txs = await tonClient.getTransactions(destAddr, { limit: 50 })
+      for (const tx of txs) {
+        const inMsg = tx.inMessage
+        if (!inMsg || inMsg.info.type !== 'internal') continue
+        const info = inMsg.info as any
+        const value = info.value ? BigInt(info.value.toString()) : BigInt(0)
+        if (value <= BigInt(0)) continue
+        const src = info.src ? info.src.toString() : ''
+        const txHash = tx.hash().toString('hex')
+        // Use normalized for external id
+        const externalEventId = `ton:TON_TON:${txHash}:native`
+        console.log(`[crypto-deposit-scanner] TON_TON matched native deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
+        const result = await persistAndSettleDeposit({
+          asset: input.asset,
+          address: addr,
+          externalEventId,
+          amountUnits: value,
+          txHash,
+          // TON has lt/utime, no evm block exactly; use 0 for now
+          blockNumber: BigInt(String(tx.lt ?? 0)),
+          payload: {
+            type: 'ton_internal',
+            from: src,
+            to: addr.address,
+            lt: tx.lt,
+            hash: txHash,
+          },
+        })
+        if (!result.duplicate) detected += 1
+        if (result.settled) settled += 1
+      }
+    } catch (e) {
+      console.warn(`[crypto-deposit-scanner] TON scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
+    }
+  }
+  return { detected, settled }
+}
+
 export async function syncCryptoDepositEventsOnce() {
   const state = getScannerState()
   if (state.running) {
@@ -586,17 +701,23 @@ export async function syncCryptoDepositEventsOnce() {
   console.log('[crypto-deposit-scanner] syncCryptoDepositEventsOnce starting...')
 
   try {
-    const addresses = await listCryptoDepositAddressesByFamily('evm')
-    const lookup = buildAddressLookup(addresses)
-    console.log(`[crypto-deposit-scanner] loaded ${addresses.length} evm addresses, lookup.size=${lookup.size}`)
+    const evmAddresses = await listCryptoDepositAddressesByFamily('evm')
+    const solanaAddresses = await listCryptoDepositAddressesByFamily('solana')
+    const tonAddresses = await listCryptoDepositAddressesByFamily('ton')
+    const nearAddresses = await listCryptoDepositAddressesByFamily('near')
+    const suiAddresses = await listCryptoDepositAddressesByFamily('sui')
+    const allAddresses = [...evmAddresses, ...solanaAddresses, ...tonAddresses, ...nearAddresses, ...suiAddresses]
+    const lookup = buildAddressLookup(allAddresses)
+    console.log(`[crypto-deposit-scanner] loaded ${allAddresses.length} addresses (evm=${evmAddresses.length}, solana=${solanaAddresses.length}, ton=${tonAddresses.length}, near=${nearAddresses.length}, sui=${suiAddresses.length}), lookup.size=${lookup.size}`)
     if (lookup.size === 0) {
-      console.log('[crypto-deposit-scanner] no evm deposit addresses, skipping scans')
+      console.log('[crypto-deposit-scanner] no deposit addresses, skipping scans')
       return { skipped: false, detected: 0, settled: 0, errors: [] as string[] }
     }
 
     const baseClient = createBaseClient()
     const bscClient = createBscClient()
     const polygonClient = createPolygonClient()
+    const tonClient = createTonClient()
     // log effective RPCs for diagnosis (especially when public nodes limit logs or return 401)
     const baseCfg = getBaseExecutorConfig()
     const bscCfg = getBscExecutorConfig()
@@ -612,12 +733,23 @@ export async function syncCryptoDepositEventsOnce() {
       getSupportedAssets().map(async (asset) => {
         try {
           console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
-          const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
-          const result = asset.kind === 'erc20'
-            ? await scanErc20Deposits({ asset, client, lookup })
-            : await scanNativeDeposits({ asset, client, lookup })
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-          return { detected: result.detected, settled: result.settled, error: null as string | null }
+          const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
+          if (isEvm) {
+            const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
+            const result = asset.kind === 'erc20'
+              ? await scanErc20Deposits({ asset, client, lookup })
+              : await scanNativeDeposits({ asset, client, lookup })
+            console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+            return { detected: result.detected, settled: result.settled, error: null as string | null }
+          } else if (asset.chain === 'ton') {
+            const result = await scanTonDeposits({ asset, client: tonClient, lookup })
+            console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+            return { detected: result.detected, settled: result.settled, error: null as string | null }
+          } else {
+            // Non-EVM deposit scanning not yet implemented (address provisioning works; detection will be added next)
+            console.log(`[crypto-deposit-scanner] ${asset.pairId} on ${asset.chain}: scanning not yet implemented for this family`)
+            return { detected: 0, settled: 0, error: null as string | null }
+          }
         } catch (error) {
           const msg = error instanceof Error ? error.message : 'scan failed'
           console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
