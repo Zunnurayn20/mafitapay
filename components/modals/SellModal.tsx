@@ -16,7 +16,7 @@ function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFami
   if (network === 'ton') return 'ton'
   if (network === 'near') return 'near'
   if (network === 'sui') return 'sui'
-  if (network === 'base' || network === 'bsc' || network === 'ethereum' || asset.routedAddressFamily === 'evm') return 'evm'
+  if (network === 'base' || network === 'bsc' || network === 'ethereum' || network === 'polygon' || network === 'matic' || asset.routedAddressFamily === 'evm') return 'evm'
   return null
 }
 
@@ -30,7 +30,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const initializedPairRef = useRef(false)
   const [pairId, setPairId] = useState<CryptoPairId>('USDT_BSC')
   const [showAssetPicker, setShowAssetPicker] = useState(false)
-  const [qrCodeUrl, setQrCodeUrl] = useState('')
+  const [qrRenderKey, setQrRenderKey] = useState(0)
+  const qrCodeCacheRef = useRef<Record<string, string>>({})
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = sellableAssets.find(a => a.id === pairId)
@@ -74,10 +75,18 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   useEffect(() => {
     let cancelled = false
-    setQrCodeUrl('')
-    if (!depositAddress?.address) return
+    if (!depositAddress?.address) {
+      return
+    }
 
-    void QRCode.toDataURL(depositAddress.address, {
+    const addr = depositAddress.address
+    if (qrCodeCacheRef.current[addr]) {
+      // generated/cached once for this exact address: show instantly (render will see it), no re-gen
+      return
+    }
+
+    // first time seeing this address -> generate (happens only once per address thanks to cache)
+    void QRCode.toDataURL(addr, {
       errorCorrectionLevel: 'M',
       margin: 1,
       scale: 8,
@@ -86,9 +95,12 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
         light: '#fff7e6',
       },
     }).then(url => {
-      if (!cancelled) setQrCodeUrl(url)
+      if (!cancelled) {
+        qrCodeCacheRef.current[addr] = url
+        setQrRenderKey(k => k + 1) // force re-render so the img picks up the newly cached QR
+      }
     }).catch(() => {
-      if (!cancelled) setQrCodeUrl('')
+      // on error, a re-render isn't strictly needed; spinner will stay until next address change
     })
 
     return () => {
@@ -101,7 +113,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     initializedPairRef.current = false
     setTimeout(() => {
       setShowAssetPicker(false)
-      setQrCodeUrl('')
+      // do not reset QR state here; we use per-address cache (see qrCodeCacheRef) so QR is generated only once per address and displayed instantly on re-open/switch-back
     }, 400)
   }
 
@@ -181,9 +193,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             className="flex flex-col items-center gap-3 border border-[var(--border)] bg-[var(--clay2)] p-4 text-center disabled:cursor-not-allowed disabled:opacity-70"
           >
             <div className="flex h-44 w-44 items-center justify-center border border-[rgba(202,165,96,.25)] bg-[#fff7e6] p-2">
-              {qrCodeUrl ? (
+              {depositAddress?.address && qrCodeCacheRef.current[depositAddress.address] ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrCodeUrl} alt={`${asset.symbol} deposit QR code`} className="h-full w-full object-contain" />
+                <img src={qrCodeCacheRef.current[depositAddress.address]} alt={`${asset.symbol} deposit QR code`} className="h-full w-full object-contain" />
               ) : (
                 <div className="spinner" />
               )}

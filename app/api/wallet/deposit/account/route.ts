@@ -14,7 +14,7 @@ import type { Wallet } from '@/types'
 
 export const runtime = 'nodejs'
 
-const PALMPAY_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_PALMPAY === '1'
+const PALMPAY_LOGGING_ENABLED = false // disabled to focus on crypto deposit logs
 
 function logDepositAccount(event: string, payload: Record<string, unknown>) {
   if (!PALMPAY_LOGGING_ENABLED) return
@@ -67,10 +67,7 @@ export async function POST(req: Request) {
   const parsed = await req.json().catch(() => null)
   const body = isRecord(parsed) ? parsed : {}
   const provider = body.provider === 'flutterwave' ? 'flutterwave' : 'palmpay'
-  logDepositAccount('request', {
-    userId: user.id,
-    provider,
-  })
+  // logDepositAccount('request', { ... }) // bank logger silenced for crypto deposit focus
 
   const wallet = await getWalletByUserId(user.id)
   if (!wallet) {
@@ -92,20 +89,13 @@ export async function POST(req: Request) {
 
   if (provider === 'palmpay') {
     if (!isPalmPayVirtualAccountsEnabled()) {
-      logDepositAccount('palmpay.not_configured', { userId: user.id })
+      // logDepositAccount('palmpay.not_configured', { ... })
       return NextResponse.json({ error: 'PalmPay funding accounts are not configured.', success: false }, { status: 503 })
     }
 
     const palmpayIdentity = getFundingIdentityPayload(submittedIdentity, sensitiveIdentity)
     if (!palmpayIdentity) {
-      logDepositAccount('palmpay.eligibility_blocked', {
-        userId: user.id,
-        hasSubmittedIdentity: Boolean(submittedIdentity),
-        hasSensitiveIdentity: Boolean(sensitiveIdentity),
-        identityStatus: submittedIdentity?.status ?? null,
-        identityType: submittedIdentity?.documentType ?? null,
-        sensitiveIdentityType: sensitiveIdentity?.documentType ?? null,
-      })
+      // logDepositAccount('palmpay.eligibility_blocked', { ... }) // silenced
       return NextResponse.json({
         error: sensitiveIdentity
           ? 'Submit BVN or NIN before creating a PalmPay funding account.'
@@ -125,13 +115,7 @@ export async function POST(req: Request) {
     })
 
     if (providerAccount.status === 'failed' || !providerAccount.accountNumber) {
-      logDepositAccount('palmpay.failed', {
-        userId: user.id,
-        reference,
-        reason: providerAccount.reason ?? null,
-        rawStatus: providerAccount.rawStatus ?? null,
-        payload: providerAccount.payload ?? null,
-      })
+      // logDepositAccount('palmpay.failed', { ... }) // silenced
       return NextResponse.json({
         error: providerAccount.reason || 'Unable to create a PalmPay funding account.',
         success: false,
@@ -174,11 +158,7 @@ export async function POST(req: Request) {
       type: 'success',
     }))
 
-    logDepositAccount('palmpay.created', {
-      userId: user.id,
-      accountNumber: nextAccount.accountNumber,
-      reference: nextAccount.reference ?? null,
-    })
+    // logDepositAccount('palmpay.created', { ... }) // silenced
 
     return NextResponse.json({
       data: {
@@ -192,17 +172,12 @@ export async function POST(req: Request) {
   }
 
   if (!isFlutterwaveCollectionsEnabled()) {
-    logDepositAccount('flutterwave.not_configured', { userId: user.id })
+    // logDepositAccount('flutterwave.not_configured', { ... }) // silenced
     return NextResponse.json({ error: 'Flutterwave funding accounts are not configured.', success: false }, { status: 503 })
   }
 
   if (!submittedIdentity || (submittedIdentity.documentType !== 'bvn' && submittedIdentity.documentType !== 'nin')) {
-    logDepositAccount('flutterwave.eligibility_blocked', {
-      userId: user.id,
-      hasSubmittedIdentity: Boolean(submittedIdentity),
-      identityStatus: submittedIdentity?.status ?? null,
-      identityType: submittedIdentity?.documentType ?? null,
-    })
+    // logDepositAccount('flutterwave.eligibility_blocked', { ... }) // silenced
     return NextResponse.json({
       error: 'Submit BVN or NIN before creating a Flutterwave funding account.',
       success: false,

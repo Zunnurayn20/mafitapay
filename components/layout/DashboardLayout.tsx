@@ -154,17 +154,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           })
           if (!response.ok) {
             const payload = await response.json().catch(() => null)
-            console.warn('[funding-account-provision] failed', {
-              provider,
-              status: response.status,
-              error: payload?.error ?? null,
-            })
+            // console.warn('[funding-account-provision] failed', { ... }) // silenced for crypto deposit focus
           }
         } catch (error) {
-          console.warn('[funding-account-provision] request_error', {
-            provider,
-            error: error instanceof Error ? error.message : 'Request failed',
-          })
+          // console.warn('[funding-account-provision] request_error', { ... }) // silenced for crypto deposit focus
         }
       }
 

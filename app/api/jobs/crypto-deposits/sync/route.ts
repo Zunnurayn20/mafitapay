@@ -20,6 +20,7 @@ export async function POST(req: Request) {
   const dryRun = url.searchParams.get('dryRun') === 'true'
 
   if (dryRun) {
+    console.log('[crypto-deposit-scanner] job dryRun requested')
     return NextResponse.json({
       data: {
         ok: true,
@@ -29,8 +30,11 @@ export async function POST(req: Request) {
     })
   }
 
+  console.log('[crypto-deposit-scanner] job sync triggered (via /api/jobs/crypto-deposits/sync)')
+  const result = await syncCryptoDepositEventsOnce()
+  console.log('[crypto-deposit-scanner] job sync result:', result)
   return NextResponse.json({
-    data: await syncCryptoDepositEventsOnce(),
+    data: result,
     success: true,
   })
 }

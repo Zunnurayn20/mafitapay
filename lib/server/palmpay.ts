@@ -23,7 +23,7 @@ export type PalmPayVirtualAccountResult = {
   payload?: Record<string, unknown>
 }
 
-const PALMPAY_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_PALMPAY === '1'
+const PALMPAY_LOGGING_ENABLED = false // disabled to focus on crypto deposit logs
 
 function readString(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''

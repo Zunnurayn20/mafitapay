@@ -8,7 +8,7 @@ import {
   parseAbiItem,
   type Address,
 } from 'viem'
-import { base, bsc } from 'viem/chains'
+import { base, bsc, polygon } from 'viem/chains'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
@@ -28,15 +28,47 @@ import {
 import { formatCrypto } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
-const SCAN_BLOCK_WINDOW = BigInt(180)
+const SCAN_BLOCK_WINDOW = BigInt(64) // reduced to avoid RPC log query limits on public nodes and speed up native scans
 const WATCHDOG_INTERVAL_MS = 30_000
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
 
-type ScanChain = 'base' | 'bsc'
+const DEFAULT_POLYGON_RPC_URL = 'https://rpc.ankr.com/polygon'
+const warnedOnce = new Set<string>()
+
+async function getLogsChunked(
+  client: AnyClient,
+  baseParams: { address: Address; event: any; fromBlock: bigint; toBlock: bigint },
+  chunkSize = BigInt(25)
+): Promise<{ logs: any[]; coveredTo: bigint }> {
+  const logs: any[] = []
+  let current = baseParams.fromBlock
+  const { fromBlock: _f, toBlock: _t, ...filter } = baseParams
+  let coveredTo = baseParams.fromBlock - BigInt(1)
+  while (current <= baseParams.toBlock) {
+    const end = current + chunkSize > baseParams.toBlock ? baseParams.toBlock : current + chunkSize
+    try {
+      const chunk = await client.getLogs({ ...filter, fromBlock: current, toBlock: end })
+      logs.push(...chunk)
+      const expected = coveredTo + BigInt(1)
+      if (current === expected) {
+        coveredTo = end
+      }
+      // only advance covered for contiguous successful prefix from window start (prevents skipping holes on flaky RPCs)
+    } catch (err) {
+      console.warn(`[crypto-deposit-scanner] getLogs chunk ${current}-${end} failed (will continue):`, err instanceof Error ? err.message : err)
+      // continue; do not advance coveredTo so tail (incl this chunk) gets retried next sync
+    }
+    current = end + BigInt(1)
+  }
+  return { logs, coveredTo }
+}
+
+type ScanChain = 'base' | 'bsc' | 'polygon'
 type ScanState = {
   lastBlockByKey: Partial<Record<string, bigint>>
   running: boolean
   interval?: NodeJS.Timeout
+  lastSyncAt?: number
 }
 type SupportedDepositAsset = {
   chain: ScanChain
@@ -47,6 +79,8 @@ type SupportedDepositAsset = {
   kind: 'erc20' | 'native'
   tokenAddress?: Address
 }
+
+type AnyClient = ReturnType<typeof createBaseClient> | ReturnType<typeof createBscClient> | ReturnType<typeof createPolygonClient>
 
 declare global {
   var __mafitapayCryptoDepositScanner: ScanState | undefined
@@ -76,6 +110,22 @@ function createBscClient() {
     ? fallback(config.rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
     : http(config.rpcUrl, { retryCount: 1, timeout: 10_000 })
   return createPublicClient({ chain: bsc, transport })
+}
+
+function createPolygonClient() {
+  let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
+  let rpcUrls = raw.split(',').map(item => item.trim()).filter(Boolean)
+  // Avoid falling back all the way to the known-broken public polygon-rpc.com if user listed better ones first
+  const BROKEN_POLYGON_DEFAULT = 'https://polygon-rpc.com'
+  if (rpcUrls.length > 1) {
+    rpcUrls = rpcUrls.filter(u => !u.toLowerCase().includes('polygon-rpc.com'))
+    if (rpcUrls.length === 0) rpcUrls = [BROKEN_POLYGON_DEFAULT]
+  }
+  const transport = rpcUrls.length > 1
+    ? fallback(rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
+    : http(rpcUrls[0] || BROKEN_POLYGON_DEFAULT, { retryCount: 1, timeout: 10_000 })
+  console.log(`[crypto-deposit-scanner] polygon RPCs configured (after filtering broken defaults): ${rpcUrls.join(' | ')}`)
+  return createPublicClient({ chain: polygon, transport })
 }
 
 function getSupportedAssets(): SupportedDepositAsset[] {
@@ -116,6 +166,14 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       decimals: 18,
       kind: 'native',
     },
+    {
+      chain: 'polygon',
+      pairId: 'POL_POLYGON',
+      network: 'Polygon',
+      symbol: 'POL',
+      decimals: 18,
+      kind: 'native',
+    },
   ]
 }
 
@@ -139,8 +197,12 @@ function getScanRange(key: string, latestBlock: bigint) {
     : latestBlock > SCAN_BLOCK_WINDOW
       ? latestBlock - SCAN_BLOCK_WINDOW
       : BigInt(0)
-  state.lastBlockByKey[key] = latestBlock
   return { fromBlock, toBlock: latestBlock }
+}
+
+function setLastScannedBlock(key: string, block: bigint) {
+  const state = getScannerState()
+  state.lastBlockByKey[key] = block
 }
 
 async function persistAndSettleDeposit(input: {
@@ -153,6 +215,7 @@ async function persistAndSettleDeposit(input: {
   logIndex?: number
   payload?: Record<string, unknown>
 }) {
+  console.log(`[crypto-deposit-scanner] persistAndSettleDeposit external=${input.externalEventId} pair=${input.asset.pairId} amountUnits=${input.amountUnits.toString()} tx=${input.txHash} user=${input.address.userId}`)
   const existing = await getCryptoDepositEventByExternalId(input.externalEventId)
   if (existing) {
     if (existing.status !== 'unmatched') {
@@ -193,6 +256,7 @@ async function persistAndSettleDeposit(input: {
 
   const amountCrypto = Number(formatUnits(input.amountUnits, input.asset.decimals))
   if (!Number.isFinite(amountCrypto) || amountCrypto <= 0) {
+    console.log(`[crypto-deposit-scanner] ignoring zero/ invalid amount for ${input.externalEventId}`)
     const event = await createCryptoDepositEvent({
       externalEventId: input.externalEventId,
       userId: input.address.userId,
@@ -237,8 +301,10 @@ async function persistAndSettleDeposit(input: {
     transactionId: order?.transactionId,
     payload: input.payload,
   })
+  console.log(`[crypto-deposit-scanner] created deposit event ${event.id} status=${eventStatus} amountCrypto=${amountCrypto} for pair=${input.asset.pairId}`)
 
   if (!order) {
+    console.log(`[crypto-deposit-scanner] no pending sell order, doing direct NGN credit for ${input.externalEventId}`)
     const direct = await settleDirectCryptoDeposit({
       event,
       asset: input.asset,
@@ -247,6 +313,7 @@ async function persistAndSettleDeposit(input: {
     return { event: direct, settled: true, duplicate: false }
   }
 
+  console.log(`[crypto-deposit-scanner] matched pending sell order ${order.id} for deposit ${input.externalEventId}`)
   await settleCryptoSellDeposit({
     order,
     event,
@@ -265,9 +332,11 @@ async function settleDirectCryptoDeposit(input: {
   event: CryptoDepositEvent
   asset: SupportedDepositAsset
 }) {
+  console.log(`[crypto-deposit-scanner] settleDirectCryptoDeposit for event=${input.event.externalEventId} pair=${input.asset.pairId} cryptoAmount=${input.event.amountCrypto}`)
   const assets = await getCryptoAssets({ forceRefresh: true, liveOnly: true })
   const liveAsset = assets.find(item => item.id === input.asset.pairId)
   const sellRate = typeof liveAsset?.sellRate === 'number' ? liveAsset.sellRate : 0
+  console.log(`[crypto-deposit-scanner] live rate for ${input.asset.pairId}: ${sellRate} (liveAsset=${!!liveAsset})`)
   if (!liveAsset || !Number.isFinite(sellRate) || sellRate <= 0) {
     throw new Error(`Live sell rate is unavailable for ${input.asset.pairId}.`)
   }
@@ -277,6 +346,7 @@ async function settleDirectCryptoDeposit(input: {
     throw new Error(`Calculated NGN credit is invalid for ${input.asset.pairId}.`)
   }
 
+  console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol}`)
   const now = new Date().toISOString()
   const transactionId = `tx_${input.event.externalEventId.replace(/[^a-zA-Z0-9]/g, '').slice(-24)}`
   await applyWalletMutation({
@@ -325,6 +395,7 @@ async function settleDirectCryptoDeposit(input: {
     type: 'success',
   }))
 
+  console.log(`[crypto-deposit-scanner] direct credit successful for event=${input.event.externalEventId} tx=${transactionId} NGN=${amountNgn}`)
   return matched ?? input.event
 }
 
@@ -337,6 +408,7 @@ async function settleCryptoSellDeposit(input: {
   amountUnits: string
   amountCrypto: number
 }) {
+  console.log(`[crypto-deposit-scanner] settleCryptoSellDeposit for order=${input.order.id} event=${input.event.externalEventId} tx=${input.txHash}`)
   await updateCryptoOrderExecution({
     id: input.order.id,
     destinationTxHash: input.txHash,
@@ -374,22 +446,25 @@ async function settleCryptoSellDeposit(input: {
 
 async function scanErc20Deposits(input: {
   asset: SupportedDepositAsset
-  client: ReturnType<typeof createBaseClient> | ReturnType<typeof createBscClient>
+  client: AnyClient
   lookup: Map<string, CryptoDepositAddress>
 }) {
   if (!input.asset.tokenAddress) return { detected: 0, settled: 0 }
 
   const latestBlock = await input.client.getBlockNumber()
-  const { fromBlock, toBlock } = getScanRange(`${input.asset.chain}:${input.asset.pairId}:erc20`, latestBlock)
-  const logs = await input.client.getLogs({
-    address: input.asset.tokenAddress,
+  const rangeKey = `${input.asset.chain}:${input.asset.pairId}:erc20`
+  const { fromBlock, toBlock } = getScanRange(rangeKey, latestBlock)
+  const erc20ChunkSize = input.asset.chain === 'bsc' ? BigInt(16) : BigInt(100)
+  const { logs, coveredTo } = await getLogsChunked(input.client, {
+    address: input.asset.tokenAddress!,
     event: TRANSFER_EVENT,
     fromBlock,
     toBlock,
-  })
+  }, erc20ChunkSize)
 
   let detected = 0
   let settled = 0
+  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} erc20: fetched ${logs.length} logs in range (chunked to avoid limits)`)
   for (const log of logs) {
     const to = typeof log.args.to === 'string' ? log.args.to : ''
     const address = input.lookup.get(to.toLowerCase())
@@ -397,6 +472,7 @@ async function scanErc20Deposits(input: {
     const value = typeof log.args.value === 'bigint' ? log.args.value : BigInt(0)
     const txHash = log.transactionHash
     const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${txHash}:${log.logIndex?.toString() ?? '0'}`
+    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched erc20 deposit: to=${to} value=${value.toString()} tx=${txHash}`)
     const result = await persistAndSettleDeposit({
       asset: input.asset,
       address,
@@ -416,77 +492,134 @@ async function scanErc20Deposits(input: {
     if (result.settled) settled += 1
   }
 
-  return { detected, settled }
-}
+  // advance only to contiguous covered prefix (from start of this window); tail/holes retried on next sync to avoid permanently skipping blocks when public RPCs rate-limit getLogs
+  let advanceTo = coveredTo >= fromBlock ? coveredTo : fromBlock - BigInt(1)
+  if (advanceTo < BigInt(0)) advanceTo = BigInt(0)
+  setLastScannedBlock(rangeKey, advanceTo)
 
-async function scanNativeDeposits(input: {
-  asset: SupportedDepositAsset
-  client: ReturnType<typeof createBaseClient> | ReturnType<typeof createBscClient>
-  lookup: Map<string, CryptoDepositAddress>
-}) {
-  const latestBlock = await input.client.getBlockNumber()
-  const { fromBlock, toBlock } = getScanRange(`${input.asset.chain}:${input.asset.pairId}:native`, latestBlock)
-  let detected = 0
-  let settled = 0
-
-  for (let blockNumber = fromBlock; blockNumber <= toBlock; blockNumber += BigInt(1)) {
-    const block = await input.client.getBlock({ blockNumber, includeTransactions: true })
-    for (const tx of block.transactions) {
-      if (typeof tx === 'string') continue
-      if (!tx.to || tx.value <= BigInt(0)) continue
-      const address = input.lookup.get(tx.to.toLowerCase())
-      if (!address) continue
-      const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${tx.hash}:native`
-      const result = await persistAndSettleDeposit({
-        asset: input.asset,
-        address,
-        externalEventId,
-        amountUnits: tx.value,
-        txHash: tx.hash,
-        blockNumber,
-        payload: {
-          type: 'native_transfer',
-          from: tx.from,
-          to: tx.to,
-        },
-      })
-      if (!result.duplicate) detected += 1
-      if (result.settled) settled += 1
+  if (input.asset.chain === 'bsc' && input.asset.pairId === 'USDT_BSC' && logs.length === 0 && coveredTo < toBlock) {
+    if (!warnedOnce.has('bsc-usdt-logs')) {
+      warnedOnce.add('bsc-usdt-logs')
+      const bscCfg = getBscExecutorConfig()
+      console.warn(`[crypto-deposit-scanner] WARNING: USDT_BSC getLogs returning 0 (limits exceeded) using RPCs starting with ${bscCfg.rpcUrls[0]}. For reliable detection set MAFITAPAY_BSC_RPC_URLS to include a permissive one e.g. https://bsc-rpc.publicnode.com,https://rpc.ankr.com/bsc (or dedicated). Native BNB works because it uses getBlock not getLogs.`)
     }
   }
 
   return { detected, settled }
 }
 
+async function scanNativeDeposits(input: {
+  asset: SupportedDepositAsset
+  client: AnyClient
+  lookup: Map<string, CryptoDepositAddress>
+}) {
+  const latestBlock = await input.client.getBlockNumber()
+  const nativeKey = `${input.asset.chain}:${input.asset.pairId}:native`
+  const { fromBlock, toBlock } = getScanRange(nativeKey, latestBlock)
+  let detected = 0
+  let settled = 0
+  const totalBlocks = Number(toBlock) - Number(fromBlock) + 1
+  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} native: scanning ${totalBlocks} blocks (batched for speed)`)
+
+  const BATCH_SIZE = 8 // small batches to not overwhelm RPCs
+  for (let start = fromBlock; start <= toBlock; start += BigInt(BATCH_SIZE)) {
+    const end = start + BigInt(BATCH_SIZE) - BigInt(1) > toBlock ? toBlock : start + BigInt(BATCH_SIZE) - BigInt(1)
+    const promises: Promise<any>[] = []
+    for (let b = start; b <= end; b += BigInt(1)) {
+      promises.push( input.client.getBlock({ blockNumber: b, includeTransactions: true }) )
+    }
+    const batchBlocks = await Promise.all(promises)
+    for (let i = 0; i < batchBlocks.length; i++) {
+      const blockNumber = start + BigInt(i)
+      const block = batchBlocks[i]
+      for (const tx of block.transactions) {
+        if (typeof tx === 'string') continue
+        if (!tx.to || tx.value <= BigInt(0)) continue
+        const address = input.lookup.get(tx.to.toLowerCase())
+        if (!address) continue
+        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${tx.to} value=${tx.value.toString()} tx=${tx.hash} block=${blockNumber}`)
+        const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${tx.hash}:native`
+        const result = await persistAndSettleDeposit({
+          asset: input.asset,
+          address,
+          externalEventId,
+          amountUnits: tx.value,
+          txHash: tx.hash,
+          blockNumber,
+          payload: {
+            type: 'native_transfer',
+            from: tx.from,
+            to: tx.to,
+          },
+        })
+        if (!result.duplicate) detected += 1
+        if (result.settled) settled += 1
+      }
+    }
+  }
+
+  setLastScannedBlock(nativeKey, toBlock)
+  return { detected, settled }
+}
+
 export async function syncCryptoDepositEventsOnce() {
   const state = getScannerState()
-  if (state.running) return { skipped: true, detected: 0, settled: 0, errors: [] as string[] }
+  if (state.running) {
+    // sync skipped (already running) - too noisy, only log start when actually runs
+    return { skipped: true, detected: 0, settled: 0, errors: [] as string[] }
+  }
+  const now = Date.now()
+  if (state.lastSyncAt && now - state.lastSyncAt < 5000) {
+    // too frequent
+    return { skipped: true, detected: 0, settled: 0, errors: [] as string[] }
+  }
+  state.lastSyncAt = now
   state.running = true
+  console.log('[crypto-deposit-scanner] syncCryptoDepositEventsOnce starting...')
 
   try {
     const addresses = await listCryptoDepositAddressesByFamily('evm')
     const lookup = buildAddressLookup(addresses)
-    if (lookup.size === 0) return { skipped: false, detected: 0, settled: 0, errors: [] as string[] }
+    console.log(`[crypto-deposit-scanner] loaded ${addresses.length} evm addresses, lookup.size=${lookup.size}`)
+    if (lookup.size === 0) {
+      console.log('[crypto-deposit-scanner] no evm deposit addresses, skipping scans')
+      return { skipped: false, detected: 0, settled: 0, errors: [] as string[] }
+    }
 
     const baseClient = createBaseClient()
     const bscClient = createBscClient()
+    const polygonClient = createPolygonClient()
+    // log effective RPCs for diagnosis (especially when public nodes limit logs or return 401)
+    const baseCfg = getBaseExecutorConfig()
+    const bscCfg = getBscExecutorConfig()
+    const polyRpcRaw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
+    console.log(`[crypto-deposit-scanner] RPCs base[0]=${baseCfg.rpcUrls[0]} bsc[0]=${bscCfg.rpcUrls[0]} polygon[0]=${polyRpcRaw.split(',')[0]}`)
     let detected = 0
     let settled = 0
     const errors: string[] = []
 
     for (const asset of getSupportedAssets()) {
       try {
-        const client = asset.chain === 'base' ? baseClient : bscClient
+        console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
+        const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
         const result = asset.kind === 'erc20'
           ? await scanErc20Deposits({ asset, client, lookup })
           : await scanNativeDeposits({ asset, client, lookup })
+        console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
         detected += result.detected
         settled += result.settled
       } catch (error) {
-        errors.push(`${asset.pairId}: ${error instanceof Error ? error.message : 'scan failed'}`)
+        const msg = error instanceof Error ? error.message : 'scan failed'
+        console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
+        errors.push(`${asset.pairId}: ${msg}`)
+        if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
+          warnedOnce.add('polygon-rpc')
+          console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. Set MAFITAPAY_POLYGON_RPC_URL or MAFITAPAY_POLYGON_RPC_URLS to a reliable provider (paid Alchemy/Infura, or a working public one) and restart.`)
+        }
       }
     }
 
+    console.log(`[crypto-deposit-scanner] sync complete: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}`)
     return { skipped: false, detected, settled, errors }
   } finally {
     state.running = false

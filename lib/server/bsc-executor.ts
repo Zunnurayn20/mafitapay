@@ -14,7 +14,7 @@ import {
   type Hex,
 } from 'viem'
 
-const DEFAULT_BSC_RPC_URL = 'https://bsc-dataseed.binance.org'
+const DEFAULT_BSC_RPC_URL = 'https://bsc-rpc.publicnode.com'
 const DEFAULT_BSC_USDT_ADDRESS = '0x55d398326f99059fF775485246999027B3197955'
 const MIN_BSC_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
 

@@ -16,6 +16,7 @@ import { assertSuiTreasuryCanExecuteBuy, getSuiQuotedReceiveForBuy } from '@/lib
 import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
 import { ensureTonReceiptAutoSyncWatchdog, kickTonReceiptAutoSync } from '@/lib/server/ton-receipt-sync'
 import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
+import { ensureCryptoDepositScannerWatchdog, kickCryptoDepositScanner } from '@/lib/server/crypto-deposit-scanner'
 import { validateWalletAddressForAsset } from '@/lib/crypto-addresses'
 import { getMaxQuoteDriftPercentForAsset, getMinimumBuyNgnForAsset, getQuoteDriftPercent } from '@/lib/crypto-rules'
 import { formatCrypto, generateRef } from '@/lib/utils'
@@ -105,6 +106,8 @@ async function assertQuoteStillMatchesLiveMarket(asset: CryptoAsset, side: 'buy'
 
 export async function GET(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
+  ensureCryptoDepositScannerWatchdog()
+  void kickCryptoDepositScanner().catch(e => console.warn('[api/crypto] deposit scanner kick failed', e))
   const { searchParams } = new URL(req.url)
   const forceRefresh = searchParams.get('refresh') === '1'
   const liveOnly = searchParams.get('strict') === '1'
@@ -116,6 +119,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
+  ensureCryptoDepositScannerWatchdog()
+  void kickCryptoDepositScanner().catch(e => console.warn('[api/crypto] deposit scanner kick failed', e))
   void kickCryptoMarketRefresh()
   ensureBaseReceiptAutoSyncWatchdog()
   await kickBaseReceiptAutoSync()
