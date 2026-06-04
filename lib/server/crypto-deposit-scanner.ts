@@ -13,6 +13,8 @@ import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
+import { Connection, PublicKey } from '@solana/web3.js'
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { appendNotification, createNotification } from '@/lib/server/auth'
@@ -150,6 +152,11 @@ function createTonClient() {
   })
 }
 
+function createSolanaConnection() {
+  const rpcUrl = process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com'
+  return new Connection(rpcUrl, 'confirmed')
+}
+
 function getSupportedAssets(): SupportedDepositAsset[] {
   const baseConfig = getBaseExecutorConfig()
   const bscConfig = getBscExecutorConfig()
@@ -272,6 +279,22 @@ function getScanRange(key: string, latestBlock: bigint) {
 function setLastScannedBlock(key: string, block: bigint) {
   const state = getScannerState()
   state.lastBlockByKey[key] = block
+}
+
+function normalizeTonBigInt(value: unknown): bigint {
+  if (typeof value === 'bigint') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? BigInt(Math.trunc(value)) : BigInt(0)
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return /^\d+$/.test(trimmed) ? BigInt(trimmed) : BigInt(0)
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if ('coins' in record) return normalizeTonBigInt(record.coins)
+    if ('value' in record) return normalizeTonBigInt(record.value)
+    if ('amount' in record) return normalizeTonBigInt(record.amount)
+  }
+  return BigInt(0)
 }
 
 async function persistAndSettleDeposit(input: {
@@ -654,7 +677,7 @@ async function scanTonDeposits(input: {
         const inMsg = tx.inMessage
         if (!inMsg || inMsg.info.type !== 'internal') continue
         const info = inMsg.info as any
-        const value = info.value ? BigInt(info.value.toString()) : BigInt(0)
+        const value = normalizeTonBigInt(info.value)
         if (value <= BigInt(0)) continue
         const src = info.src ? info.src.toString() : ''
         const txHash = tx.hash().toString('hex')
@@ -668,12 +691,12 @@ async function scanTonDeposits(input: {
           amountUnits: value,
           txHash,
           // TON has lt/utime, no evm block exactly; use 0 for now
-          blockNumber: BigInt(String(tx.lt ?? 0)),
+          blockNumber: normalizeTonBigInt(tx.lt),
           payload: {
             type: 'ton_internal',
             from: src,
             to: addr.address,
-            lt: tx.lt,
+            lt: normalizeTonBigInt(tx.lt).toString(),
             hash: txHash,
           },
         })
@@ -682,6 +705,93 @@ async function scanTonDeposits(input: {
       }
     } catch (e) {
       console.warn(`[crypto-deposit-scanner] TON scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
+    }
+  }
+  return { detected, settled }
+}
+
+async function scanSolanaDeposits(input: {
+  asset: SupportedDepositAsset
+  connection: Connection
+  lookup: Map<string, CryptoDepositAddress>
+}) {
+  const solAddrs = Array.from(input.lookup.values()).filter(a => a.addressFamily === 'solana')
+  if (solAddrs.length === 0) return { detected: 0, settled: 0 }
+
+  let detected = 0
+  let settled = 0
+  const conn = input.connection
+  const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+
+  for (const addr of solAddrs) {
+    try {
+      const owner = new PublicKey(addr.address)
+      const isNative = input.asset.pairId === 'SOL_SOLANA'
+      const target = isNative ? owner : getAssociatedTokenAddressSync(USDC_MINT, owner)
+
+      const sigs = await conn.getSignaturesForAddress(target, { limit: 30 })
+      for (const sigInfo of sigs) {
+        if (sigInfo.err) continue
+        const tx = await conn.getParsedTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 })
+        if (!tx || tx.meta?.err) continue
+
+        let value = BigInt(0)
+        let from = ''
+        let to = ''
+
+        // Parse instructions
+        const instructions = (tx.transaction.message as any).instructions || []
+        for (const ix of instructions) {
+          if (isNative) {
+            // Native SOL: system program transfer
+            if (ix.programId?.toBase58() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
+              const info = ix.parsed.info
+              if (info.destination === addr.address) {
+                value = BigInt(info.lamports || 0)
+                from = info.source || ''
+                to = info.destination
+                break
+              }
+            }
+          } else {
+            // SPL USDC transfer to the ATA
+            if (ix.programId?.toBase58() === TOKEN_PROGRAM_ID.toBase58() && ix.parsed?.type === 'transfer') {
+              const info = ix.parsed.info
+              if (info.destination === target.toBase58()) {
+                value = BigInt(info.amount || 0)
+                from = info.source || ''
+                to = info.destination
+                break
+              }
+            }
+          }
+        }
+
+        if (value <= BigInt(0)) continue
+
+        const txHash = sigInfo.signature
+        const externalEventId = `solana:${input.asset.pairId}:${txHash}:${isNative ? 'native' : 'spl'}`
+        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched ${isNative ? 'native' : 'spl'} deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
+        const result = await persistAndSettleDeposit({
+          asset: input.asset,
+          address: addr,
+          externalEventId,
+          amountUnits: value,
+          txHash,
+          blockNumber: BigInt(sigInfo.slot || 0),
+          payload: {
+            type: isNative ? 'solana_native_transfer' : 'solana_spl_transfer',
+            from,
+            to: addr.address,
+            signature: txHash,
+            slot: sigInfo.slot,
+          },
+        })
+        if (!result.duplicate) detected += 1
+        if (result.settled) settled += 1
+      }
+    } catch (e) {
+      console.warn(`[crypto-deposit-scanner] Solana scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
     }
   }
   return { detected, settled }
@@ -720,6 +830,7 @@ export async function syncCryptoDepositEventsOnce() {
     const bscClient = createBscClient()
     const polygonClient = createPolygonClient()
     const tonClient = createTonClient()
+    const solanaConnection = createSolanaConnection()
     // log effective RPCs for diagnosis (especially when public nodes limit logs or return 401)
     const baseCfg = getBaseExecutorConfig()
     const bscCfg = getBscExecutorConfig()
@@ -745,6 +856,10 @@ export async function syncCryptoDepositEventsOnce() {
             return { detected: result.detected, settled: result.settled, error: null as string | null }
           } else if (asset.chain === 'ton') {
             const result = await scanTonDeposits({ asset, client: tonClient, lookup })
+            console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+            return { detected: result.detected, settled: result.settled, error: null as string | null }
+          } else if (asset.chain === 'solana') {
+            const result = await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
             console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
             return { detected: result.detected, settled: result.settled, error: null as string | null }
           } else {
