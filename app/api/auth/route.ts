@@ -10,7 +10,7 @@ import {
 } from '@/lib/server/data'
 import { deliverEmailVerification } from '@/lib/server/auth-delivery'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
-import { ensureCryptoDepositScannerWatchdog, kickCryptoDepositScanner } from '@/lib/server/crypto-deposit-scanner'
+import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -60,7 +60,6 @@ export async function GET() {
   ensureFlutterwaveBillSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   ensureCryptoDepositScannerWatchdog()
-  void kickCryptoDepositScanner().catch(e => console.warn('[crypto-deposit-scanner] kick failed', e))
   const user = await getCurrentUser()
   if (!user) {
     await destroySession()
@@ -76,7 +75,6 @@ export async function POST(req: Request) {
   ensureFlutterwaveBillSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   ensureCryptoDepositScannerWatchdog()
-  void kickCryptoDepositScanner().catch(e => console.warn('[crypto-deposit-scanner] kick failed', e))
   const body = await req.json()
   const email = normalizeEmail(body.email)
   const password = typeof body.password === 'string' ? body.password : ''
@@ -134,7 +132,6 @@ export async function PUT(req: Request) {
   ensureFlutterwaveBillSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   ensureCryptoDepositScannerWatchdog()
-  void kickCryptoDepositScanner().catch(e => console.warn('[crypto-deposit-scanner] kick failed', e))
   const body = await req.json()
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const email = normalizeEmail(body.email)

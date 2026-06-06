@@ -33,7 +33,11 @@ import { formatCrypto, sanitizeUrlForLogs } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
 const SCAN_BLOCK_WINDOW = BigInt(64) // reduced to avoid RPC log query limits on public nodes and speed up native scans
-const WATCHDOG_INTERVAL_MS = 30_000
+const WATCHDOG_INTERVAL_MS = 60_000
+const MIN_SYNC_INTERVAL_MS = Math.max(
+  30_000,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SCAN_INTERVAL_MS ?? 60_000) || 60_000
+)
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
 
 const DEFAULT_POLYGON_RPC_URL = 'https://rpc.ankr.com/polygon'
@@ -755,10 +759,10 @@ async function scanSolanaDeposits(input: {
             }
           } else {
             // SPL USDC transfer to the ATA
-            if (ix.programId?.toBase58() === TOKEN_PROGRAM_ID.toBase58() && ix.parsed?.type === 'transfer') {
+            if (ix.programId?.toBase58() === TOKEN_PROGRAM_ID.toBase58() && (ix.parsed?.type === 'transfer' || ix.parsed?.type === 'transferChecked')) {
               const info = ix.parsed.info
               if (info.destination === target.toBase58()) {
-                value = BigInt(info.amount || 0)
+                value = BigInt(info.amount || info.tokenAmount?.amount || 0)
                 from = info.source || ''
                 to = info.destination
                 break
@@ -804,7 +808,7 @@ export async function syncCryptoDepositEventsOnce() {
     return { skipped: true, detected: 0, settled: 0, errors: [] as string[] }
   }
   const now = Date.now()
-  if (state.lastSyncAt && now - state.lastSyncAt < 5000) {
+  if (state.lastSyncAt && now - state.lastSyncAt < MIN_SYNC_INTERVAL_MS) {
     // too frequent
     return { skipped: true, detected: 0, settled: 0, errors: [] as string[] }
   }
@@ -840,44 +844,42 @@ export async function syncCryptoDepositEventsOnce() {
     let settled = 0
     const errors: string[] = []
 
-    // Run chain scans in parallel so that later assets (e.g. POL) are not delayed by heavy earlier scans
-    // (USDT_BSC log fetches or large catch-up native block batches on BSC/Base).
-    const assetResults = await Promise.all(
-      getSupportedAssets().map(async (asset) => {
-        try {
-          console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
-          const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
-          if (isEvm) {
-            const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
-            const result = asset.kind === 'erc20'
-              ? await scanErc20Deposits({ asset, client, lookup })
-              : await scanNativeDeposits({ asset, client, lookup })
-            console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-            return { detected: result.detected, settled: result.settled, error: null as string | null }
-          } else if (asset.chain === 'ton') {
-            const result = await scanTonDeposits({ asset, client: tonClient, lookup })
-            console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-            return { detected: result.detected, settled: result.settled, error: null as string | null }
-          } else if (asset.chain === 'solana') {
-            const result = await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
-            console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-            return { detected: result.detected, settled: result.settled, error: null as string | null }
-          } else {
-            // Non-EVM deposit scanning not yet implemented (address provisioning works; detection will be added next)
-            console.log(`[crypto-deposit-scanner] ${asset.pairId} on ${asset.chain}: scanning not yet implemented for this family`)
-            return { detected: 0, settled: 0, error: null as string | null }
-          }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : 'scan failed'
-          console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
-          if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
-            warnedOnce.add('polygon-rpc')
-            console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. We auto-use ALCHEMY_API_KEY if present (https://polygon-mainnet.g.alchemy.com/v2/KEY). Set MAFITAPAY_POLYGON_RPC_URL or _URLS (or ensure Alchemy app includes Polygon) and restart.`)
-          }
-          return { detected: 0, settled: 0, error: `${asset.pairId}: ${msg}` }
+    // Scan assets sequentially. Public RPCs throttle hard when every chain is scanned in parallel.
+    const assetResults: Array<{ detected: number; settled: number; error: string | null }> = []
+    for (const asset of getSupportedAssets()) {
+      try {
+        console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
+        const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
+        if (isEvm) {
+          const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
+          const result = asset.kind === 'erc20'
+            ? await scanErc20Deposits({ asset, client, lookup })
+            : await scanNativeDeposits({ asset, client, lookup })
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
+        } else if (asset.chain === 'ton') {
+          const result = await scanTonDeposits({ asset, client: tonClient, lookup })
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
+        } else if (asset.chain === 'solana') {
+          const result = await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
+        } else {
+          // Non-EVM deposit scanning not yet implemented (address provisioning works; detection will be added next)
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} on ${asset.chain}: scanning not yet implemented for this family`)
+          assetResults.push({ detected: 0, settled: 0, error: null })
         }
-      })
-    )
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'scan failed'
+        console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
+        if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
+          warnedOnce.add('polygon-rpc')
+          console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. We auto-use ALCHEMY_API_KEY if present (https://polygon-mainnet.g.alchemy.com/v2/KEY). Set MAFITAPAY_POLYGON_RPC_URL or _URLS (or ensure Alchemy app includes Polygon) and restart.`)
+        }
+        assetResults.push({ detected: 0, settled: 0, error: `${asset.pairId}: ${msg}` })
+      }
+    }
 
     for (const r of assetResults) {
       detected += r.detected

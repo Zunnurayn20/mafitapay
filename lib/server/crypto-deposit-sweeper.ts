@@ -14,7 +14,7 @@ import { base, bsc, polygon } from 'viem/chains'
 import { Address as TonAddress, TonClient, WalletContractV4, internal, toNano } from '@ton/ton'
 import { mnemonicToPrivateKey } from '@ton/crypto'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js'
-import { createTransferInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { createAssociatedTokenAccountInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { base58 } from '@scure/base'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
@@ -32,6 +32,7 @@ const BSC_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
 const POL_GAS_BUFFER_WEI = parseUnits('0.01', 18) // lowered because Polygon gas is extremely cheap; small test deposits should still be sweepable
 const TON_GAS_BUFFER_NANO = toNano('0.05')
 const SOLANA_GAS_BUFFER_LAMPORTS = BigInt(1_000_000) // ~0.001 SOL for fees
+const SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS = BigInt(3_000_000) // covers fee + possible treasury ATA creation
 const BASE_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
 const BSC_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
 
@@ -129,16 +130,35 @@ async function createTonSweepFromMnemonic(mnemonic: string) {
   }
 }
 
+function parseSolanaKeypairSecret(secret: string) {
+  const trimmed = secret.trim()
+  let decoded: Uint8Array
+  if (trimmed.startsWith('[')) {
+    const parsed = JSON.parse(trimmed) as number[]
+    decoded = Uint8Array.from(parsed)
+  } else {
+    decoded = base58.decode(trimmed)
+  }
+
+  if (decoded.length === 32) return Keypair.fromSeed(decoded)
+  if (decoded.length === 64) return Keypair.fromSecretKey(decoded)
+  throw new Error('Solana private key must be a 32-byte seed or 64-byte secret key.')
+}
+
 async function createSolanaSweepFromSecret(secret: string) {
-  // secret for solana is base58 encoded secret key (from ed25519 in provisioning)
-  const secretKey = base58.decode(secret)
-  const keypair = Keypair.fromSecretKey(secretKey)
+  const keypair = parseSolanaKeypairSecret(secret)
   const conn = new Connection(process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com', 'confirmed')
   return {
     keypair,
     connection: conn,
     publicKey: keypair.publicKey,
   }
+}
+
+async function getSolanaTreasuryKeypair() {
+  const secret = process.env.MAFITAPAY_SOLANA_EXECUTOR_PRIVATE_KEY?.trim()
+  if (!secret) return null
+  return parseSolanaKeypairSecret(secret)
 }
 
 function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
@@ -348,36 +368,53 @@ async function sweepSolanaNative(input: {
   isToken?: boolean // for USDC
   mint?: string
 }) {
-  const gasBuffer = SOLANA_GAS_BUFFER_LAMPORTS
-  if (input.amountUnits <= gasBuffer) {
-    throw new Error('Native Solana deposit is too small to sweep after reserving gas.')
-  }
-
-  const value = input.amountUnits - gasBuffer
   const sweep = await createSolanaSweepFromSecret(input.secret)
   const fromPubkey = sweep.publicKey
   const toPubkey = new PublicKey(input.treasuryAddress)
 
-  const { blockhash } = await sweep.connection.getLatestBlockhash('confirmed')
-
   let transaction: Transaction
   if (input.isToken && input.mint) {
+    const value = input.amountUnits
+    if (value <= BigInt(0)) {
+      throw new Error('Token Solana deposit is too small to sweep.')
+    }
+    await ensureSolanaSweepGas({
+      connection: sweep.connection,
+      depositPublicKey: fromPubkey,
+    })
     const mintPubkey = new PublicKey(input.mint)
     const fromAta = getAssociatedTokenAddressSync(mintPubkey, fromPubkey)
     const toAta = getAssociatedTokenAddressSync(mintPubkey, toPubkey)
-    transaction = new Transaction().add(
+
+    transaction = new Transaction()
+    const toAtaInfo = await sweep.connection.getAccountInfo(toAta)
+    if (!toAtaInfo) {
+      transaction.add(createAssociatedTokenAccountInstruction(
+        fromPubkey,
+        toAta,
+        toPubkey,
+        mintPubkey,
+      ))
+    }
+    transaction.add(
       createTransferInstruction(fromAta, toAta, fromPubkey, value)
     )
   } else {
+    const gasBuffer = SOLANA_GAS_BUFFER_LAMPORTS
+    if (input.amountUnits <= gasBuffer) {
+      throw new Error('Native Solana deposit is too small to sweep after reserving gas.')
+    }
+    const value = input.amountUnits - gasBuffer
     transaction = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey,
         toPubkey,
-        lamports: value,
+        lamports: Number(value),
       })
     )
   }
 
+  const { blockhash } = await sweep.connection.getLatestBlockhash('confirmed')
   transaction.recentBlockhash = blockhash
   transaction.feePayer = fromPubkey
   transaction.sign(sweep.keypair)  // keypair has the secret
@@ -386,6 +423,27 @@ async function sweepSolanaNative(input: {
   await sweep.connection.confirmTransaction(signature, 'confirmed')
 
   return signature
+}
+
+async function ensureSolanaSweepGas(input: {
+  connection: Connection
+  depositPublicKey: PublicKey
+}) {
+  const balance = BigInt(await input.connection.getBalance(input.depositPublicKey, 'confirmed'))
+  if (balance >= SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS) return null
+
+  const treasuryKeypair = await getSolanaTreasuryKeypair()
+  if (!treasuryKeypair) {
+    throw new Error('MAFITAPAY_SOLANA_EXECUTOR_PRIVATE_KEY is required to top up token sweep gas.')
+  }
+
+  const topupAmount = SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS - balance
+  const transaction = new Transaction().add(SystemProgram.transfer({
+    fromPubkey: treasuryKeypair.publicKey,
+    toPubkey: input.depositPublicKey,
+    lamports: Number(topupAmount),
+  }))
+  return sendAndConfirmTransaction(input.connection, transaction, [treasuryKeypair], { commitment: 'confirmed' })
 }
 
 async function sweepErc20(input: {
@@ -477,6 +535,8 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     } else if (family === 'ton' || asset.chain === 'ton') {
       mnemonicForTon = secret.secret.trim()
       // verify later in sweep
+    } else if (family === 'solana' || asset.chain === 'solana') {
+      // Solana secrets are handled by parseSolanaKeypairSecret during sweep.
     } else {
       throw new Error(`Sweep not supported for address family ${family} yet.`)
     }
@@ -516,15 +576,7 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     }
     const amountUnits = BigInt(event.amountUnits)
     let hash: any
-    if (asset.kind === 'erc20') {
-      if (!privateKeyForEvm) throw new Error('EVM private key required for ERC20 sweep.')
-      hash = await sweepErc20({ asset, privateKey: privateKeyForEvm, depositAddress: getAddress(depositAddressStr), treasuryAddress: getAddress(treasuryAddress as string), amountUnits })
-    } else if (asset.chain === 'ton') {
-      if (!mnemonicForTon) throw new Error('TON mnemonic required for sweep.')
-      // treasuryAddress for ton is string
-      hash = await sweepTonNative({ mnemonic: mnemonicForTon, treasuryAddress: treasuryAddress as string, amountUnits })
-    } else if ((asset as any).chain === 'solana') {
-      if (!secret) throw new Error('Solana secret required for sweep.')
+    if (asset.chain === 'solana') {
       const isToken = asset.pairId === 'USDC_SOLANA'
       const mint = isToken ? 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' : undefined
       hash = await sweepSolanaNative({
@@ -534,6 +586,13 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
         isToken,
         mint,
       })
+    } else if (asset.kind === 'erc20') {
+      if (!privateKeyForEvm) throw new Error('EVM private key required for ERC20 sweep.')
+      hash = await sweepErc20({ asset, privateKey: privateKeyForEvm, depositAddress: getAddress(depositAddressStr), treasuryAddress: getAddress(treasuryAddress as string), amountUnits })
+    } else if (asset.chain === 'ton') {
+      if (!mnemonicForTon) throw new Error('TON mnemonic required for sweep.')
+      // treasuryAddress for ton is string
+      hash = await sweepTonNative({ mnemonic: mnemonicForTon, treasuryAddress: treasuryAddress as string, amountUnits })
     } else {
       if (!privateKeyForEvm) throw new Error('EVM private key required for native sweep.')
       hash = await sweepNative({ asset, privateKey: privateKeyForEvm, treasuryAddress: getAddress(treasuryAddress as string), amountUnits })

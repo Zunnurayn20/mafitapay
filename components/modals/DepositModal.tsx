@@ -177,7 +177,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
         ) : (
           <div className="space-y-3">
             {[palmpayAccount, flutterwaveAccount].filter((item): item is FundingAccount => Boolean(item)).map((account, index) => (
-            <div key={`${account.provider}-${account.accountNumber}-${index}`} className="relative overflow-hidden border border-[rgba(202,165,96,0.28)] bg-[linear-gradient(180deg,rgba(66,46,28,0.96)_0%,rgba(45,31,19,0.98)_100%)] p-3.5 sm:p-4">
+            <div key={`${account.provider}-${account.accountNumber}-${index}`} className="relative overflow-hidden border border-[rgba(202,165,96,0.22)] bg-[linear-gradient(180deg,rgba(56,39,24,0.96)_0%,rgba(34,24,16,0.98)_100%)] px-3 py-2.5">
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 opacity-[0.16]"
@@ -193,36 +193,28 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
               />
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 right-[-1rem] w-24 bg-center bg-no-repeat opacity-[0.12]"
-                style={{ backgroundImage: "url('/mafitapay-logo.png')", backgroundSize: 'contain' }}
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-0 top-0 h-[3px]"
+                className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
                 style={{ background: 'repeating-linear-gradient(90deg,var(--gold) 0,var(--gold) 10px,var(--terra) 10px,var(--terra) 18px,var(--green) 18px,var(--green) 26px,var(--char) 26px,var(--char) 30px)' }}
               />
               <div className="relative z-[1]">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[var(--gold2)]">{account.provider === 'palmpay' ? 'PalmPay' : 'Flutterwave'}</div>
-                    <div className="mt-1 text-[10px] text-[rgba(233,214,186,0.62)]">{account.bank}</div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">{account.bank}</div>
+                    <div className="mt-0.5 truncate text-[10px] text-[rgba(233,214,186,0.66)]">{account.accountName}</div>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => void copyAccountNumber(account.accountNumber)}
-                  className="mt-3 flex w-full items-center justify-between gap-3 border-y border-dashed border-[rgba(224,196,138,0.22)] py-3 text-left transition-colors hover:bg-[rgba(224,196,138,0.04)]"
+                  className="mt-2 flex w-full items-center justify-between gap-2 border border-[rgba(224,196,138,0.16)] bg-[rgba(8,10,9,0.28)] px-2.5 py-2 text-left transition-colors hover:bg-[rgba(224,196,138,0.06)]"
                 >
-                  <div className="font-mono text-[22px] font-black tracking-[2.5px] text-[rgba(244,231,208,0.9)] sm:text-[26px]">
+                  <div className="font-mono text-[16px] font-black tracking-[1.8px] text-[rgba(244,231,208,0.92)] sm:text-[18px]">
                     {account.accountNumber.replace(/(\d{4})(?=\d)/g, '$1 ').trim()}
                   </div>
-                  <span className="inline-flex h-8 w-8 items-center justify-center border border-[rgba(224,196,138,0.22)] bg-[rgba(224,196,138,0.08)] text-[var(--gold2)]">
+                  <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center text-[var(--gold2)]">
                     <Copy size={14} />
                   </span>
                 </button>
-                <div className="mt-3 text-[11px] font-semibold text-[rgba(244,231,208,0.88)]">
-                  {account.accountName}
-                </div>
               </div>
             </div>
             ))}
