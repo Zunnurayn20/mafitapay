@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
 import {
   getWalletByUserId,
+  listCryptoDepositEvents,
   listCryptoOrders,
   listDepositIntents,
   listPayoutRequests,
@@ -57,6 +58,7 @@ export async function GET() {
     payoutRequests,
     providerEvents,
     cryptoOrders,
+    cryptoDepositEvents,
   ] = await Promise.all([
     listUsers(),
     listRecentTransactions(500),
@@ -64,6 +66,7 @@ export async function GET() {
     listPayoutRequests({ limit: 100 }),
     listProviderEvents({ limit: 100 }),
     listCryptoOrders({ limit: 100 }),
+    listCryptoDepositEvents({ limit: 500 }),
   ])
 
   const walletRows = await Promise.all(users.map(async user => ({
@@ -146,6 +149,18 @@ export async function GET() {
     },
   }
 
+  const cryptoDepositSummary = {
+    total: cryptoDepositEvents.length,
+    matched: cryptoDepositEvents.filter((e: any) => e.status === 'matched').length,
+    unmatched: cryptoDepositEvents.filter((e: any) => e.status === 'unmatched').length,
+    ignored: cryptoDepositEvents.filter((e: any) => e.status === 'ignored').length,
+    swept: cryptoDepositEvents.filter((e: any) => e.sweepStatus === 'swept').length,
+    direct: cryptoDepositEvents.filter((e: any) => e.status === 'matched' && !e.cryptoOrderId).length,
+    volumeCrypto: roundMoney(cryptoDepositEvents
+      .filter((e: any) => e.status === 'matched')
+      .reduce((total: number, item: any) => total + (item.amountCrypto || 0), 0)),
+  }
+
   const walletSummary = walletRows.reduce((acc, row) => {
     acc.balance += row.wallet?.balance ?? 0
     acc.locked += row.wallet?.lockedBalance ?? 0
@@ -192,6 +207,11 @@ export async function GET() {
         pendingSettlements: settlementSummary.deposits.pending + settlementSummary.payouts.pending,
         providerFailures: providerEvents.filter(event => event.status === 'failed').length,
         pendingCryptoOrders: cryptoOrders.filter(order => order.status === 'pending').length,
+        cryptoDepositDetections: cryptoDepositSummary.total,
+        unmatchedCryptoDeposits: cryptoDepositSummary.unmatched,
+        sweptCryptoDeposits: cryptoDepositSummary.swept,
+        directCryptoCredits: cryptoDepositSummary.direct,
+        cryptoDepositVolume: cryptoDepositSummary.volumeCrypto,
       },
       daily,
       byType,
@@ -207,6 +227,7 @@ export async function GET() {
         success: cryptoOrders.filter(order => order.status === 'fulfilled').length,
         failed: cryptoOrders.filter(order => order.status === 'failed').length,
       },
+      cryptoDeposits: cryptoDepositSummary,
     },
   })
 }

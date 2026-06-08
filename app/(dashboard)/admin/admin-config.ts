@@ -47,6 +47,7 @@ export type AdminSubmodule =
   | 'rails'
   | 'providers'
   | 'market'
+  | 'crypto-deposits'
 export type CryptoCatalogFilter = 'all' | 'active' | 'archived'
 export type BillCatalogFilter = 'all' | 'active' | 'archived'
 
@@ -83,6 +84,7 @@ export const ADMIN_MODULE_TREE = [
       { href: '/admin/operations/orders', label: 'Crypto Orders', description: 'Order execution and receipt syncs' },
       { href: '/admin/operations/settlements', label: 'Settlements', description: 'Deposit and payout settlement actions' },
       { href: '/admin/operations/events', label: 'Provider Events', description: 'Provider event review and requeue tools' },
+      { href: '/admin/operations/crypto-deposits', label: 'Crypto Deposits', description: 'User crypto deposit events, scanner detection, sweep status, and force scan tools' },
       { href: '/admin/operations/support', label: 'Support Tools', description: 'Webhook tests, ledger traces, reference support' },
     ],
   },

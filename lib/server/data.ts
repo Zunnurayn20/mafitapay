@@ -4314,6 +4314,49 @@ export async function getCryptoDepositEventByExternalId(externalEventId: string)
   return row ? mapCryptoDepositEventRow(row) : null
 }
 
+export async function listCryptoDepositEvents(input: {
+  limit?: number
+  userId?: string
+  pairId?: string
+  status?: CryptoDepositEvent['status']
+  sweepStatus?: string
+} = {}): Promise<CryptoDepositEvent[]> {
+  await ensureDbReady()
+  let sql = `SELECT * FROM crypto_deposit_events WHERE 1=1`
+  const params: any[] = []
+  if (input.userId) {
+    sql += ` AND user_id = ?`
+    params.push(input.userId)
+  }
+  if (input.pairId) {
+    sql += ` AND pair_id = ?`
+    params.push(input.pairId)
+  }
+  if (input.status) {
+    sql += ` AND status = ?`
+    params.push(input.status)
+  }
+  if (input.sweepStatus) {
+    sql += ` AND sweep_status = ?`
+    params.push(input.sweepStatus)
+  }
+  sql += ` ORDER BY created_at DESC LIMIT ?`
+  params.push(Math.min(200, input.limit ?? 50))
+  const rows = getDb().prepare(sql).all(...params) as CryptoDepositEventRow[]
+  return rows.map(mapCryptoDepositEventRow)
+}
+
+export async function getCryptoDepositAddressByAddress(address: string): Promise<CryptoDepositAddress | null> {
+  await ensureDbReady()
+  const normalized = address.toLowerCase()
+  const row = getDb().prepare(`
+    SELECT * FROM crypto_deposit_addresses
+    WHERE lower(address) = ? AND is_active = 1
+    LIMIT 1
+  `).get(normalized) as CryptoDepositAddressRow | undefined
+  return row ? mapCryptoDepositAddressRow(row) : null
+}
+
 export async function createCryptoDepositEvent(input: {
   externalEventId: string
   userId: string

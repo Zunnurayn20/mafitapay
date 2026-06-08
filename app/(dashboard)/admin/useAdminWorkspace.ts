@@ -5,7 +5,7 @@ import { refreshCryptoAssets } from '@/lib/client/catalogs'
 import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import { useAppStore } from '@/store'
-import type { AuditLog, BillProvider, CryptoAsset, CryptoOrder, DepositIntent, LedgerEntry, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, RewardAwardRequest, RewardRule, RewardRuleReport, Transaction, User } from '@/types'
+import type { AuditLog, BillProvider, CryptoAsset, CryptoDepositEvent, CryptoOrder, DepositIntent, LedgerEntry, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, RewardAwardRequest, RewardRule, RewardRuleReport, Transaction, User } from '@/types'
 import {
   ADMIN_ENDPOINTS,
   BILL_ICON_SUGGESTIONS,
@@ -203,6 +203,13 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [payoutRequests, setPayoutRequests] = useState<PayoutRequest[]>([])
   const [cryptoOrders, setCryptoOrders] = useState<CryptoOrder[]>([])
   const [cryptoPricing, setCryptoPricing] = useState<CryptoAsset[]>([])
+  const [cryptoDepositEvents, setCryptoDepositEvents] = useState<CryptoDepositEvent[]>([])
+  const [recentSweepGasStats, setRecentSweepGasStats] = useState<any[]>([])
+  const [cryptoDepositStatusFilter, setCryptoDepositStatusFilter] = useState<'all' | CryptoDepositEvent['status']>('all')
+  const [cryptoDepositSweepFilter, setCryptoDepositSweepFilter] = useState<'all' | NonNullable<CryptoDepositEvent['sweepStatus']>>('all')
+  const [cryptoDepositPairFilter, setCryptoDepositPairFilter] = useState<string>('')
+  const [cryptoDepositSearch, setCryptoDepositSearch] = useState<string>('')
+  const [refreshingCryptoDepositEvents, setRefreshingCryptoDepositEvents] = useState(false)
   const [cryptoCatalogFilter, setCryptoCatalogFilter] = useState<CryptoCatalogFilter>('all')
   const [billProviderCatalog, setBillProviderCatalog] = useState<BillProvider[]>([])
   const [rewardRules, setRewardRules] = useState<RewardRule[]>([])
@@ -466,6 +473,27 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         setDepositIntents(Array.isArray(loadedDepositIntents) ? loadedDepositIntents : [])
         setPayoutRequests(Array.isArray(loadedPayoutRequests) ? loadedPayoutRequests : [])
         setCryptoOrders(Array.isArray(loadedCryptoOrders) ? loadedCryptoOrders : [])
+
+        // Load crypto deposit events (the admin crypto trxn list) for the deposits page and index
+        try {
+          setRefreshingCryptoDepositEvents(true)
+          const params = new URLSearchParams({ limit: '80' })
+          if (cryptoDepositStatusFilter !== 'all') params.set('status', cryptoDepositStatusFilter)
+          if (cryptoDepositSweepFilter !== 'all') params.set('sweepStatus', cryptoDepositSweepFilter)
+          if (cryptoDepositPairFilter) params.set('pairId', cryptoDepositPairFilter)
+          const res = await fetchAdminJsonCached<any>(`/api/admin/crypto-deposits?${params.toString()}`)
+          if (!active) return
+          const events = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+          setCryptoDepositEvents(events)
+          const gasStats = Array.isArray(res?.recentGasStats) ? res.recentGasStats : []
+          setRecentSweepGasStats(gasStats)
+        } catch {
+          setCryptoDepositEvents([])
+          setRecentSweepGasStats([])
+        } finally {
+          setRefreshingCryptoDepositEvents(false)
+        }
+
         return
       }
 
@@ -1476,6 +1504,65 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     flutterwaveIssuePayouts,
     flutterwaveIssueDeposits,
     flutterwaveDepositEvents,
+    cryptoDepositEvents,
+    recentSweepGasStats,
+    reloadCryptoDepositEvents: async (overrides?: { status?: string; sweepStatus?: string; pairId?: string }) => {
+      setRefreshingCryptoDepositEvents(true)
+      try {
+        const params = new URLSearchParams({ limit: '80' })
+        const status = overrides?.status ?? (cryptoDepositStatusFilter !== 'all' ? cryptoDepositStatusFilter : undefined)
+        const sweep = overrides?.sweepStatus ?? (cryptoDepositSweepFilter !== 'all' ? cryptoDepositSweepFilter : undefined)
+        const pair = overrides?.pairId ?? (cryptoDepositPairFilter || undefined)
+        if (status) params.set('status', status)
+        if (sweep) params.set('sweepStatus', sweep)
+        if (pair) params.set('pairId', pair)
+        const res = await fetchAdminJson<any>(`/api/admin/crypto-deposits?${params.toString()}`)
+        const events = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+        setCryptoDepositEvents(events)
+        const gasStats = Array.isArray(res?.recentGasStats) ? res.recentGasStats : []
+        setRecentSweepGasStats(gasStats)
+      } catch {
+        // ignore
+      } finally {
+        setRefreshingCryptoDepositEvents(false)
+      }
+    },
+    triggerCryptoDepositSync: async () => {
+      await fetch('/api/admin/crypto-deposits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ intent: 'sync' }),
+      })
+    },
+    forceScanCryptoDepositAddress: async (address: string, pairId?: string) => {
+      const res = await fetch('/api/admin/crypto-deposits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ intent: 'force-scan', address, pairId }),
+      })
+      return res.json()
+    },
+    resweepCryptoDepositEvent: async (externalEventId: string) => {
+      const res = await fetch('/api/admin/crypto-deposits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ intent: 'resweep', externalEventId }),
+      })
+      const payload = await res.json()
+      return payload
+    },
+    cryptoDepositStatusFilter,
+    setCryptoDepositStatusFilter,
+    cryptoDepositSweepFilter,
+    setCryptoDepositSweepFilter,
+    cryptoDepositPairFilter,
+    setCryptoDepositPairFilter,
+    cryptoDepositSearch,
+    setCryptoDepositSearch,
+    refreshingCryptoDepositEvents,
   }
 }
 

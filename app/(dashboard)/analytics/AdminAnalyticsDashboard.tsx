@@ -56,6 +56,7 @@ type AnalyticsPayload = {
     topWallets: Array<{ userId: string; name: string; email: string; balance: number; lockedBalance: number; fundingAccounts: number }>
     latestTransactions: Array<{ userId: string; transaction: Transaction }>
     cryptoOrders: { total: number; pending: number; success: number; failed: number }
+    cryptoDeposits: { total: number; matched: number; unmatched: number; ignored: number; swept: number; direct: number; volumeCrypto: number }
   }
 }
 
@@ -93,6 +94,7 @@ const emptyPayload: AnalyticsPayload['data'] = {
   topWallets: [],
   latestTransactions: [],
   cryptoOrders: { total: 0, pending: 0, success: 0, failed: 0 },
+  cryptoDeposits: { total: 0, matched: 0, unmatched: 0, ignored: 0, swept: 0, direct: 0, volumeCrypto: 0 },
 }
 
 function formatNgn(value: number) {
@@ -225,6 +227,11 @@ export function AdminAnalyticsDashboard() {
             <MiniStat label="Payout Settled" value={formatNgn(data.settlementSummary.payouts.volume)} />
             <MiniStat label="Deposit Queue" value={formatNumber(data.settlementSummary.deposits.pending)} />
             <MiniStat label="Payout Queue" value={formatNumber(data.settlementSummary.payouts.pending)} />
+            <MiniStat label="Crypto Detections" value={formatNumber(data.cryptoDeposits.total)} />
+            <MiniStat label="Unmatched Deposits" value={formatNumber(data.cryptoDeposits.unmatched)} danger={data.cryptoDeposits.unmatched > 0} />
+            <MiniStat label="Swept" value={formatNumber(data.cryptoDeposits.swept)} />
+            <MiniStat label="Direct Credits" value={formatNumber(data.cryptoDeposits.direct)} />
+            <MiniStat label="Detected Crypto Vol" value={formatNgn(data.cryptoDeposits.volumeCrypto)} />
           </div>
         </Card>
       </section>

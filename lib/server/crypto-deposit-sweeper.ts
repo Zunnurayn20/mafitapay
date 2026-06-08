@@ -16,6 +16,11 @@ import { mnemonicToPrivateKey } from '@ton/crypto'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js'
 import { createAssociatedTokenAccountInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { base58 } from '@scure/base'
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
+import { Transaction as SuiTransaction } from '@mysten/sui/transactions'
+import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
+import { Account, FailoverRpcProvider, JsonRpcProvider, KeyPair } from 'near-api-js'
+import { NEAR } from 'near-api-js/tokens'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
@@ -27,17 +32,75 @@ import {
 } from '@/lib/server/data'
 import type { CryptoDepositEvent, CryptoOrder } from '@/types'
 
-const BASE_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
-const BSC_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
-const POL_GAS_BUFFER_WEI = parseUnits('0.01', 18) // lowered because Polygon gas is extremely cheap; small test deposits should still be sweepable
-const TON_GAS_BUFFER_NANO = toNano('0.05')
-const SOLANA_GAS_BUFFER_LAMPORTS = BigInt(1_000_000) // ~0.001 SOL for fees
-const SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS = BigInt(3_000_000) // covers fee + possible treasury ATA creation
-const BASE_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
-const BSC_TOKEN_GAS_TOPUP_WEI = parseUnits('0.00002', 18)
+// === Gas / fee reserves for deposit sweeps (hybrid best-practice) ===
+// These are treated as minimum floors. For chains where we can estimate (EVM + Sui),
+// we take max(floor, real_estimate * safety_multiplier).
+// All key tunables are overridable via env vars so you can adjust without redeploy.
+//
+// Useful env vars (with current defaults):
+//   MAFITAPAY_SWEEP_EVM_GAS_MULTIPLIER=1.5
+//   MAFITAPAY_SWEEP_SUI_GAS_MULTIPLIER=1.4
+//   MAFITAPAY_SWEEP_BASE_GAS_BUFFER=0.00003
+//   MAFITAPAY_SWEEP_BSC_GAS_BUFFER=0.00003
+//   MAFITAPAY_SWEEP_POL_GAS_BUFFER=0.01
+//   MAFITAPAY_SWEEP_TON_GAS_BUFFER=0.05
+//   MAFITAPAY_SWEEP_SOLANA_GAS_BUFFER=1000000
+//   MAFITAPAY_SWEEP_SOLANA_TOKEN_TOPUP=3000000
+//   MAFITAPAY_SWEEP_SUI_GAS_BUFFER=60000000
+//   MAFITAPAY_SWEEP_NEAR_GAS_BUFFER=50000000000000000000000
+//   MAFITAPAY_SWEEP_MIN_EVM_GAS=0.00001
+//   MAFITAPAY_SWEEP_POLYGON_TOKEN_TOPUP=0.01
+//   (and similar for *_TOKEN_TOPUP on base/bsc)
+
+const EVM_GAS_SAFETY_MULTIPLIER = Number(process.env.MAFITAPAY_SWEEP_EVM_GAS_MULTIPLIER ?? '1.5')
+const SUI_GAS_SAFETY_MULTIPLIER = Number(process.env.MAFITAPAY_SWEEP_SUI_GAS_MULTIPLIER ?? '1.4')
+
+const BASE_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_BASE_GAS_BUFFER ?? '0.00003', 18)
+const BSC_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_BSC_GAS_BUFFER ?? '0.00003', 18)
+const POL_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_POL_GAS_BUFFER ?? '0.01', 18)
+const POLYGON_TOKEN_GAS_TOPUP_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_POLYGON_TOKEN_TOPUP ?? '0.01', 18)
+
+const TON_GAS_BUFFER_NANO = toNano(process.env.MAFITAPAY_SWEEP_TON_GAS_BUFFER ?? '0.05')
+
+const SOLANA_GAS_BUFFER_LAMPORTS = BigInt(process.env.MAFITAPAY_SWEEP_SOLANA_GAS_BUFFER ?? '1000000')
+const SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS = BigInt(process.env.MAFITAPAY_SWEEP_SOLANA_TOKEN_TOPUP ?? '3000000')
+
+const BASE_TOKEN_GAS_TOPUP_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_BASE_TOKEN_TOPUP ?? '0.00002', 18)
+const BSC_TOKEN_GAS_TOPUP_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_BSC_TOKEN_TOPUP ?? '0.00002', 18)
+
+const SUI_GAS_BUFFER_MIST = BigInt(process.env.MAFITAPAY_SWEEP_SUI_GAS_BUFFER ?? '60000000')
+const NEAR_GAS_BUFFER_YOCTO = BigInt(process.env.MAFITAPAY_SWEEP_NEAR_GAS_BUFFER ?? '50000000000000000000000')
+
+const MIN_EVM_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_MIN_EVM_GAS ?? '0.00001', 18)
+
+export interface SweepGasStat {
+  timestamp: string
+  pairId: string
+  received: string
+  reserved: string
+  sent: string
+  chain?: string
+}
+
+const recentSweepGasStats: SweepGasStat[] = []
+const MAX_RECENT_SWEEP_STATS = 30
+
+function recordSweepGasStat(stat: Omit<SweepGasStat, 'timestamp'>) {
+  recentSweepGasStats.unshift({
+    timestamp: new Date().toISOString(),
+    ...stat,
+  })
+  if (recentSweepGasStats.length > MAX_RECENT_SWEEP_STATS) {
+    recentSweepGasStats.length = MAX_RECENT_SWEEP_STATS
+  }
+}
+
+export function getRecentSweepGasStats(): SweepGasStat[] {
+  return [...recentSweepGasStats]
+}
 
 type SweepAsset = {
-  chain: 'base' | 'bsc' | 'polygon' | 'ton' | 'solana'
+  chain: 'base' | 'bsc' | 'polygon' | 'ton' | 'solana' | 'sui' | 'near'
   pairId: CryptoOrder['pairId']
   kind: 'erc20' | 'native'
   tokenAddress?: Address
@@ -105,6 +168,54 @@ function createPolygonClientsFromPrivateKey(privateKey: Hex) {
   }
 }
 
+/**
+ * Best-practice hybrid gas reserve calculator for EVM sweeps.
+ * Real estimateGas + current gas price + safety margin,
+ * but never below a conservative minimum floor.
+ */
+async function calculateEvmGasReserve(
+  publicClient: any, // viem PublicClient with chain-specific types — we use any to keep the hybrid logic simple across base/bsc/polygon creators
+  tx: { to: Address; value?: bigint; data?: Hex; account: Address }
+): Promise<bigint> {
+  try {
+    const gasLimit = await publicClient.estimateGas(tx)
+    const gasPrice = await publicClient.getGasPrice().catch(() => BigInt(0))
+    const estimatedCost = gasLimit * gasPrice
+    const withMargin = (estimatedCost * BigInt(Math.floor(EVM_GAS_SAFETY_MULTIPLIER * 100))) / BigInt(100)
+
+    return withMargin > MIN_EVM_GAS_BUFFER_WEI ? withMargin : MIN_EVM_GAS_BUFFER_WEI
+  } catch (err) {
+    console.warn('[crypto-deposit-sweeper] EVM gas estimation failed, using safe fallback buffer:', err)
+    return MIN_EVM_GAS_BUFFER_WEI * BigInt(2)
+  }
+}
+
+/**
+ * Light dynamic improvement for Solana (worth it for completeness).
+ * Base buffer + small dynamic component from recent prioritization fees.
+ * Keeps things simple and cheap.
+ */
+async function getSolanaEffectiveGasBuffer(connection: Connection, isToken: boolean): Promise<bigint> {
+  const base = isToken ? SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS : SOLANA_GAS_BUFFER_LAMPORTS
+
+  try {
+    const recent = await connection.getRecentPrioritizationFees({ limit: 10 })
+    if (!recent.length) return base
+
+    // Take a conservative percentile of recent priority fees (in micro-lamports per CU)
+    const fees = recent.map(r => r.prioritizationFee).sort((a, b) => a - b)
+    const p80 = fees[Math.floor(fees.length * 0.8)] || 0
+
+    // Rough: a simple transfer uses ~ few hundred CUs. We add a tiny dynamic priority bump.
+    const dynamicExtra = BigInt(Math.min(p80 * 300, 2_000_000)) // cap the extra
+
+    return base + dynamicExtra
+  } catch (err) {
+    console.warn('[crypto-deposit-sweeper] Solana priority fee lookup failed, using base buffer:', err)
+    return base
+  }
+}
+
 async function createTonSweepFromMnemonic(mnemonic: string) {
   const words = mnemonic.trim().split(/\s+/)
   if (words.length !== 24) {
@@ -153,6 +264,66 @@ async function createSolanaSweepFromSecret(secret: string) {
     connection: conn,
     publicKey: keypair.publicKey,
   }
+}
+
+function parseSuiKeypairSecret(secret: string) {
+  const trimmed = secret.trim()
+  // getSecretKey() from generation or env string may be raw bytes as array-string, base64, or the suiprivkey format.
+  try {
+    if (trimmed.startsWith('suiprivkey') || trimmed.length > 60) {
+      return Ed25519Keypair.fromSecretKey(trimmed)
+    }
+    if (trimmed.startsWith('[')) {
+      const bytes = Uint8Array.from(JSON.parse(trimmed))
+      return Ed25519Keypair.fromSecretKey(bytes)
+    }
+    // try base64 or hex
+    let bytes: Uint8Array
+    if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length >= 64) {
+      bytes = Uint8Array.from(Buffer.from(trimmed, 'hex'))
+    } else {
+      bytes = Uint8Array.from(Buffer.from(trimmed, 'base64'))
+    }
+    if (bytes.length === 32 || bytes.length === 64) {
+      return Ed25519Keypair.fromSecretKey(bytes)
+    }
+    return Ed25519Keypair.fromSecretKey(trimmed as any)
+  } catch {
+    return Ed25519Keypair.fromSecretKey(trimmed as any)
+  }
+}
+
+function parseNearKeypairSecret(secret: string): KeyPair {
+  const trimmed = secret.trim()
+  if (trimmed.includes(':')) {
+    return KeyPair.fromString(trimmed as any)
+  }
+  try {
+    return KeyPair.fromString(`ed25519:${trimmed}` as any)
+  } catch {
+    return KeyPair.fromString(trimmed as any)
+  }
+}
+
+function createSuiScannerClientForSweep() {
+  const raw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || 'https://fullnode.mainnet.sui.io:443')
+  const url = raw.split(',')[0].trim() || 'https://fullnode.mainnet.sui.io:443'
+  return new SuiJsonRpcClient({ network: 'mainnet', url })
+}
+
+function createNearSweepProvider() {
+  let raw = (process.env.MAFITAPAY_NEAR_RPC_URLS?.trim() || process.env.MAFITAPAY_NEAR_RPC_URL?.trim() || '')
+  let urls: string[] = raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []
+  const shorthand: Record<string, string> = {
+    'https://fastnear.com': 'https://free.rpc.fastnear.com',
+    'http://fastnear.com': 'https://free.rpc.fastnear.com',
+  }
+  urls = urls.map((u) => shorthand[u] || u)
+  if (urls.length === 0) urls = ['https://near.drpc.org', 'https://near.lava.build']
+  if (urls.length > 1) {
+    return new FailoverRpcProvider(urls.map((url) => new JsonRpcProvider({ url })))
+  }
+  return new JsonRpcProvider({ url: urls[0] })
 }
 
 async function getSolanaTreasuryKeypair() {
@@ -217,6 +388,28 @@ function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
     }
   }
 
+  if (pairId === 'USDC_POLYGON') {
+    return {
+      chain: 'polygon',
+      pairId,
+      kind: 'erc20',
+      tokenAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' as any,
+      gasBufferWei: POL_GAS_BUFFER_WEI,
+      tokenGasTopupWei: POLYGON_TOKEN_GAS_TOPUP_WEI,
+    }
+  }
+
+  if (pairId === 'USDT_POLYGON') {
+    return {
+      chain: 'polygon',
+      pairId,
+      kind: 'erc20',
+      tokenAddress: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F' as any,
+      gasBufferWei: POL_GAS_BUFFER_WEI,
+      tokenGasTopupWei: POLYGON_TOKEN_GAS_TOPUP_WEI,
+    }
+  }
+
   if (pairId === 'TON_TON') {
     return {
       chain: 'ton',
@@ -248,6 +441,26 @@ function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
     }
   }
 
+  if (pairId === 'SUI_SUI') {
+    return {
+      chain: 'sui',
+      pairId,
+      kind: 'native',
+      gasBufferWei: SUI_GAS_BUFFER_MIST,
+      tokenGasTopupWei: BigInt(0),
+    }
+  }
+
+  if (pairId === 'NEAR_NEAR') {
+    return {
+      chain: 'near',
+      pairId,
+      kind: 'native',
+      gasBufferWei: NEAR_GAS_BUFFER_YOCTO,
+      tokenGasTopupWei: BigInt(0),
+    }
+  }
+
   return null
 }
 
@@ -255,39 +468,48 @@ async function ensureTokenSweepGas(input: {
   asset: SweepAsset
   depositAddress: Address
 }) {
-  if (input.asset.chain === 'base') {
-    const config = getBaseExecutorConfig()
-    if (!config.privateKey) throw new Error('MAFITAPAY_BASE_EXECUTOR_PRIVATE_KEY is required for Base token sweep gas top-up.')
-    const treasury = createBaseClientsFromPrivateKey(config.privateKey)
-    const balance = await treasury.publicClient.getBalance({ address: input.depositAddress })
-    if (balance >= input.asset.tokenGasTopupWei) return null
-    const hash = await treasury.walletClient.sendTransaction({
-      account: treasury.account,
-      chain: base,
+  // For EVM chains we now use dynamic estimation (best practice)
+  // but still respect a minimum top-up floor.
+  if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon') {
+    const config = input.asset.chain === 'base'
+      ? getBaseExecutorConfig()
+      : input.asset.chain === 'bsc'
+        ? getBscExecutorConfig()
+        : { privateKey: process.env.MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined }
+
+    if (!config.privateKey) {
+      throw new Error(`MAFITAPAY_${input.asset.chain.toUpperCase()}_EXECUTOR_PRIVATE_KEY is required for token sweep gas top-up.`)
+    }
+
+    const clients = input.asset.chain === 'base'
+      ? createBaseClientsFromPrivateKey(config.privateKey)
+      : input.asset.chain === 'bsc'
+        ? createBscClientsFromPrivateKey(config.privateKey)
+        : createPolygonClientsFromPrivateKey(config.privateKey as Hex)
+
+    const balance = await clients.publicClient.getBalance({ address: input.depositAddress })
+
+    // Dynamic estimate for a simple ETH transfer (the top-up tx itself)
+    const dynamicTopup = await calculateEvmGasReserve(clients.publicClient, {
       to: input.depositAddress,
-      value: input.asset.tokenGasTopupWei,
+      value: BigInt(1), // dummy small value for estimation
+      account: clients.account.address,
     })
-    await treasury.publicClient.waitForTransactionReceipt({ hash })
+
+    const neededTopup = dynamicTopup > input.asset.tokenGasTopupWei ? dynamicTopup : input.asset.tokenGasTopupWei
+
+    if (balance >= neededTopup) return null
+
+    const hash = await clients.walletClient.sendTransaction({
+      account: clients.account,
+      chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : polygon,
+      to: input.depositAddress,
+      value: neededTopup,
+    })
+    await clients.publicClient.waitForTransactionReceipt({ hash })
     return hash
   }
 
-  if (input.asset.chain === 'bsc') {
-    const config = getBscExecutorConfig()
-    if (!config.privateKey) throw new Error('MAFITAPAY_BSC_EXECUTOR_PRIVATE_KEY is required for BSC token sweep gas top-up.')
-    const treasury = createBscClientsFromPrivateKey(config.privateKey)
-    const balance = await treasury.publicClient.getBalance({ address: input.depositAddress })
-    if (balance >= input.asset.tokenGasTopupWei) return null
-    const hash = await treasury.walletClient.sendTransaction({
-      account: treasury.account,
-      chain: bsc,
-      to: input.depositAddress,
-      value: input.asset.tokenGasTopupWei,
-    })
-    await treasury.publicClient.waitForTransactionReceipt({ hash })
-    return hash
-  }
-
-  // polygon etc not needing for native POL, for erc20 would need similar
   // ton native also no gas topup from treasury (deposit pays its own)
   return null
 }
@@ -298,38 +520,55 @@ async function sweepNative(input: {
   treasuryAddress: Address
   amountUnits: bigint
 }) {
+  if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon') {
+    const clients = input.asset.chain === 'base'
+      ? createBaseClientsFromPrivateKey(input.privateKey)
+      : input.asset.chain === 'bsc'
+        ? createBscClientsFromPrivateKey(input.privateKey)
+        : createPolygonClientsFromPrivateKey(input.privateKey)
+
+    // Best hybrid approach: use real estimation + safety margin, fall back to floor
+    const dynamicReserve = await calculateEvmGasReserve(clients.publicClient, {
+      to: input.treasuryAddress,
+      value: input.amountUnits, // upper bound for estimation
+      account: clients.account.address,
+    })
+
+    const gasReserve = dynamicReserve > input.asset.gasBufferWei ? dynamicReserve : input.asset.gasBufferWei
+
+    if (input.amountUnits <= gasReserve) {
+      throw new Error('Native deposit is too small to sweep after reserving gas.')
+    }
+
+    const value = input.amountUnits - gasReserve
+    recordSweepGasStat({
+      pairId: input.asset.pairId,
+      received: input.amountUnits.toString(),
+      reserved: gasReserve.toString(),
+      sent: value.toString(),
+      chain: input.asset.chain,
+    })
+    console.log(`[crypto-deposit-sweeper] EVM sweep gas-reserve pair=${input.asset.pairId} received=${input.amountUnits} reserved=${gasReserve} sent=${value}`)
+
+    return clients.walletClient.sendTransaction({
+      account: clients.account,
+      chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : polygon,
+      to: input.treasuryAddress,
+      value,
+    })
+  }
+
+  // Non-EVM native (TON / Solana / Sui / Near handled in their own dedicated functions)
+  // We treat the per-asset gasBufferWei as a hard minimum floor.
   if (input.amountUnits <= input.asset.gasBufferWei) {
     throw new Error('Native deposit is too small to sweep after reserving gas.')
   }
 
   const value = input.amountUnits - input.asset.gasBufferWei
-  if (input.asset.chain === 'base') {
-    const clients = createBaseClientsFromPrivateKey(input.privateKey)
-    return clients.walletClient.sendTransaction({
-      account: clients.account,
-      chain: base,
-      to: input.treasuryAddress,
-      value,
-    })
-  }
 
-  if (input.asset.chain === 'bsc') {
-    const clients = createBscClientsFromPrivateKey(input.privateKey)
-    return clients.walletClient.sendTransaction({
-      account: clients.account,
-      chain: bsc,
-      to: input.treasuryAddress,
-      value,
-    })
-  }
-
+  // This path is only for legacy EVM calls that fell through — in practice EVM is handled above.
   const clients = createPolygonClientsFromPrivateKey(input.privateKey)
-  return clients.walletClient.sendTransaction({
-    account: clients.account,
-    chain: polygon,
-    to: input.treasuryAddress,
-    value,
-  })
+  return clients.walletClient.sendTransaction({ account: clients.account, chain: polygon, to: input.treasuryAddress, value })
 }
 
 async function sweepTonNative(input: {
@@ -372,6 +611,9 @@ async function sweepSolanaNative(input: {
   const fromPubkey = sweep.publicKey
   const toPubkey = new PublicKey(input.treasuryAddress)
 
+  // Use light dynamic buffer for Solana (base + recent priority fees)
+  const effectiveBuffer = await getSolanaEffectiveGasBuffer(sweep.connection, !!input.isToken)
+
   let transaction: Transaction
   if (input.isToken && input.mint) {
     const value = input.amountUnits
@@ -400,11 +642,10 @@ async function sweepSolanaNative(input: {
       createTransferInstruction(fromAta, toAta, fromPubkey, value)
     )
   } else {
-    const gasBuffer = SOLANA_GAS_BUFFER_LAMPORTS
-    if (input.amountUnits <= gasBuffer) {
+    if (input.amountUnits <= effectiveBuffer) {
       throw new Error('Native Solana deposit is too small to sweep after reserving gas.')
     }
-    const value = input.amountUnits - gasBuffer
+    const value = input.amountUnits - effectiveBuffer
     transaction = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey,
@@ -417,12 +658,141 @@ async function sweepSolanaNative(input: {
   const { blockhash } = await sweep.connection.getLatestBlockhash('confirmed')
   transaction.recentBlockhash = blockhash
   transaction.feePayer = fromPubkey
-  transaction.sign(sweep.keypair)  // keypair has the secret
+  transaction.sign(sweep.keypair)
 
   const signature = await sweep.connection.sendRawTransaction(transaction.serialize())
   await sweep.connection.confirmTransaction(signature, 'confirmed')
 
+  const sentSol = input.isToken ? input.amountUnits : (input.amountUnits - effectiveBuffer)
+  recordSweepGasStat({
+    pairId: input.isToken ? 'USDC_SOLANA' : 'SOL_SOLANA',
+    received: input.amountUnits.toString(),
+    reserved: effectiveBuffer.toString(),
+    sent: sentSol.toString(),
+    chain: 'solana',
+  })
+  console.log(`[crypto-deposit-sweeper] Solana sweep gas-reserve pair=${input.isToken ? 'USDC_SOLANA' : 'SOL_SOLANA'} received=${input.amountUnits} effectiveBuffer=${effectiveBuffer} sent=${sentSol}`)
   return signature
+}
+
+async function sweepSuiNative(input: {
+  secret: string
+  treasuryAddress: string
+  amountUnits: bigint
+}) {
+  const depositKeypair = parseSuiKeypairSecret(input.secret)
+  const depositAddress = depositKeypair.getPublicKey().toSuiAddress()
+  const client = createSuiScannerClientForSweep()
+
+  // Hybrid: try to get a better gas budget via dry-run when possible
+  let gasReserve = SUI_GAS_BUFFER_MIST
+  try {
+    const tx = new SuiTransaction()
+    tx.setSender(depositAddress)
+    tx.setGasBudget(50_000_000)
+    const [sendCoin] = tx.splitCoins(tx.gas, [input.amountUnits - SUI_GAS_BUFFER_MIST])
+    tx.transferObjects([sendCoin], input.treasuryAddress)
+
+    const dryRun = await client.dryRunTransactionBlock({
+      transactionBlock: tx,
+      sender: depositAddress,
+    } as any).catch(() => null)
+
+    if (dryRun?.effects?.gasUsed) {
+      const gasUsed = BigInt(dryRun.effects.gasUsed.computationCost || 0) +
+                      BigInt(dryRun.effects.gasUsed.storageCost || 0) -
+                      BigInt(dryRun.effects.gasUsed.storageRebate || 0)
+      const multiplier = BigInt(Math.floor(SUI_GAS_SAFETY_MULTIPLIER * 100))
+      const withMargin = (gasUsed * multiplier) / BigInt(100)
+      if (withMargin > gasReserve) gasReserve = withMargin
+      if (withMargin > gasReserve) gasReserve = withMargin
+    }
+  } catch {
+    // dry-run failed — stick with the safe hardcoded floor
+  }
+
+  if (input.amountUnits <= gasReserve) {
+    throw new Error('Sui deposit is too small to sweep after reserving gas.')
+  }
+  const toSend = input.amountUnits - gasReserve
+  recordSweepGasStat({
+    pairId: 'SUI_SUI',
+    received: input.amountUnits.toString(),
+    reserved: gasReserve.toString(),
+    sent: toSend.toString(),
+    chain: 'sui',
+  })
+  console.log(`[crypto-deposit-sweeper] Sui sweep gas-reserve pair=SUI_SUI received=${input.amountUnits} reserved=${gasReserve} sent=${toSend}`)
+
+  // Fetch owned SUI coins...
+  const coinsResp = await client.getCoins({ owner: depositAddress, coinType: '0x2::sui::SUI', limit: 50 })
+  const coins = coinsResp.data || []
+  if (coins.length === 0) {
+    const balance = await client.getBalance({ owner: depositAddress })
+    if (BigInt(balance.totalBalance) < toSend + gasReserve) {
+      throw new Error('No SUI coins or insufficient balance to sweep on Sui deposit address.')
+    }
+  }
+
+  const tx = new SuiTransaction()
+  tx.setSender(depositAddress)
+  tx.setGasBudget(Number(gasReserve) + 10_000_000) // give a bit extra headroom
+
+  if (coins.length > 0) {
+    const primary = coins[0].coinObjectId
+    const [sendCoin] = tx.splitCoins(primary, [toSend])
+    tx.transferObjects([sendCoin], input.treasuryAddress)
+  } else {
+    const [sendCoin] = tx.splitCoins(tx.gas, [toSend])
+    tx.transferObjects([sendCoin], input.treasuryAddress)
+  }
+
+  const result = await client.signAndExecuteTransaction({
+    signer: depositKeypair,
+    transaction: tx,
+  })
+  const hash = (result as any).digest || (result as any).txDigest || 'sui-sweep-digest-missing'
+  return String(hash)
+}
+
+async function sweepNearNative(input: {
+  secret: string
+  treasuryAddress: string
+  amountUnits: bigint
+}) {
+  const keyPair = parseNearKeypairSecret(input.secret)
+  const pubKey = keyPair.getPublicKey()
+  // NEAR implicit account id (as produced by keyToImplicitAddress in provisioning) is the lowercase hex of the 32-byte ed25519 public key.
+  const pubBytes: Uint8Array = (pubKey as any).data || (pubKey as any).toBytes?.() || new Uint8Array(32)
+  const implicitAccountId = Array.from(pubBytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+
+  const provider = createNearSweepProvider()
+  const depositAccount = new Account(implicitAccountId, provider, keyPair.toString() as any)
+
+  const gasBuffer = NEAR_GAS_BUFFER_YOCTO
+  if (input.amountUnits <= gasBuffer) {
+    throw new Error('Native NEAR deposit is too small to sweep after reserving gas.')
+  }
+  const value = input.amountUnits - gasBuffer
+
+  let transferResult: unknown
+  try {
+    transferResult = await depositAccount.transfer({
+      receiverId: input.treasuryAddress,
+      amount: value,
+      token: NEAR,
+    })
+  } catch (error) {
+    throw new Error(`NEAR native sweep transfer failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  const txHash =
+    (transferResult as any)?.transaction_outcome?.id ||
+    (transferResult as any)?.transaction?.hash ||
+    (typeof transferResult === 'string' ? transferResult : `near-sweep-${Date.now()}`)
+  return String(txHash)
 }
 
 async function ensureSolanaSweepGas(input: {
@@ -537,6 +907,10 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       // verify later in sweep
     } else if (family === 'solana' || asset.chain === 'solana') {
       // Solana secrets are handled by parseSolanaKeypairSecret during sweep.
+    } else if (family === 'sui' || asset.chain === 'sui') {
+      // Sui secrets handled by parseSuiKeypairSecret in sweepSuiNative.
+    } else if (family === 'near' || asset.chain === 'near') {
+      // Near secrets handled by parseNearKeypairSecret in sweepNearNative.
     } else {
       throw new Error(`Sweep not supported for address family ${family} yet.`)
     }
@@ -571,6 +945,20 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       } else {
         throw new Error('MAFITAPAY_SOLANA_EXECUTOR_ADDRESS is required to resolve Solana treasury address.')
       }
+    } else if (asset.chain === 'sui') {
+      const addr = process.env.MAFITAPAY_SUI_TREASURY_ADDRESS?.trim()
+      if (addr) {
+        treasuryAddress = addr
+      } else {
+        throw new Error('MAFITAPAY_SUI_TREASURY_ADDRESS is required to resolve Sui treasury address for sweeps.')
+      }
+    } else if (asset.chain === 'near') {
+      const addr = process.env.MAFITAPAY_NEAR_TREASURY_ACCOUNT_ID?.trim()
+      if (addr) {
+        treasuryAddress = addr
+      } else {
+        throw new Error('MAFITAPAY_NEAR_TREASURY_ACCOUNT_ID is required to resolve NEAR treasury account for sweeps.')
+      }
     } else {
       throw new Error(`No treasury resolution for chain ${asset.chain}`)
     }
@@ -585,6 +973,18 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
         amountUnits,
         isToken,
         mint,
+      })
+    } else if (asset.chain === 'sui') {
+      hash = await sweepSuiNative({
+        secret: secret.secret,
+        treasuryAddress: treasuryAddress as string,
+        amountUnits,
+      })
+    } else if (asset.chain === 'near') {
+      hash = await sweepNearNative({
+        secret: secret.secret,
+        treasuryAddress: treasuryAddress as string,
+        amountUnits,
       })
     } else if (asset.kind === 'erc20') {
       if (!privateKeyForEvm) throw new Error('EVM private key required for ERC20 sweep.')

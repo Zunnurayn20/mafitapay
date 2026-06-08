@@ -15,6 +15,8 @@ import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
+import { FailoverRpcProvider, JsonRpcProvider } from 'near-api-js'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { appendNotification, createNotification } from '@/lib/server/auth'
@@ -24,6 +26,7 @@ import {
   findPendingCryptoSellOrderForDeposit,
   getCryptoAssets,
   getCryptoDepositEventByExternalId,
+  getCryptoDepositAddressByAddress,
   listCryptoDepositAddressesByFamily,
   markCryptoDepositEventMatched,
   updateCryptoOrderExecution,
@@ -161,6 +164,36 @@ function createSolanaConnection() {
   return new Connection(rpcUrl, 'confirmed')
 }
 
+const DEFAULT_SUI_RPC_URL = 'https://fullnode.mainnet.sui.io:443'
+
+function createSuiScannerClient() {
+  const raw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC_URL)
+  const url = raw.split(',')[0].trim() || DEFAULT_SUI_RPC_URL
+  return new SuiJsonRpcClient({ network: 'mainnet', url })
+}
+
+const NEAR_RPC_SHORTHAND_MAP: Record<string, string> = {
+  'https://fastnear.com': 'https://free.rpc.fastnear.com',
+  'http://fastnear.com': 'https://free.rpc.fastnear.com',
+}
+const DEFAULT_NEAR_RPC_URLS = ['https://near.drpc.org', 'https://near.lava.build']
+
+function createNearScannerProvider() {
+  let raw = (process.env.MAFITAPAY_NEAR_RPC_URLS?.trim() || process.env.MAFITAPAY_NEAR_RPC_URL?.trim() || '')
+  let rpcUrls: string[] = []
+  if (raw) {
+    rpcUrls = raw.split(',').map((s) => s.trim()).filter(Boolean).map((u) => NEAR_RPC_SHORTHAND_MAP[u] || u)
+  }
+  if (rpcUrls.length === 0) rpcUrls = [...DEFAULT_NEAR_RPC_URLS]
+  rpcUrls = [...rpcUrls, ...DEFAULT_NEAR_RPC_URLS]
+    .map((u) => NEAR_RPC_SHORTHAND_MAP[u] || u)
+    .filter((v, i, a) => a.indexOf(v) === i)
+  if (rpcUrls.length > 1) {
+    return new FailoverRpcProvider(rpcUrls.map((url) => new JsonRpcProvider({ url })))
+  }
+  return new JsonRpcProvider({ url: rpcUrls[0] })
+}
+
 function getSupportedAssets(): SupportedDepositAsset[] {
   const baseConfig = getBaseExecutorConfig()
   const bscConfig = getBscExecutorConfig()
@@ -207,7 +240,25 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       decimals: 18,
       kind: 'native',
     },
-    // Non-EVM (scanning logic pending / partial implementation)
+    {
+      chain: 'polygon',
+      pairId: 'USDC_POLYGON',
+      network: 'Polygon',
+      symbol: 'USDC',
+      decimals: 6,
+      kind: 'erc20',
+      tokenAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174' as any,
+    },
+    {
+      chain: 'polygon',
+      pairId: 'USDT_POLYGON',
+      network: 'Polygon',
+      symbol: 'USDT',
+      decimals: 6,
+      kind: 'erc20',
+      tokenAddress: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F' as any,
+    },
+    // Additional Polygon ERC20s and non-EVM fully supported for deposits + sweeps
     {
       chain: 'solana',
       pairId: 'USDC_SOLANA',
@@ -801,6 +852,164 @@ async function scanSolanaDeposits(input: {
   return { detected, settled }
 }
 
+async function scanSuiDeposits(input: {
+  asset: SupportedDepositAsset
+  client: SuiJsonRpcClient
+  lookup: Map<string, CryptoDepositAddress>
+}) {
+  const suiAddrs = Array.from(input.lookup.values()).filter((a) => a.addressFamily === 'sui')
+  if (suiAddrs.length === 0) return { detected: 0, settled: 0 }
+
+  let detected = 0
+  let settled = 0
+  const client = input.client
+  const NATIVE_SUI_TYPE = '0x2::sui::SUI'
+
+  for (const addr of suiAddrs) {
+    try {
+      const page = await client.queryTransactionBlocks({
+        filter: { ToAddress: addr.address },
+        limit: 30,
+        order: 'descending',
+        options: { showBalanceChanges: true, showEffects: true },
+      })
+      const txs = (page as any).data || []
+      for (const tx of txs) {
+        const digest: string | undefined = tx?.digest
+        if (!digest) continue
+        const balanceChanges: any[] = (tx as any).balanceChanges || []
+        let value = BigInt(0)
+        for (const bc of balanceChanges) {
+          const ownerStr =
+            typeof bc?.owner === 'string'
+              ? bc.owner
+              : bc?.owner && typeof bc.owner === 'object'
+                ? bc.owner.AddressOwner || bc.owner.ObjectOwner || null
+                : null
+          if (ownerStr === addr.address && bc?.coinType === NATIVE_SUI_TYPE) {
+            const amt = BigInt(bc.amount || '0')
+            if (amt > 0) value += amt
+          }
+        }
+        if (value <= BigInt(0)) continue
+
+        const externalEventId = `sui:${input.asset.pairId}:${digest}`
+        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${addr.address} value=${value.toString()} tx=${digest}`)
+        const result = await persistAndSettleDeposit({
+          asset: input.asset,
+          address: addr,
+          externalEventId,
+          amountUnits: value,
+          txHash: digest,
+          blockNumber: tx?.checkpoint ? BigInt(tx.checkpoint) : undefined,
+          payload: {
+            type: 'sui_native_transfer',
+            digest,
+            to: addr.address,
+          },
+        })
+        if (!result.duplicate) detected += 1
+        if (result.settled) settled += 1
+      }
+    } catch (e) {
+      console.warn(`[crypto-deposit-scanner] Sui scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
+    }
+  }
+  return { detected, settled }
+}
+
+async function scanNearDeposits(input: {
+  asset: SupportedDepositAsset
+  provider: any
+  lookup: Map<string, CryptoDepositAddress>
+}) {
+  const nearAddrs = Array.from(input.lookup.values()).filter((a) => a.addressFamily === 'near')
+  if (nearAddrs.length === 0) return { detected: 0, settled: 0 }
+
+  let detected = 0
+  let settled = 0
+  const provider = input.provider
+  const targetSet = new Set(nearAddrs.map((a) => a.address.toLowerCase()))
+
+  try {
+    const status = await provider.status()
+    const headHeight = Number(status?.sync_info?.latest_block_height || 0)
+    if (!headHeight) return { detected: 0, settled: 0 }
+
+    const SCAN_WINDOW = 180
+    const fromHeight = Math.max(0, headHeight - SCAN_WINDOW)
+    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} scanning NEAR heights ${fromHeight}-${headHeight}`)
+
+    const BATCH = 12
+    for (let h = headHeight; h >= fromHeight; h -= BATCH) {
+      const heights: number[] = []
+      for (let i = 0; i < BATCH && h - i >= fromHeight; i++) heights.push(h - i)
+      const blockPromises = heights.map((ht) => provider.block({ blockId: ht }).catch(() => null))
+      const blocks = await Promise.all(blockPromises)
+
+      for (let bi = 0; bi < blocks.length; bi++) {
+        const block = blocks[bi]
+        const blockHeight = heights[bi]
+        if (!block || !block.chunks) continue
+
+        for (const ch of block.chunks) {
+          try {
+            const chunk = await provider.chunk({ chunk_id: ch.chunk_hash }).catch(() => null)
+            if (!chunk) continue
+
+            const receipts = chunk.receipts || []
+            for (const rec of receipts) {
+              if (!rec || !rec.receiver_id) continue
+              const receiver = String(rec.receiver_id)
+              if (!targetSet.has(receiver.toLowerCase())) continue
+
+              const actions = rec.receipt?.Action?.actions || []
+              for (const act of actions) {
+                if (act?.Transfer?.deposit) {
+                  const depositStr = String(act.Transfer.deposit)
+                  const value = BigInt(depositStr)
+                  if (value <= BigInt(0)) continue
+
+                  const receiptId = rec.receipt_id || rec.receipt?.receipt_id || String(blockHeight)
+                  const txHash = rec.transaction_hash || receiptId
+                  const externalEventId = `near:${input.asset.pairId}:${txHash}:native`
+                  const addressRec = nearAddrs.find((a) => a.address.toLowerCase() === receiver.toLowerCase())
+                  if (!addressRec) continue
+
+                  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${receiver} value=${value.toString()} tx=${txHash}`)
+                  const result = await persistAndSettleDeposit({
+                    asset: input.asset,
+                    address: addressRec,
+                    externalEventId,
+                    amountUnits: value,
+                    txHash: String(txHash),
+                    blockNumber: BigInt(blockHeight),
+                    payload: {
+                      type: 'near_native_transfer',
+                      from: rec.predecessor_id,
+                      to: receiver,
+                      receipt_id: rec.receipt_id,
+                      block: blockHeight,
+                    },
+                  })
+                  if (!result.duplicate) detected += 1
+                  if (result.settled) settled += 1
+                }
+              }
+            }
+          } catch (e) {
+            // per-chunk soft fail
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[crypto-deposit-scanner] NEAR scan top-level error:`, e instanceof Error ? e.message : e)
+  }
+
+  return { detected, settled }
+}
+
 export async function syncCryptoDepositEventsOnce() {
   const state = getScannerState()
   if (state.running) {
@@ -835,11 +1044,15 @@ export async function syncCryptoDepositEventsOnce() {
     const polygonClient = createPolygonClient()
     const tonClient = createTonClient()
     const solanaConnection = createSolanaConnection()
+    const suiClient = createSuiScannerClient()
+    const nearProvider = createNearScannerProvider()
     // log effective RPCs for diagnosis (especially when public nodes limit logs or return 401)
     const baseCfg = getBaseExecutorConfig()
     const bscCfg = getBscExecutorConfig()
     const polyRpcRaw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
-    console.log(`[crypto-deposit-scanner] RPCs base[0]=${sanitizeUrlForLogs(baseCfg.rpcUrls[0])} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(polyRpcRaw.split(',')[0])}`)
+    const suiRpcRaw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC_URL)
+    const nearRpcRaw = (process.env.MAFITAPAY_NEAR_RPC_URLS?.trim() || process.env.MAFITAPAY_NEAR_RPC_URL?.trim() || DEFAULT_NEAR_RPC_URLS[0])
+    console.log(`[crypto-deposit-scanner] RPCs base[0]=${sanitizeUrlForLogs(baseCfg.rpcUrls[0])} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(polyRpcRaw.split(',')[0])} sui[0]=${sanitizeUrlForLogs(suiRpcRaw.split(',')[0])} near[0]=${sanitizeUrlForLogs(nearRpcRaw)}`)
     let detected = 0
     let settled = 0
     const errors: string[] = []
@@ -865,9 +1078,16 @@ export async function syncCryptoDepositEventsOnce() {
           const result = await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
           console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
           assetResults.push({ detected: result.detected, settled: result.settled, error: null })
+        } else if (asset.chain === 'sui') {
+          const result = await scanSuiDeposits({ asset, client: suiClient, lookup })
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
+        } else if (asset.chain === 'near') {
+          const result = await scanNearDeposits({ asset, provider: nearProvider, lookup })
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
         } else {
-          // Non-EVM deposit scanning not yet implemented (address provisioning works; detection will be added next)
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} on ${asset.chain}: scanning not yet implemented for this family`)
+          console.log(`[crypto-deposit-scanner] ${asset.pairId} on ${asset.chain}: no scanner configured`)
           assetResults.push({ detected: 0, settled: 0, error: null })
         }
       } catch (error) {
@@ -907,4 +1127,55 @@ export function ensureCryptoDepositScannerWatchdog() {
 export async function kickCryptoDepositScanner() {
   ensureCryptoDepositScannerWatchdog()
   return syncCryptoDepositEventsOnce()
+}
+
+export async function forceScanDepositAddress(input: { address: string; pairId?: string }) {
+  const addr = input.address.trim()
+  if (!addr) throw new Error('address is required')
+  const record = await getCryptoDepositAddressByAddress(addr)
+  if (!record) {
+    throw new Error('Address is not a known active crypto deposit address in the system.')
+  }
+  const family = record.addressFamily
+  const assetsToScan = getSupportedAssets().filter((a) => {
+    if (input.pairId) return a.pairId === input.pairId
+    if (family === 'evm' && (a.chain === 'base' || a.chain === 'bsc' || a.chain === 'polygon')) return true
+    if (family === 'solana' && a.chain === 'solana') return true
+    if (family === 'ton' && a.chain === 'ton') return true
+    if (family === 'sui' && a.chain === 'sui') return true
+    if (family === 'near' && a.chain === 'near') return true
+    return false
+  })
+  if (assetsToScan.length === 0) {
+    return { record, scanned: 0, message: 'No matching supported assets for this address family.' }
+  }
+  const lookup = buildAddressLookup([record])
+  const perAsset: Array<{ pairId: string; detected: number; settled: number; error?: string }> = []
+  for (const asset of assetsToScan) {
+    try {
+      let result: { detected: number; settled: number }
+      if (asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon') {
+        const client: AnyClient = asset.chain === 'base' ? createBaseClient() : asset.chain === 'bsc' ? createBscClient() : createPolygonClient()
+        result = asset.kind === 'erc20'
+          ? await scanErc20Deposits({ asset, client, lookup })
+          : await scanNativeDeposits({ asset, client, lookup })
+      } else if (asset.chain === 'ton') {
+        result = await scanTonDeposits({ asset, client: createTonClient(), lookup })
+      } else if (asset.chain === 'solana') {
+        result = await scanSolanaDeposits({ asset, connection: createSolanaConnection(), lookup })
+      } else if (asset.chain === 'sui') {
+        result = await scanSuiDeposits({ asset, client: createSuiScannerClient(), lookup })
+      } else if (asset.chain === 'near') {
+        result = await scanNearDeposits({ asset, provider: createNearScannerProvider(), lookup })
+      } else {
+        result = { detected: 0, settled: 0 }
+      }
+      perAsset.push({ pairId: asset.pairId, detected: result.detected, settled: result.settled })
+    } catch (error) {
+      perAsset.push({ pairId: asset.pairId, detected: 0, settled: 0, error: error instanceof Error ? error.message : 'scan error' })
+    }
+  }
+  // Also kick a full background sync for good measure (covers any state advancement)
+  void syncCryptoDepositEventsOnce().catch(() => {})
+  return { record: { id: record.id, userId: record.userId, address: record.address, addressFamily: record.addressFamily }, scannedAssets: perAsset }
 }

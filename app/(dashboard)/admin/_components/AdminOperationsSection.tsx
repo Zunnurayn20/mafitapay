@@ -14,8 +14,27 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const [showWebhookTester, setShowWebhookTester] = useState(false)
   const [showLedgerTools, setShowLedgerTools] = useState(false)
   const [showReferenceSupport, setShowReferenceSupport] = useState(false)
+  const [selectedDepositEventId, setSelectedDepositEventId] = useState<string | null>(null)
+  const [resweepingEventId, setResweepingEventId] = useState<string | null>(null)
+  const [depositPage, setDepositPage] = useState(0)
+  const DEPOSIT_PAGE_SIZE = 20
   const {
     cryptoOrders,
+    cryptoDepositEvents,
+    recentSweepGasStats,
+    reloadCryptoDepositEvents,
+    triggerCryptoDepositSync,
+    forceScanCryptoDepositAddress,
+    resweepCryptoDepositEvent,
+    cryptoDepositStatusFilter,
+    setCryptoDepositStatusFilter,
+    cryptoDepositSweepFilter,
+    setCryptoDepositSweepFilter,
+    cryptoDepositPairFilter,
+    setCryptoDepositPairFilter,
+    cryptoDepositSearch,
+    setCryptoDepositSearch,
+    refreshingCryptoDepositEvents,
     syncAllBaseReceipts,
     syncingAllBaseReceipts,
     executeZeroExSwap,
@@ -77,11 +96,309 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const showOrders = !submodule || submodule === 'orders'
   const showSettlements = !submodule || submodule === 'settlements'
   const showEvents = !submodule || submodule === 'events'
+  const showCryptoDeposits = !submodule || submodule === 'crypto-deposits'
   const showSupport = !submodule || submodule === 'support'
   const selectedCryptoOrder = cryptoOrders.find(item => item.id === selectedCryptoOrderId) ?? null
+  const isOperationsIndex = !submodule
+
+  // Local handlers for deposits filters on the dedicated page
+  const applyDepositFilter = (partial: { status?: any; sweepStatus?: any; pairId?: string }) => {
+    if (partial.status !== undefined) setCryptoDepositStatusFilter(partial.status)
+    if (partial.sweepStatus !== undefined) setCryptoDepositSweepFilter(partial.sweepStatus)
+    if (partial.pairId !== undefined) setCryptoDepositPairFilter(partial.pairId)
+    setDepositPage(0)
+    // re-fetch with current/updated filters
+    void reloadCryptoDepositEvents?.({
+      status: partial.status ?? (cryptoDepositStatusFilter !== 'all' ? cryptoDepositStatusFilter : undefined),
+      sweepStatus: partial.sweepStatus ?? (cryptoDepositSweepFilter !== 'all' ? cryptoDepositSweepFilter : undefined),
+      pairId: partial.pairId ?? (cryptoDepositPairFilter || undefined),
+    })
+  }
+
+  const handleResweep = async (externalEventId: string) => {
+    if (!resweepCryptoDepositEvent) return
+    setResweepingEventId(externalEventId)
+    try {
+      await resweepCryptoDepositEvent(externalEventId)
+    } finally {
+      setResweepingEventId(null)
+    }
+  }
+
+  const exportDepositEventsToCsv = () => {
+    if (displayedDepositEvents.length === 0) return
+    const headers = ['timestamp', 'pair', 'amount', 'status', 'sweep_status', 'tx_hash', 'user']
+    const rows = displayedDepositEvents.map((e: any) => [
+      e.createdAt || e.created_at || '',
+      e.pairId || e.pair_id || '',
+      e.amountCrypto || e.amount_crypto || '',
+      e.status || '',
+      e.sweepStatus || e.sweep_status || '',
+      e.txHash || e.tx_hash || '',
+      e.userId || e.user_id || '',
+    ])
+    const csv = [headers, ...rows].map(r => r.map((v: any) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `crypto_deposits_${new Date().toISOString().slice(0,10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const selectedDepositEvent = (cryptoDepositEvents as any[]).find((e: any) => (e.externalEventId || e.external_event_id) === selectedDepositEventId) ?? null
+
+  // Client-side search filter for the rich view
+  const displayedDepositEvents = (cryptoDepositEvents as any[]).filter((e: any) => {
+    if (!cryptoDepositSearch) return true
+    const s = cryptoDepositSearch.toLowerCase()
+    const tx = (e.txHash || e.tx_hash || '').toLowerCase()
+    const ext = (e.externalEventId || e.external_event_id || '').toLowerCase()
+    const uid = (e.userId || e.user_id || '').toLowerCase()
+    return tx.includes(s) || ext.includes(s) || uid.includes(s)
+  })
+
+  // Pagination for deeper polish
+  const totalDepositPages = Math.max(1, Math.ceil(displayedDepositEvents.length / DEPOSIT_PAGE_SIZE))
+  const paginatedDepositEvents = displayedDepositEvents.slice(
+    depositPage * DEPOSIT_PAGE_SIZE,
+    (depositPage + 1) * DEPOSIT_PAGE_SIZE
+  )
+
+  // Stats
+  const depositStats = {
+    total: (cryptoDepositEvents as any[]).length,
+    matched: (cryptoDepositEvents as any[]).filter((e: any) => (e.status || e.Status) === 'matched').length,
+    unmatched: (cryptoDepositEvents as any[]).filter((e: any) => (e.status || e.Status) === 'unmatched').length,
+    swept: (cryptoDepositEvents as any[]).filter((e: any) => (e.sweepStatus || e.sweep_status) === 'swept').length,
+    pendingSweep: (cryptoDepositEvents as any[]).filter((e: any) => {
+      const sw = e.sweepStatus || e.sweep_status
+      return !sw || sw === 'pending' || sw === 'failed'
+    }).length,
+  }
+
+  // Compact panel for operations INDEX
+  const CompactCryptoDeposits = isOperationsIndex && !showCryptoDeposits ? (
+    <div className="mt-3 border border-[var(--border)] bg-[var(--clay)] p-3">
+      <div className="flex items-center justify-between text-[9px]">
+        <div className="font-bold uppercase tracking-[1px] text-[var(--gold2)]">Crypto Deposits (scanner)</div>
+        <div className="flex gap-1">
+          <Button variant="secondary" className="text-[9px] py-0.5 px-1.5" onClick={() => void triggerCryptoDepositSync?.()}>Scan</Button>
+          <Button variant="secondary" className="text-[9px] py-0.5 px-1.5" onClick={() => void reloadCryptoDepositEvents?.()}>Reload</Button>
+        </div>
+      </div>
+      <div className="mt-1 text-[9px] text-[var(--text2)]">All assets supported (Sui/NEAR complete, Polygon ERC20s added). {depositStats.total} recent events • {depositStats.swept} swept • {depositStats.pendingSweep} pending/failed sweep.</div>
+      <div className="mt-1 flex gap-1 text-[9px]">
+        <input id="fd-addr-compact" className="flex-1 border px-1 py-0.5 bg-[var(--clay2)] text-[10px]" placeholder="force scan address" />
+        <Button className="text-[9px] py-0.5" onClick={() => {
+          const v = (document.getElementById('fd-addr-compact') as HTMLInputElement | null)?.value?.trim()
+          if (v) void forceScanCryptoDepositAddress?.(v).then(() => void reloadCryptoDepositEvents?.())
+        }}>Force</Button>
+      </div>
+    </div>
+  ) : null
+
+  // Deep polished full view — only on the dedicated /crypto-deposits page
+  const RichCryptoDepositsView = showCryptoDeposits ? (
+    <div className="space-y-4">
+      {/* Header + Stats */}
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Crypto Deposit Events</div>
+          <div className="text-[10px] text-[var(--text2)]">On-chain detections from user deposit addresses • auto NGN credit at live sell rate • auto-sweep to treasury</div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" disabled={refreshingCryptoDepositEvents} onClick={() => void triggerCryptoDepositSync?.()}>
+            {refreshingCryptoDepositEvents ? 'Scanning…' : 'Trigger Full Scan'}
+          </Button>
+          <Button variant="secondary" disabled={refreshingCryptoDepositEvents} onClick={() => void reloadCryptoDepositEvents?.()}>
+            {refreshingCryptoDepositEvents ? 'Loading…' : 'Reload'}
+          </Button>
+          <Button variant="secondary" className="text-[10px]" onClick={exportDepositEventsToCsv} disabled={displayedDepositEvents.length === 0}>
+            Export CSV
+          </Button>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {[
+          { label: 'Total Events', value: depositStats.total },
+          { label: 'Matched Orders', value: depositStats.matched },
+          { label: 'Direct Credits (unmatched)', value: depositStats.unmatched },
+          { label: 'Swept to Treasury', value: depositStats.swept },
+          { label: 'Pending / Failed Sweep', value: depositStats.pendingSweep },
+        ].map((s, i) => (
+          <div key={i} className="border border-[var(--border)] bg-[var(--clay)] p-2">
+            <div className="text-[8px] uppercase tracking-[1px] text-[var(--muted)]">{s.label}</div>
+            <div className="text-[18px] font-bold tabular-nums">{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Option 1: Recent Sweep Gas Usage (from in-memory logs in sweeper) */}
+      {(recentSweepGasStats && recentSweepGasStats.length > 0) && (
+        <div className="border border-[var(--border)] bg-[var(--clay)] p-3">
+          <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)] mb-2">Recent Sweep Gas Usage (for tuning reserves)</div>
+          <div className="max-h-40 overflow-auto text-[8px] space-y-1 font-mono">
+            {recentSweepGasStats.slice(0, 15).map((s: any, i: number) => (
+              <div key={i} className="flex justify-between border-b border-[var(--border)] pb-0.5">
+                <span>{new Date(s.timestamp).toLocaleTimeString()} {s.pairId}</span>
+                <span>recv {s.received} | res {s.reserved} | sent {s.sent}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-[7px] text-[var(--muted)] mt-1">These are the actual reserved vs sent amounts from recent native sweeps. Use to tune MAFITAPAY_SWEEP_*_MULTIPLIER and buffers.</div>
+        </div>
+      )}
+
+      {/* Filters + Force Scan */}
+      <div className="border border-[var(--border)] bg-[var(--clay)] p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={cryptoDepositStatusFilter}
+            onChange={(e) => applyDepositFilter({ status: e.target.value === 'all' ? 'all' : e.target.value })}
+            className="bg-[var(--clay2)] border border-[var(--border)] text-[10px] px-2 py-1"
+          >
+            <option value="all">All Status</option>
+            <option value="matched">Matched</option>
+            <option value="unmatched">Unmatched</option>
+            <option value="ignored">Ignored</option>
+          </select>
+          <select
+            value={cryptoDepositSweepFilter}
+            onChange={(e) => applyDepositFilter({ sweepStatus: e.target.value === 'all' ? 'all' : e.target.value })}
+            className="bg-[var(--clay2)] border border-[var(--border)] text-[10px] px-2 py-1"
+          >
+            <option value="all">All Sweep</option>
+            <option value="pending">Pending</option>
+            <option value="sweeping">Sweeping</option>
+            <option value="swept">Swept</option>
+            <option value="failed">Failed</option>
+            <option value="skipped">Skipped</option>
+          </select>
+          <input
+            value={cryptoDepositPairFilter}
+            onChange={(e) => applyDepositFilter({ pairId: e.target.value })}
+            placeholder="Pair ID (e.g. USDC_BASE)"
+            className="bg-[var(--clay2)] border border-[var(--border)] text-[10px] px-2 py-1 w-40"
+          />
+          <input
+            value={cryptoDepositSearch}
+            onChange={(e) => { setCryptoDepositSearch(e.target.value); setDepositPage(0) }}
+            placeholder="Search tx / external / user"
+            className="bg-[var(--clay2)] border border-[var(--border)] text-[10px] px-2 py-1 flex-1 min-w-[160px]"
+          />
+          <Button variant="secondary" className="text-[10px]" onClick={() => void reloadCryptoDepositEvents?.()}>Apply Filters</Button>
+        </div>
+
+        {/* Prominent Force Scan */}
+        <div className="border border-[var(--border)] bg-[var(--clay2)] p-2">
+          <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)] mb-1">Manual Force Scan (one address)</div>
+          <div className="flex gap-2">
+            <input id="force-addr-rich" placeholder="0x... or near/sui/ton deposit address" className="flex-1 border border-[var(--border)] bg-[var(--clay)] px-2 py-1 text-[11px] font-mono" />
+            <Button onClick={() => {
+              const el = document.getElementById('force-addr-rich') as HTMLInputElement | null
+              const addr = el?.value?.trim()
+              if (addr) {
+                void forceScanCryptoDepositAddress?.(addr).then(() => {
+                  void reloadCryptoDepositEvents?.()
+                  if (el) el.value = ''
+                })
+              }
+            }} className="text-[10px]">Force Scan + Refresh</Button>
+          </div>
+          <div className="text-[8px] text-[var(--muted)] mt-1">Useful for missed detections, test sends, or addresses that fell outside the recent window.</div>
+        </div>
+      </div>
+
+      {/* Events Table */}
+      <div className="border border-[var(--border)] bg-[var(--clay)] overflow-hidden">
+        <div className="max-h-[520px] overflow-auto">
+          <table className="w-full text-[9px]">
+            <thead className="sticky top-0 bg-[var(--clay2)] text-[var(--muted)]">
+              <tr>
+                <th className="text-left p-2">External / Tx</th>
+                <th className="text-left p-2">Asset</th>
+                <th className="text-right p-2">Amount</th>
+                <th className="text-left p-2">User</th>
+                <th className="text-left p-2">Status</th>
+                <th className="text-left p-2">Sweep</th>
+                <th className="text-left p-2">Sweep Tx / Error</th>
+                <th className="text-left p-2">Time</th>
+                <th className="p-2 w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedDepositEvents.length === 0 && (
+                <tr><td colSpan={9} className="p-3 text-center text-[var(--muted)]">No events match the current filters.</td></tr>
+              )}
+              {paginatedDepositEvents.map((ev: any) => {
+                const ext = ev.externalEventId || ev.external_event_id
+                const sw = ev.sweepStatus || ev.sweep_status
+                const isSwept = sw === 'swept'
+                const isFailing = sw === 'failed'
+                return (
+                  <tr key={ev.id || ext} className="border-t border-[var(--border)] hover:bg-[var(--clay2)]">
+                    <td className="p-2 font-mono text-[8px] max-w-[140px] truncate cursor-pointer" onClick={() => setSelectedDepositEventId(ext)} title={ext}>{ext}</td>
+                    <td className="p-2">{ev.pairId || ev.pair_id} <span className="text-[var(--muted)]">· {ev.assetSymbol || ev.asset_symbol}</span></td>
+                    <td className="p-2 text-right tabular-nums">{Number(ev.amountCrypto || ev.amount_crypto || 0).toFixed(6)}</td>
+                    <td className="p-2 font-mono text-[8px]">{String(ev.userId || ev.user_id || '').slice(0, 10)}</td>
+                    <td className="p-2">
+                      <span className={`px-1 py-px ${ev.status === 'matched' ? 'text-[var(--green2)]' : ev.status === 'unmatched' ? 'text-[var(--gold2)]' : ''}`}>
+                        {(ev.status || ev.Status || '').toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="p-2">
+                      <span className={`px-1 py-px ${isSwept ? 'text-[var(--green2)]' : isFailing ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
+                        {(sw || 'pending').toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="p-2 font-mono text-[8px] max-w-[160px] truncate" title={ev.sweepError || ev.sweep_error || ev.sweepTxHash || ev.sweep_tx_hash}>
+                      {ev.sweepTxHash || ev.sweep_tx_hash || (ev.sweepError || ev.sweep_error ? 'ERR' : '—')}
+                    </td>
+                    <td className="p-2 text-[var(--muted)]">{new Date(ev.createdAt || ev.created_at).toLocaleDateString('en-NG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                    <td className="p-2">
+                      <div className="flex gap-1 justify-end">
+                        <Button variant="secondary" className="text-[8px] px-1 py-0" onClick={() => setSelectedDepositEventId(ext)}>Details</Button>
+                        {!isSwept && (
+                          <Button
+                            variant="secondary"
+                            className="text-[8px] px-1 py-0"
+                            disabled={resweepingEventId === ext}
+                            onClick={() => handleResweep(ext)}
+                          >
+                            {resweepingEventId === ext ? '...' : 'Re-sweep'}
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination for option 3 deeper polish */}
+        <div className="flex items-center justify-between mt-2 text-[9px]">
+          <div>Page {depositPage + 1} / {totalDepositPages} ({displayedDepositEvents.length} total)</div>
+          <div className="flex gap-1">
+            <Button variant="secondary" className="text-[9px] py-0.5 px-2" disabled={depositPage === 0} onClick={() => setDepositPage(p => Math.max(0, p-1))}>Prev</Button>
+            <Button variant="secondary" className="text-[9px] py-0.5 px-2" disabled={depositPage >= totalDepositPages - 1} onClick={() => setDepositPage(p => Math.min(totalDepositPages - 1, p+1))}>Next</Button>
+          </div>
+        </div>
+      </div>
+
+      {refreshingCryptoDepositEvents && (
+        <div className="text-[10px] text-[var(--muted)]">Loading crypto deposit transactions...</div>
+      )}
+      <div className="text-[8px] text-[var(--muted)]">Events are produced by the background deposit scanner. Re-sweep will attempt to move funds for a matched but not-yet-swept event. Force scan bypasses the normal window for a specific address.</div>
+    </div>
+  ) : null
   const selectedSettlement = [...depositIntents, ...payoutRequests].find(item => item.reference === selectedSettlementReference) ?? null
   const selectedProviderEvent = providerEvents.find(item => item.id === selectedProviderEventId) ?? null
-  const isOperationsIndex = !submodule
   const supportCards = [
     {
       key: 'webhook',
@@ -234,6 +551,9 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           )}
         </Modal>
       </Card>}
+
+      {CompactCryptoDeposits}
+      {RichCryptoDepositsView}
 
       {showEvents && <Card className="p-5">
         <div className="mb-3 text-[11px] font-bold text-[var(--text)]">Flutterwave Issues</div>
@@ -865,6 +1185,41 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                 {JSON.stringify(webhookTestResult.body, null, 2)}
               </pre>
             </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Rich Deposit Event Detail Modal - shown from the polished deposits table */}
+      <Modal open={!!selectedDepositEventId} onClose={() => setSelectedDepositEventId(null)} title="Crypto Deposit Event" size="lg">
+        <div className="p-4 text-[10px] space-y-3 max-h-[65vh] overflow-auto">
+          {!selectedDepositEvent ? (
+            <div className="text-[var(--muted)]">Event details not available.</div>
+          ) : (
+            <>
+              <div className="font-mono break-all bg-[var(--clay2)] p-2 text-[9px]">{selectedDepositEvent.externalEventId || selectedDepositEvent.external_event_id}</div>
+              <div><span className="text-[var(--muted)]">Pair / Asset:</span> {selectedDepositEvent.pairId || selectedDepositEvent.pair_id} · {selectedDepositEvent.assetSymbol || selectedDepositEvent.asset_symbol} on {selectedDepositEvent.network}</div>
+              <div><span className="text-[var(--muted)]">Amount:</span> {Number(selectedDepositEvent.amountCrypto || selectedDepositEvent.amount_crypto || 0).toFixed(8)}</div>
+              <div><span className="text-[var(--muted)]">User:</span> <span className="font-mono">{selectedDepositEvent.userId || selectedDepositEvent.user_id}</span></div>
+              <div><span className="text-[var(--muted)]">Status:</span> {selectedDepositEvent.status || selectedDepositEvent.Status} &nbsp; <span className="text-[var(--muted)]">Sweep:</span> {selectedDepositEvent.sweepStatus || selectedDepositEvent.sweep_status || 'pending'}</div>
+              <div className="font-mono text-[9px] break-all"><span className="text-[var(--muted)]">Deposit Tx:</span> {selectedDepositEvent.txHash || selectedDepositEvent.tx_hash}</div>
+              {(selectedDepositEvent.sweepTxHash || selectedDepositEvent.sweep_tx_hash) && <div className="font-mono text-[9px] break-all"><span className="text-[var(--muted)]">Sweep Tx:</span> {selectedDepositEvent.sweepTxHash || selectedDepositEvent.sweep_tx_hash}</div>}
+              {(selectedDepositEvent.sweepError || selectedDepositEvent.sweep_error) && <div className="text-[var(--red2)]">Sweep error: {selectedDepositEvent.sweepError || selectedDepositEvent.sweep_error}</div>}
+              <div className="text-[var(--muted)] text-[9px]">Created: {new Date(selectedDepositEvent.createdAt || selectedDepositEvent.created_at).toLocaleString('en-NG')}</div>
+              {selectedDepositEvent.payload && (
+                <div>
+                  <div className="text-[var(--muted)] text-[9px] mb-1">Payload</div>
+                  <pre className="bg-[var(--clay2)] p-2 text-[8px] overflow-auto max-h-40">{JSON.stringify(selectedDepositEvent.payload, null, 2)}</pre>
+                </div>
+              )}
+              <div className="pt-2 flex gap-2">
+                {!((selectedDepositEvent.sweepStatus || selectedDepositEvent.sweep_status) === 'swept') && (
+                  <Button onClick={() => { handleResweep(selectedDepositEvent.externalEventId || selectedDepositEvent.external_event_id); setSelectedDepositEventId(null) }} disabled={!!resweepingEventId}>
+                    {resweepingEventId ? 'Re-sweeping…' : 'Re-sweep'}
+                  </Button>
+                )}
+                <Button variant="secondary" onClick={() => setSelectedDepositEventId(null)}>Close</Button>
+              </div>
+            </>
           )}
         </div>
       </Modal>
