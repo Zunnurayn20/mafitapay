@@ -1,0 +1,49 @@
+# dependencies & build
+node_modules
+.next
+out
+build
+coverage
+*.tsbuildinfo
+
+# git / IDE
+.git
+.github
+.gitignore
+.vscode
+.idea
+.codex
+
+# env & secrets (inject via Railway variables)
+.env
+.env.*
+!.env.example
+
+# local data (use Railway volume in prod)
+data/*.db
+data/*.db-*
+data/app.json
+data/uploads
+
+# mobile / capacitor
+android
+www
+*.jks
+*.keystore
+
+# tests / docs not needed at runtime
+tests
+playwright.config.ts
+playwright-report
+test-results
+AGENT_README.md
+AGENTS.md
+CLAUDE.md
+README.md
+
+# misc
+.DS_Store
+*.pem
+*:Zone.Identifier
+.vercel
+pnpm-lock.yaml
