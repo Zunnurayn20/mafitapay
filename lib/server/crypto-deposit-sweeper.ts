@@ -117,13 +117,14 @@ function createBaseClientsFromPrivateKey(privateKey: Hex) {
   return {
     account,
     config,
-    publicClient: createPublicClient({ chain: base, transport }),
+    // Cast to any: ternary union of base/bsc/polygon clients breaks viem sendTransaction typings
+    publicClient: createPublicClient({ chain: base, transport }) as any,
     walletClient: createWalletClient({
       account,
       chain: base,
       transport,
       dataSuffix: getBaseBuilderDataSuffix(),
-    }),
+    }) as any,
   }
 }
 
@@ -136,8 +137,8 @@ function createBscClientsFromPrivateKey(privateKey: Hex) {
   return {
     account,
     config,
-    publicClient: createPublicClient({ chain: bsc, transport }),
-    walletClient: createWalletClient({ account, chain: bsc, transport }),
+    publicClient: createPublicClient({ chain: bsc, transport }) as any,
+    walletClient: createWalletClient({ account, chain: bsc, transport }) as any,
   }
 }
 
@@ -163,8 +164,8 @@ function createPolygonClientsFromPrivateKey(privateKey: Hex) {
   const account = privateKeyToAccount(privateKey)
   return {
     account,
-    publicClient: createPublicClient({ chain: polygon, transport }),
-    walletClient: createWalletClient({ account, chain: polygon, transport }),
+    publicClient: createPublicClient({ chain: polygon, transport }) as any,
+    walletClient: createWalletClient({ account, chain: polygon, transport }) as any,
   }
 }
 
