@@ -178,8 +178,9 @@ async function calculateEvmGasReserve(
   tx: { to: Address; value?: bigint; data?: Hex; account: Address }
 ): Promise<bigint> {
   try {
-    const gasLimit = await publicClient.estimateGas(tx)
-    const gasPrice = await publicClient.getGasPrice().catch(() => BigInt(0))
+    // Coerce to bigint: estimateGas typings can widen to number under publicClient: any
+    const gasLimit = BigInt(await publicClient.estimateGas(tx))
+    const gasPrice = BigInt(await publicClient.getGasPrice().catch(() => 0))
     const estimatedCost = gasLimit * gasPrice
     const withMargin = (estimatedCost * BigInt(Math.floor(EVM_GAS_SAFETY_MULTIPLIER * 100))) / BigInt(100)
 
