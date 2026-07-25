@@ -200,7 +200,7 @@ async function getSolanaEffectiveGasBuffer(connection: Connection, isToken: bool
   const base = isToken ? SOLANA_TOKEN_SWEEP_GAS_TOPUP_LAMPORTS : SOLANA_GAS_BUFFER_LAMPORTS
 
   try {
-    const recent = await connection.getRecentPrioritizationFees({ limit: 10 })
+    const recent = await connection.getRecentPrioritizationFees()
     if (!recent.length) return base
 
     // Take a conservative percentile of recent priority fees (in micro-lamports per CU)
