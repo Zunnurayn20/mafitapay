@@ -1,6 +1,6 @@
 import { useAppStore } from '@/store'
 
-type TxFilter = 'all' | 'deposit' | 'withdrawal' | 'bills' | 'crypto' | 'p2p'
+type TxFilter = 'all' | 'deposit' | 'withdrawal' | 'bills' | 'crypto'
 
 export function useTransactions(filter: TxFilter = 'all') {
   const { transactions } = useAppStore()
@@ -11,7 +11,7 @@ export function useTransactions(filter: TxFilter = 'all') {
     if (filter === 'withdrawal')return tx.type.includes('withdrawal') || tx.type.includes('transfer_out')
     if (filter === 'bills')     return ['airtime','data','electric','cable','education','gas','insurance','water'].includes(tx.type)
     if (filter === 'crypto')    return tx.type.startsWith('crypto')
-    if (filter === 'p2p')       return tx.type.startsWith('p2p')
+
     return true
   })
 

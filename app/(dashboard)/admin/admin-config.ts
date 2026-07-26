@@ -4,7 +4,6 @@ import { ROUTED_TREASURY_PAIR_CONFIG } from '@/lib/routed-assets'
 import type { AuditLog, BillProvider, CryptoAsset, CryptoOrder, DepositIntent, LedgerEntry, PayoutRequest, ProviderEvent, RewardRule, Transaction } from '@/types'
 
 export const ADMIN_ENDPOINTS = [
-  { key: 'merchants', title: 'P2P Merchants', get: '/api/admin/p2p-merchants', patch: '/api/admin/p2p-merchants', bodyKey: 'merchants' },
   { key: 'assets', title: 'Crypto Assets', get: '/api/admin/crypto-assets', patch: '/api/admin/crypto-assets', bodyKey: 'assets' },
   { key: 'rewardRules', title: 'Reward Rules', get: '/api/admin/reward-rules', patch: '/api/admin/reward-rules', bodyKey: 'rules' },
   { key: 'billProviders', title: 'Bill Providers', get: '/api/admin/bill-providers', patch: '/api/admin/bill-providers', bodyKey: 'providers' },

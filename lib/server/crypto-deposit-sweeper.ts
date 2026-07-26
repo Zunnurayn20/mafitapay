@@ -21,14 +21,17 @@ import { Transaction as SuiTransaction } from '@mysten/sui/transactions'
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
 import { Account, FailoverRpcProvider, JsonRpcProvider, KeyPair } from 'near-api-js'
 import { NEAR } from 'near-api-js/tokens'
-import { getBaseBuilderDataSuffix, getBaseExecutorConfig } from '@/lib/server/base-executor'
+import { getBaseBuilderDataSuffix, getBaseExecutorConfig, logBaseAttribution } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
+import { getLifiQuoteForConversion } from './lifi'
+import { sanitizePolygonRpcUrls } from '@/lib/server/crypto-deposit-scanner'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import {
   claimCryptoDepositEventSweep,
   getCryptoDepositAddressSecretById,
   markCryptoDepositEventSweepFailed,
   markCryptoDepositEventSwept,
+  updateCryptoDepositEventConversion,
 } from '@/lib/server/data'
 import type { CryptoDepositEvent, CryptoOrder } from '@/types'
 
@@ -144,23 +147,23 @@ function createBscClientsFromPrivateKey(privateKey: Hex) {
 
 function createPolygonClientsFromPrivateKey(privateKey: Hex) {
   let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || '')
-  if (!raw) {
+
+  // Always strip dead endpoints (especially the permanently dead Blast API)
+  let rpcUrls = sanitizePolygonRpcUrls(raw)
+
+  if (rpcUrls.length === 0) {
     const alchemyKey = process.env.ALCHEMY_API_KEY?.trim()
     if (alchemyKey) {
-      raw = `https://polygon-mainnet.g.alchemy.com/v2/${alchemyKey}`
+      rpcUrls = [`https://polygon-mainnet.g.alchemy.com/v2/${alchemyKey}`]
     } else {
-      raw = 'https://rpc.ankr.com/polygon'
+      rpcUrls = ['https://rpc.ankr.com/polygon']
     }
   }
-  let rpcUrls = raw.split(',').map(item => item.trim()).filter(Boolean)
-  const BROKEN_POLYGON_DEFAULT = 'https://polygon-rpc.com'
-  if (rpcUrls.length > 1) {
-    rpcUrls = rpcUrls.filter(u => !u.toLowerCase().includes('polygon-rpc.com'))
-    if (rpcUrls.length === 0) rpcUrls = [BROKEN_POLYGON_DEFAULT]
-  }
+
   const transport = rpcUrls.length > 1
     ? fallback(rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
-    : http(rpcUrls[0] || 'https://rpc.ankr.com/polygon', { retryCount: 1, timeout: 10_000 })
+    : http(rpcUrls[0], { retryCount: 1, timeout: 10_000 })
+
   const account = privateKeyToAccount(privateKey)
   return {
     account,
@@ -205,7 +208,7 @@ async function getSolanaEffectiveGasBuffer(connection: Connection, isToken: bool
     if (!recent.length) return base
 
     // Take a conservative percentile of recent priority fees (in micro-lamports per CU)
-    const fees = recent.map(r => r.prioritizationFee).sort((a, b) => a - b)
+    const fees = recent.map((r: any) => r.prioritizationFee).sort((a: number, b: number) => a - b)
     const p80 = fees[Math.floor(fees.length * 0.8)] || 0
 
     // Rough: a simple transfer uses ~ few hundred CUs. We add a tiny dynamic priority bump.
@@ -502,13 +505,23 @@ async function ensureTokenSweepGas(input: {
 
     if (balance >= neededTopup) return null
 
-    const hash = await clients.walletClient.sendTransaction({
+    const hash = await (clients.walletClient as any).sendTransaction({
       account: clients.account,
       chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : polygon,
       to: input.depositAddress,
       value: neededTopup,
     })
     await clients.publicClient.waitForTransactionReceipt({ hash })
+
+    if (input.asset.chain === 'base') {
+      const baseConfig = getBaseExecutorConfig()
+      logBaseAttribution({
+        builderCode: baseConfig.builderCode,
+        fromAddress: clients.account.address,
+        txHash: hash,
+        action: 'base_deposit_gas_topup_from_treasury',
+      })
+    }
     return hash
   }
 
@@ -552,12 +565,27 @@ async function sweepNative(input: {
     })
     console.log(`[crypto-deposit-sweeper] EVM sweep gas-reserve pair=${input.asset.pairId} received=${input.amountUnits} reserved=${gasReserve} sent=${value}`)
 
-    return clients.walletClient.sendTransaction({
+    const sweepHash = await (clients.walletClient as any).sendTransaction({
       account: clients.account,
       chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : polygon,
       to: input.treasuryAddress,
       value,
     })
+
+    if (input.asset.chain === 'base') {
+      const baseConfig = getBaseExecutorConfig()
+      logBaseAttribution({
+        builderCode: baseConfig.builderCode,
+        depositAddress: clients.account.address, // the deposit key is the from for this sweep
+        fromAddress: clients.account.address,
+        txHash: sweepHash,
+        pairId: input.asset.pairId,
+        amount: value.toString(),
+        action: 'base_deposit_sweep_to_treasury',
+      })
+    }
+
+    return sweepHash
   }
 
   // Non-EVM native (TON / Solana / Sui / Near handled in their own dedicated functions)
@@ -675,6 +703,168 @@ async function sweepSolanaNative(input: {
   })
   console.log(`[crypto-deposit-sweeper] Solana sweep gas-reserve pair=${input.isToken ? 'USDC_SOLANA' : 'SOL_SOLANA'} received=${input.amountUnits} effectiveBuffer=${effectiveBuffer} sent=${sentSol}`)
   return signature
+}
+
+async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
+  privateKey: Hex
+  depositAddress: string
+  asset: SweepAsset
+  amountUnits: bigint
+  externalEventId: string
+}) {
+  const { privateKey, depositAddress, asset, amountUnits, externalEventId } = input
+  if (amountUnits <= BigInt(0)) throw new Error('Amount must be positive for bridge conversion')
+
+  const baseConfig = getBaseExecutorConfig()
+
+  let fromChain: number
+  let fromToken: string
+  let walletClient: any
+  let publicClient: any
+
+  if (asset.chain === 'base') {
+    fromChain = 8453
+    fromToken = asset.tokenAddress || '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+    const clients = createBaseClientsFromPrivateKey(privateKey)
+    walletClient = clients.walletClient
+    publicClient = clients.publicClient
+  } else if (asset.chain === 'bsc') {
+    fromChain = 56
+    fromToken = asset.tokenAddress || '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+    const clients = createBscClientsFromPrivateKey(privateKey)
+    walletClient = clients.walletClient
+    publicClient = clients.publicClient
+  } else if (asset.chain === 'polygon') {
+    fromChain = 137
+    fromToken = asset.tokenAddress || '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+    const clients = createPolygonClientsFromPrivateKey(privateKey)
+    walletClient = clients.walletClient
+    publicClient = clients.publicClient
+  } else {
+    throw new Error('Unsupported chain for EVM bridge conversion')
+  }
+
+  let quotedAmountUnits = amountUnits
+  let nativeGasReserve: bigint | null = null
+
+  // For ERC20, ensure the deposit address has enough native gas for the bridge tx (top-up from treasury if needed)
+  if (asset.kind === 'erc20') {
+    await ensureTokenSweepGas({ asset, depositAddress: getAddress(depositAddress) })
+  } else {
+    const gasReserve = await calculateEvmGasReserve(publicClient, {
+      to: baseConfig.configuredAddress,
+      value: BigInt(1),
+      account: getAddress(depositAddress),
+    })
+    const effectiveReserve = gasReserve > asset.gasBufferWei ? gasReserve : asset.gasBufferWei
+    if (amountUnits <= effectiveReserve) {
+      throw new Error('Native deposit is too small to sweep after reserving gas.')
+    }
+    nativeGasReserve = effectiveReserve
+    quotedAmountUnits = amountUnits - effectiveReserve
+  }
+
+  const baseUsdc = baseConfig.usdcAddress
+  if (!baseUsdc) throw new Error('Base USDC address not configured')
+
+  // Quote the conversion from this deposit address on source -> USDC on Base to base treasury
+  let quote = await getLifiQuoteForConversion({
+    fromChain,
+    fromToken,
+    toChain: 8453,
+    toToken: baseUsdc,
+    fromAmount: quotedAmountUnits.toString(),
+    fromAddress: depositAddress,
+    toAddress: baseConfig.configuredAddress,
+    dataSuffix: getBaseBuilderDataSuffix(),
+  })
+
+  if (!quote?.transactionRequest?.to || !quote.transactionRequest.data) {
+    throw new Error('LiFi quote for EVM deposit conversion missing tx data')
+  }
+
+  if (asset.kind === 'native' && nativeGasReserve !== null) {
+    const bridgeGasReserve = await calculateEvmGasReserve(publicClient, {
+      to: quote.transactionRequest.to as Address,
+      data: quote.transactionRequest.data as Hex,
+      value: BigInt(quote.transactionRequest.value || '0'),
+      account: getAddress(depositAddress),
+    })
+    if (bridgeGasReserve > nativeGasReserve) {
+      if (amountUnits <= bridgeGasReserve) {
+        throw new Error('Native deposit is too small to sweep after reserving bridge gas.')
+      }
+      nativeGasReserve = bridgeGasReserve
+      quotedAmountUnits = amountUnits - bridgeGasReserve
+      quote = await getLifiQuoteForConversion({
+        fromChain,
+        fromToken,
+        toChain: 8453,
+        toToken: baseUsdc,
+        fromAmount: quotedAmountUnits.toString(),
+        fromAddress: depositAddress,
+        toAddress: baseConfig.configuredAddress,
+        dataSuffix: getBaseBuilderDataSuffix(),
+      })
+      if (!quote?.transactionRequest?.to || !quote.transactionRequest.data) {
+        throw new Error('LiFi quote for EVM deposit conversion missing tx data after gas reserve adjustment')
+      }
+    }
+    recordSweepGasStat({
+      pairId: asset.pairId,
+      received: amountUnits.toString(),
+      reserved: nativeGasReserve.toString(),
+      sent: quotedAmountUnits.toString(),
+      chain: asset.chain,
+    })
+    console.log(`[crypto-deposit-sweeper] EVM bridge gas-reserve pair=${asset.pairId} received=${amountUnits} reserved=${nativeGasReserve} converting=${quotedAmountUnits}`)
+  }
+
+  // Approve the fromToken to the router if ERC20 and needed
+  if (quote.estimate?.approvalAddress && fromToken.toLowerCase() !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee') {
+    const approvalHash = await walletClient.writeContract({
+      address: fromToken as Address,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [quote.estimate.approvalAddress as Address, amountUnits],
+    })
+    await publicClient.waitForTransactionReceipt({ hash: approvalHash })
+  }
+
+  // Send the bridge/conversion tx from the deposit address (this makes the user's deposit address the one "touching" the bridge to Base)
+  const bridgeTxHash = await walletClient.sendTransaction({
+    to: quote.transactionRequest.to,
+    data: quote.transactionRequest.data,
+    value: BigInt(quote.transactionRequest.value || '0'),
+  })
+
+  // Record the conversion details (the bridge tx is the sweep tx on source; the bridge will deliver USDC to Base treasury, with source address = deposit)
+  await updateCryptoDepositEventConversion(externalEventId, {
+    conversionTxHash: bridgeTxHash,
+    conversionTransactionId: quote.transactionId,
+    conversionTool: quote.tool,
+    targetUsdcAmount: quote.estimate?.toAmount,
+    targetUsdcAmountMin: quote.estimate?.toAmountMin,
+    fromChain,
+    fromToken,
+    sourceAmount: quotedAmountUnits.toString(),
+    sourceAmountReceived: amountUnits.toString(),
+    note: 'swept+converted directly from user deposit address via LiFi to Base USDC treasury',
+  })
+
+  console.log(`[crypto-deposit-sweeper] EVM deposit ${asset.pairId} swept+converted via bridge from deposit addr, tx=${bridgeTxHash}`)
+
+  logBaseAttribution({
+    builderCode: baseConfig.builderCode,
+    depositAddress,
+    fromAddress: depositAddress,
+    txHash: bridgeTxHash,
+    pairId: asset.pairId,
+    amount: quotedAmountUnits.toString(),
+    action: 'evm_deposit_conversion_to_base_usdc',
+  })
+
+  return bridgeTxHash
 }
 
 async function sweepSuiNative(input: {
@@ -830,7 +1020,7 @@ async function sweepErc20(input: {
 
   if (input.asset.chain === 'base') {
     const clients = createBaseClientsFromPrivateKey(input.privateKey)
-    return clients.walletClient.writeContract({
+    const sweepHash = await (clients.walletClient as any).writeContract({
       account: clients.account,
       chain: base,
       address: input.asset.tokenAddress,
@@ -838,6 +1028,17 @@ async function sweepErc20(input: {
       functionName: 'transfer',
       args: [input.treasuryAddress, input.amountUnits],
     })
+    const baseConfig = getBaseExecutorConfig()
+    logBaseAttribution({
+      builderCode: baseConfig.builderCode,
+      depositAddress: clients.account.address,
+      fromAddress: clients.account.address,
+      txHash: sweepHash,
+      pairId: input.asset.pairId,
+      amount: input.amountUnits.toString(),
+      action: 'base_deposit_erc20_sweep_to_treasury',
+    })
+    return sweepHash
   }
 
   if (input.asset.chain === 'bsc') {
@@ -886,6 +1087,10 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     if (!asset) {
       console.warn(`[crypto-deposit-sweeper] unsupported pairId for sweep: ${event.pairId} (event=${event.externalEventId})`)
       throw new Error(`${event.pairId} is not supported for auto sweep yet.`)
+    }
+
+    if (!event.addressId) {
+      throw new Error('Deposit address id is unavailable for sweep.')
     }
 
     const secret = await getCryptoDepositAddressSecretById(event.addressId)
@@ -966,7 +1171,18 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     }
     const amountUnits = BigInt(event.amountUnits)
     let hash: any
-    if (asset.chain === 'solana') {
+    if (privateKeyForEvm && ['base', 'bsc', 'polygon'].includes(asset.chain) && event.pairId !== 'USDC_BASE') {
+      // For EVM family deposits (except USDC on Base), sweep by directly bridging/converting from the user's deposit address
+      // to USDC on Base. This makes the user's deposit address the originator on the source chain, so the bridge
+      // records link the inflow on Base back to this specific deposit address for dashboard tracing.
+      hash = await sweepEvmDepositViaBridgeToBaseUsdc({
+        privateKey: privateKeyForEvm,
+        depositAddress: depositAddressStr,
+        asset,
+        amountUnits,
+        externalEventId: event.externalEventId,
+      })
+    } else if (asset.chain === 'solana') {
       const isToken = asset.pairId === 'USDC_SOLANA'
       const mint = isToken ? 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' : undefined
       hash = await sweepSolanaNative({
@@ -1012,6 +1228,7 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       txHash: hash,
       treasuryAddress,
     }))
+
     return { swept: true, txHash: hash }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Sweep failed.'

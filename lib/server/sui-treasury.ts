@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions'
-import { broadcastBaseTransaction, getBaseExecutorConfig } from '@/lib/server/base-executor'
+import { broadcastBaseTransaction, getBaseExecutorConfig, getBaseBuilderDataSuffix } from '@/lib/server/base-executor'
 import { getCryptoAssetById } from '@/lib/server/data'
 import { assertLifiTreasuryCanExecuteBuy, getLifiConfig, prepareLifiBaseApproval } from '@/lib/server/lifi'
 import type { CryptoOrder } from '@/types'
@@ -339,6 +339,10 @@ async function fetchSuiBridgeQuote(input: {
     slippage: '0.005',
     order: 'FASTEST',
   })
+  const dataSuffix = getBaseBuilderDataSuffix()
+  if (dataSuffix) {
+    params.set('dataSuffix', dataSuffix)
+  }
 
   const requestUrl = `${getLifiConfig().baseUrl}/quote?${params.toString()}`
   logSui('quote.request', {
@@ -347,6 +351,7 @@ async function fetchSuiBridgeQuote(input: {
     toChain: SUI_CHAIN_ID,
     bridgeCoinType: config.usdcCoinType,
     recipient: input.treasuryAddress,
+    hasDataSuffix: !!dataSuffix,
   })
 
   const headers = buildLifiHeaders()
@@ -618,6 +623,11 @@ export async function submitSuiTreasuryBridgeForOrder(order: CryptoOrder) {
     to: transactionRequest.to,
     data: transactionRequest.data,
     value: transactionRequest.value,
+    attribution: {
+      pairId: 'SUI_SUI',
+      amount: order.amountNgn,
+      action: 'buy_sui_bridge_leg',
+    },
   })
 
   providerPayload.sendingTxHash = execution.hash

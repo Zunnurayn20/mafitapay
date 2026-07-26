@@ -38,7 +38,7 @@ export default function ProfilePage() {
           badge: 'KYC PENDING',
           badgeClass: 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.1)] text-[var(--red2)]',
           headline: 'Verification required',
-          body: 'Upload a valid government ID to unlock higher transaction limits and full P2P access.',
+          body: 'Upload a valid government ID to unlock higher transaction limits and full platform access.',
         }
 
   async function saveProfile() {

@@ -32,6 +32,10 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [showAssetPicker, setShowAssetPicker] = useState(false)
   const [qrRenderKey, setQrRenderKey] = useState(0)
   const qrCodeCacheRef = useRef<Record<string, string>>({})
+  // Quick win: support Binance internal (CEX) deposit method for crypto-to-NGN
+  const [depositMethod, setDepositMethod] = useState<'wallet' | 'binance'>('wallet')
+  const [cexInstructions, setCexInstructions] = useState<{ uid: string; memo: string; instructions: string } | null>(null)
+  const [creatingCexIntent, setCreatingCexIntent] = useState(false)
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = sellableAssets.find(a => a.id === pairId)
@@ -123,6 +127,16 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     showToast('Deposit address copied.')
   }
 
+  // createBinanceCexIntent temporarily parked (CEX feature skipped while focusing on on-chain)
+  // async function createBinanceCexIntent() { ... }
+
+  function copyCex(field: 'uid' | 'memo') {
+    const val = field === 'uid' ? cexInstructions?.uid : cexInstructions?.memo
+    if (val) {
+      navigator.clipboard?.writeText(val).then(() => showToast(`${field === 'uid' ? 'UID' : 'Memo'} copied`))
+    }
+  }
+
   return (
     <Modal open={open} onClose={handleClose} title="Sell Crypto">
       {!asset && (
@@ -179,32 +193,57 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             )}
           </div>
 
-          <div className="border border-[rgba(202,165,96,.24)] bg-[var(--clay)] p-4">
-            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Send any amount</div>
-            <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
-              Send only {asset.symbol} on {asset.network}. Once the network confirms it, MafitaPay detects the deposit and credits your NGN balance.
-            </div>
-          </div>
+          {/* CEX Binance internal temporarily parked while focusing on on-chain deposit testing.
+              Only on-chain wallet deposits are active for now. */}
+          {/* <div className="flex gap-2 text-[9px]">
+            <button
+              onClick={() => { setDepositMethod('wallet'); setCexInstructions(null) }}
+              className={`flex-1 py-1 border ${depositMethod === 'wallet' ? 'border-[var(--gold2)] bg-[var(--clay2)]' : 'border-[var(--border)]'}`}
+            >
+              From Wallet (on-chain)
+            </button>
+            <button
+              onClick={() => setDepositMethod('binance')}
+              className={`flex-1 py-1 border ${depositMethod === 'binance' ? 'border-[var(--gold2)] bg-[var(--clay2)]' : 'border-[var(--border)]'}`}
+            >
+              From Binance (internal)
+            </button>
+          </div> */}
+          <div className="text-[8px] text-[var(--muted)]">Using on-chain wallet deposit (CEX internal parked for focused testing).</div>
 
-          <button
-            type="button"
-            onClick={() => void copyAddress()}
-            disabled={!depositAddress?.address}
-            className="flex flex-col items-center gap-3 border border-[var(--border)] bg-[var(--clay2)] p-4 text-center disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            <div className="flex h-44 w-44 items-center justify-center border border-[rgba(202,165,96,.25)] bg-[#fff7e6] p-2">
-              {depositAddress?.address && qrCodeCacheRef.current[depositAddress.address] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrCodeCacheRef.current[depositAddress.address]} alt={`${asset.symbol} deposit QR code`} className="h-full w-full object-contain" />
-              ) : (
-                <div className="spinner" />
-              )}
-            </div>
-            <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Tap QR/address to copy</div>
-            <div className="max-w-full break-all font-mono text-[12px] font-bold leading-relaxed text-[var(--gold2)]">
-              {depositAddress?.address ?? 'Preparing address...'}
-            </div>
-          </button>
+          {depositMethod === 'wallet' && (
+            <>
+              <div className="border border-[rgba(202,165,96,.24)] bg-[var(--clay)] p-4">
+                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Send any amount</div>
+                <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
+                  Send only {asset.symbol} on {asset.network}. Once the network confirms it, MafitaPay detects the deposit and credits your NGN balance.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void copyAddress()}
+                disabled={!depositAddress?.address}
+                className="flex flex-col items-center gap-3 border border-[var(--border)] bg-[var(--clay2)] p-4 text-center disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <div className="flex h-44 w-44 items-center justify-center border border-[rgba(202,165,96,.25)] bg-[#fff7e6] p-2">
+                  {depositAddress?.address && qrCodeCacheRef.current[depositAddress.address] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={qrCodeCacheRef.current[depositAddress.address]} alt={`${asset.symbol} deposit QR code`} className="h-full w-full object-contain" />
+                  ) : (
+                    <div className="spinner" />
+                  )}
+                </div>
+                <div className="text-[8px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Tap QR/address to copy</div>
+                <div className="max-w-full break-all font-mono text-[12px] font-bold leading-relaxed text-[var(--gold2)]">
+                  {depositAddress?.address ?? 'Preparing address...'}
+                </div>
+              </button>
+            </>
+          )}
+
+          {/* Binance CEX internal UI parked (see comment above). Only on-chain path active. */}
+          {/* {depositMethod === 'binance' && ( ... full block ... )} */}
 
           <div className="border border-[rgba(196,52,26,.2)] border-l-4 border-l-[var(--red2)] bg-[rgba(196,52,26,.06)] p-3">
             <div className="mb-1 text-[10px] font-bold text-[var(--red2)]">Send on the correct network</div>

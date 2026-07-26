@@ -17,6 +17,7 @@ import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib
 import { ensureTonReceiptAutoSyncWatchdog, kickTonReceiptAutoSync } from '@/lib/server/ton-receipt-sync'
 import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
+import { createCexDepositIntent } from '@/lib/server/data'
 import { validateWalletAddressForAsset } from '@/lib/crypto-addresses'
 import { getMaxQuoteDriftPercentForAsset, getMinimumBuyNgnForAsset, getQuoteDriftPercent } from '@/lib/crypto-rules'
 import { formatCrypto, generateRef } from '@/lib/utils'
@@ -152,6 +153,12 @@ export async function POST(req: Request) {
     userId: user.id,
     hasWalletAddress: Boolean(walletAddress),
   })
+
+  // Binance CEX internal deposit intent is temporarily parked (skipped) while focusing on on-chain deposits.
+  // The UI no longer offers this path, and the poller is disabled to avoid log noise.
+  if (body.action === 'create_cex_deposit_intent' || body.intent === 'create_cex_deposit_intent') {
+    return NextResponse.json({ error: 'Binance CEX deposit method is temporarily disabled while testing on-chain flows. Please use on-chain wallet deposit.', success: false }, { status: 400 })
+  }
 
   if (!pairId) {
     return NextResponse.json({ error: 'pairId is required.', success: false }, { status: 400 })
@@ -497,6 +504,8 @@ export async function POST(req: Request) {
         await assertSuiTreasuryCanExecuteBuy({ amountNgn: quotedAmount })
       } else if (executionRail === 'ton_treasury') {
         await assertTonTreasuryCanExecuteBuy({ amountNgn: quotedAmount })
+      } else if (executionRail === 'near_intents') {
+        await assertNearIntentsTreasuryCanExecuteBuy({ amountNgn: quotedAmount })
       } else {
         await assertTreasuryCanExecuteBuy({
           asset,

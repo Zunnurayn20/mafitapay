@@ -1,17 +1,19 @@
 import { WalletHero } from '@/components/dashboard/WalletHero'
 import { QuickActions } from '@/components/dashboard/QuickActions'
+import { GoldBanner } from '@/components/dashboard/GoldBanner'
 import { StatCards } from '@/components/dashboard/StatCards'
 import { ActivityChart } from '@/components/dashboard/ActivityChart'
 import { RecentTransactions } from '@/components/dashboard/RecentTransactions'
 import { CryptoRates } from '@/components/dashboard/CryptoRates'
-import { P2PWidget } from '@/components/dashboard/P2PWidget'
+import { StocksWidget } from '@/components/dashboard/StocksWidget'
 import { ServicesGrid } from '@/components/dashboard/ServicesGrid'
 
 export default function DashboardPage() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <WalletHero />
       <QuickActions />
+      <GoldBanner />
       <div className="md:hidden">
         <RecentTransactions />
       </div>
@@ -25,7 +27,7 @@ export default function DashboardPage() {
         </div>
         <div className="space-y-6">
           <CryptoRates />
-          <P2PWidget />
+          <StocksWidget />
           <ServicesGrid />
         </div>
       </div>

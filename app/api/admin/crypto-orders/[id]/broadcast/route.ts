@@ -32,6 +32,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         to: typeof body.to === 'string' ? body.to.trim() : '',
         data: typeof body.data === 'string' && body.data.trim() ? body.data.trim() : undefined,
         value: typeof body.value === 'string' || typeof body.value === 'number' ? body.value : undefined,
+        attribution: {
+          pairId: order.pairId,
+          amount: order.amountNgn,
+          action: 'admin_raw_base_tx',
+        },
       })
       const updated = await updateCryptoOrderExecution({
         id: order.id,

@@ -6,7 +6,7 @@ export function Ticker() {
         className="text-[10px] text-[var(--muted)] italic whitespace-nowrap animate-ticker"
         style={{ animationDuration: '35s' }}
       >
-        &ldquo;Owo l&apos;owo — a hand washes the other.&rdquo; · &ldquo;Eti alá ni idẹ ọrọ.&rdquo; · Live: USDT ₦1,620 buy · ₦1,590 sell · ETH ₦5.2M · BTC ₦158M · Zero-fee week active · 3 merchants online · Your funds are secured.
+        &ldquo;Owo l&apos;owo — a hand washes the other.&rdquo; · &ldquo;Eti alá ni idẹ ọrọ.&rdquo; · Live: USDT ₦1,620 buy · ₦1,590 sell · ETH ₦5.2M · BTC ₦158M · NGX stocks watchlist now available · Your funds are secured.
       </span>
     </div>
   )

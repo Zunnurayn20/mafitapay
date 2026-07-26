@@ -2,14 +2,32 @@
 import { useAppStore } from '@/store'
 import { useRouter } from 'next/navigation'
 import { useBillProviders } from '@/lib/client/catalogs'
+import { Smartphone, Wifi, Tv, Zap, Bitcoin } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 const DISPLAY_ORDER = ['airtime', 'data', 'cable', 'electric'] as const
-const ACTION_COLORS: Record<string, string> = {
-  airtime: 'var(--green)',
-  data: 'var(--gold2)',
-  cable: 'var(--terra2)',
-  electric: 'var(--gold)',
-  crypto: 'var(--gold)',
+
+const ACTION_META: Record<string, { icon: LucideIcon; tint: string }> = {
+  airtime: {
+    icon: Smartphone,
+    tint: 'bg-amber-50 text-amber-700 border-white/70',
+  },
+  data: {
+    icon: Wifi,
+    tint: 'bg-blue-50 text-[#2C5AA0] border-white/70',
+  },
+  cable: {
+    icon: Tv,
+    tint: 'bg-violet-50 text-violet-700 border-white/70',
+  },
+  electric: {
+    icon: Zap,
+    tint: 'bg-emerald-50 text-emerald-700 border-white/70',
+  },
+  crypto: {
+    icon: Bitcoin,
+    tint: 'bg-orange-50 text-orange-700 border-white/70',
+  },
 }
 
 export function QuickActions() {
@@ -17,44 +35,65 @@ export function QuickActions() {
   const router = useRouter()
   const providers = useBillProviders()
     .filter(item => DISPLAY_ORDER.includes(item.id as (typeof DISPLAY_ORDER)[number]))
-    .sort((a, b) => DISPLAY_ORDER.indexOf(a.id as (typeof DISPLAY_ORDER)[number]) - DISPLAY_ORDER.indexOf(b.id as (typeof DISPLAY_ORDER)[number]))
+    .sort(
+      (a, b) =>
+        DISPLAY_ORDER.indexOf(a.id as (typeof DISPLAY_ORDER)[number]) -
+        DISPLAY_ORDER.indexOf(b.id as (typeof DISPLAY_ORDER)[number]),
+    )
 
   return (
-    <section className="space-y-3">
-      <div className="text-[8px] font-bold uppercase tracking-[1.4px] text-[var(--muted)]">Quick Services</div>
-      <div className="grid grid-cols-5 gap-2 sm:gap-3">
-        {providers.map(provider => (
-          <button
-            key={provider.id}
-            onClick={() => {
-              if (provider.isActive === false) return
-              setModalData({ service: provider.name })
-              openModal('bills')
-            }}
-            disabled={provider.isActive === false}
-            className={`min-h-20 border px-2 py-3 text-center transition-all sm:min-h-28 sm:p-4 ${
-              provider.isActive === false
-                ? 'border-[var(--border)] bg-[rgba(255,255,255,.03)] opacity-55'
-                : 'border-[var(--border)] bg-[var(--coal)] hover:-translate-y-0.5 hover:bg-[var(--clay)]'
-            }`}
-            style={{ borderTop: `3px solid ${ACTION_COLORS[provider.id] || 'var(--gold)'}` }}
-          >
-            <div className="mb-1 text-[18px] sm:mb-2 sm:text-[22px]">{provider.icon}</div>
-            <div className="text-[8px] font-bold uppercase tracking-[.4px] text-[var(--text2)] sm:text-[9px] sm:tracking-[.6px]">{provider.name}</div>
-            {provider.isActive === false && (
-              <div className="mt-1 text-[7px] font-bold uppercase tracking-[.4px] text-[var(--muted)] sm:text-[8px]">
-                Unavailable
+    <section>
+      <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
+        Quick actions
+      </div>
+      <div className="grid grid-cols-5 gap-2.5">
+        {providers.map(provider => {
+          const meta = ACTION_META[provider.id] || ACTION_META.data
+          const Icon = meta.icon
+          const disabled = provider.isActive === false
+
+          return (
+            <button
+              key={provider.id}
+              type="button"
+              onClick={() => {
+                if (disabled) return
+                setModalData({ service: provider.name })
+                openModal('bills')
+              }}
+              disabled={disabled}
+              className={`group flex flex-col items-center gap-2 ${disabled ? 'opacity-50' : ''}`}
+            >
+              <div
+                className={`flex h-12 w-12 items-center justify-center rounded-xl border shadow-[0_3px_16px_-6px_rgba(15,23,42,0.16)] transition-transform group-active:scale-95 ${meta.tint}`}
+              >
+                <Icon size={20} strokeWidth={1.75} />
               </div>
-            )}
-          </button>
-        ))}
+              <span className="text-center text-[11px] font-medium leading-tight text-[var(--text2)]">
+                {provider.name}
+              </span>
+              {disabled ? (
+                <span className="text-[8px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Off
+                </span>
+              ) : null}
+            </button>
+          )
+        })}
+
         <button
+          type="button"
           onClick={() => router.push('/crypto')}
-          className="min-h-20 border border-[var(--border)] bg-[var(--coal)] px-2 py-3 text-center transition-all hover:-translate-y-0.5 hover:bg-[var(--clay)] sm:min-h-28 sm:p-4"
-          style={{ borderTop: `3px solid ${ACTION_COLORS.crypto}` }}
+          className="group flex flex-col items-center gap-2"
         >
-          <div className="mb-1 text-[18px] sm:mb-2 sm:text-[22px]">₿</div>
-          <div className="text-[8px] font-bold uppercase tracking-[.4px] text-[var(--text2)] sm:text-[9px] sm:tracking-[.6px]">Crypto</div>
+          <div
+            className={`flex h-12 w-12 items-center justify-center rounded-xl border shadow-[0_3px_16px_-6px_rgba(15,23,42,0.16)] transition-transform group-active:scale-95 ${ACTION_META.crypto.tint}`}
+          >
+            <Bitcoin size={20} strokeWidth={1.75} />
+          </div>
+          <span className="text-center text-[11px] font-medium leading-tight text-[var(--text2)]">
+            Crypto
+          </span>
         </button>
       </div>
     </section>

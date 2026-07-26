@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import https from 'node:https'
 import { promisify } from 'node:util'
-import { ensureBaseTokenAllowance, getBaseExecutorConfig, getBaseExecutorHealth, getBaseTreasuryBalances } from '@/lib/server/base-executor'
+import { ensureBaseTokenAllowance, getBaseBuilderDataSuffix, getBaseExecutorConfig, getBaseExecutorHealth, getBaseTreasuryBalances } from '@/lib/server/base-executor'
 import { getRoutedTreasuryPairConfig, getRoutedTreasuryPairConfigForAsset, type RoutedTreasuryPairConfig, type RoutedTreasuryResolvedConfig } from '@/lib/routed-assets'
 import { getCryptoAssetById } from '@/lib/server/data'
 import type { CryptoAsset, CryptoOrder, CryptoPairId } from '@/types'
@@ -244,6 +244,17 @@ async function fetchLifiQuote(input: {
     slippage: '0.005',
     order: 'FASTEST',
   })
+  const dataSuffix = getBaseBuilderDataSuffix()
+  if (dataSuffix) {
+    params.set('dataSuffix', dataSuffix)
+  }
+  logLifi('quote.request', {
+    pairId: input.pairId,
+    amountNgn: input.amountNgn,
+    toChain: pair.toChain,
+    toToken: pair.toToken,
+    hasDataSuffix: !!dataSuffix,
+  })
 
   const requestUrl = `${getLifiConfig().baseUrl}/quote?${params.toString()}`
   logLifi('quote.request', {
@@ -463,6 +474,52 @@ export async function prepareLifiBaseApproval(input: {
     spender: approvalAddress,
     minimumAmount: input.minimumAmount,
   })
+}
+
+export async function getLifiQuoteForConversion(params: {
+  fromChain: number | string
+  fromToken: string
+  toChain: number | string
+  toToken: string
+  fromAmount: string
+  fromAddress: string
+  toAddress: string
+  dataSuffix?: string
+}) {
+  const search = new URLSearchParams({
+    fromChain: String(params.fromChain),
+    toChain: String(params.toChain),
+    fromToken: params.fromToken,
+    toToken: params.toToken,
+    fromAmount: params.fromAmount,
+    fromAddress: params.fromAddress,
+    toAddress: params.toAddress,
+  })
+  if (params.dataSuffix) {
+    search.set('dataSuffix', params.dataSuffix)
+  }
+  const url = `${LIFI_BASE_URL}/quote?${search.toString()}`
+  logLifi('conversion.quote.request', {
+    fromChain: params.fromChain,
+    toChain: params.toChain,
+    fromAmount: params.fromAmount,
+    hasDataSuffix: !!params.dataSuffix,
+  })
+  try {
+    const quote = await fetchJsonOverHttps<LifiQuoteResponse>(url)
+    if (quote.code || quote.message) {
+      throw new Error(quote.message || 'LiFi quote failed for conversion')
+    }
+    logLifi('conversion.quote.success', {
+      transactionId: quote.transactionId,
+      tool: quote.tool,
+    })
+    return quote
+  } catch (err) {
+    logLifi('conversion.quote.error', { error: (err as Error).message })
+    const quote = await fetchJsonViaCurl<LifiQuoteResponse>(url)
+    return quote
+  }
 }
 
 export async function getLifiTransferStatus(input: {

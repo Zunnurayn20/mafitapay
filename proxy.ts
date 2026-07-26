@@ -7,7 +7,7 @@ const LANDING_SEEN_COOKIE = 'mfp_seen_landing'
 const DASHBOARD_PREFIXES = [
   '/dashboard',
   '/history',
-  '/p2p',
+  '/stocks',
   '/crypto',
   '/bills',
   '/referrals',
@@ -24,6 +24,10 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value)
   const hasSeenLanding = Boolean(request.cookies.get(LANDING_SEEN_COOKIE)?.value)
+
+  if (pathname === '/p2p' || pathname.startsWith('/p2p/')) {
+    return NextResponse.redirect(new URL('/stocks', request.url))
+  }
 
   if (pathname === '/') {
     if (!hasSession && hasSeenLanding) {

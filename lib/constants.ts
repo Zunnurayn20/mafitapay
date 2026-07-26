@@ -1,4 +1,4 @@
-import type { CryptoAsset, P2PMerchant, BillProvider, NetworkProvider } from '../types/index.ts'
+import type { CryptoAsset, StockQuote, StocksMarketSummary, BillProvider, NetworkProvider } from '../types/index.ts'
 
 export const CRYPTO_ASSETS: CryptoAsset[] = [
   { id: 'USDT_BSC', name: 'Tether USD', symbol: 'USDT', network: 'BSC', icon: '/crypto-assets/usdt.png', marketSourceId: 'tether', marketPriceUsd: 1, marketRate: 1600, buyRate: 1628.8, sellRate: 1571.2, buySpreadBps: 180, sellSpreadBps: 180, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.3 },
@@ -16,11 +16,28 @@ export const CRYPTO_ASSETS: CryptoAsset[] = [
   { id: 'NEAR_NEAR', name: 'NEAR Protocol', symbol: 'NEAR', network: 'NEAR', icon: '/crypto-assets/near.png', marketSourceId: 'near', marketPriceUsd: 6.4, marketRate: 10240, buyRate: 10547.2, sellRate: 9932.8, buySpreadBps: 300, sellSpreadBps: 300, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.6 },
 ]
 
-export const P2P_MERCHANTS: P2PMerchant[] = [
-  { id: 'm1', name: 'AdiolaStore',    initial: 'A', bank: 'First Bank',   accountNumber: '3012345678', accountName: 'ADIO STORES NIG LTD',       completionRate: 98, totalTrades: 234, minAmount: 5000,  maxAmount: 500000,  availableBalance: 200000,  isOnline: true },
-  { id: 'm2', name: 'KanatMerchant',  initial: 'K', bank: 'GTBank',       accountNumber: '0128374651', accountName: 'KANAT MERCHANT SERVICES',    completionRate: 95, totalTrades: 891, minAmount: 1000,  maxAmount: 1000000, availableBalance: 850000,  isOnline: true },
-  { id: 'm3', name: 'FatimahPay',     initial: 'F', bank: 'Access Bank',  accountNumber: '0091827364', accountName: 'FATIMAH ENTERPRISES LTD',    completionRate: 100, totalTrades: 56, minAmount: 2000,  maxAmount: 300000,  availableBalance: 120000,  isOnline: true },
+export const NGX_STOCKS: StockQuote[] = [
+  { id: 'dangcem', symbol: 'DANGCEM', name: 'Dangote Cement', sector: 'Industrial Goods', exchange: 'NGX', priceNgn: 680.5, changePercent: 1.24, volume: 1_240_000, marketCapNgn: 11_580_000_000_000, isWatchOnly: true },
+  { id: 'gtco', symbol: 'GTCO', name: 'GTCO Plc', sector: 'Banking', exchange: 'NGX', priceNgn: 48.25, changePercent: -0.82, volume: 8_420_000, marketCapNgn: 1_420_000_000_000, isWatchOnly: true },
+  { id: 'mtnn', symbol: 'MTNN', name: 'MTN Nigeria', sector: 'ICT', exchange: 'NGX', priceNgn: 215.0, changePercent: 0.47, volume: 2_180_000, marketCapNgn: 4_310_000_000_000, isWatchOnly: true },
+  { id: 'zenithbank', symbol: 'ZENITHBANK', name: 'Zenith Bank', sector: 'Banking', exchange: 'NGX', priceNgn: 42.8, changePercent: 1.9, volume: 12_600_000, marketCapNgn: 1_340_000_000_000, isWatchOnly: true },
+  { id: 'buacement', symbol: 'BUACEMENT', name: 'BUA Cement', sector: 'Industrial Goods', exchange: 'NGX', priceNgn: 112.4, changePercent: -1.1, volume: 980_000, marketCapNgn: 3_760_000_000_000, isWatchOnly: true },
+  { id: 'nestle', symbol: 'NESTLE', name: 'Nestlé Nigeria', sector: 'Consumer Goods', exchange: 'NGX', priceNgn: 1485.0, changePercent: 0.34, volume: 42_000, marketCapNgn: 1_180_000_000_000, isWatchOnly: true },
+  { id: 'seplat', symbol: 'SEPLAT', name: 'Seplat Energy', sector: 'Oil & Gas', exchange: 'NGX', priceNgn: 4120.0, changePercent: 2.15, volume: 18_500, marketCapNgn: 2_420_000_000_000, isWatchOnly: true },
+  { id: 'airtel', symbol: 'AIRTELAFRI', name: 'Airtel Africa', sector: 'ICT', exchange: 'NGX', priceNgn: 2180.0, changePercent: -0.55, volume: 11_200, marketCapNgn: 8_190_000_000_000, isWatchOnly: true },
+  { id: 'flourmill', symbol: 'FLOURMILL', name: 'Flour Mills of Nigeria', sector: 'Consumer Goods', exchange: 'NGX', priceNgn: 52.3, changePercent: 0.96, volume: 1_050_000, marketCapNgn: 210_000_000_000, isWatchOnly: true },
+  { id: 'presco', symbol: 'PRESCO', name: 'Presco', sector: 'Agriculture', exchange: 'NGX', priceNgn: 312.5, changePercent: 1.62, volume: 86_000, marketCapNgn: 312_000_000_000, isWatchOnly: true },
 ]
+
+export const NGX_MARKET_SUMMARY: StocksMarketSummary = {
+  indexName: 'NGX All-Share Index',
+  indexValue: 104_582.41,
+  changePercent: 0.68,
+  marketStatus: 'watch_only',
+  exchange: 'NGX',
+  lastUpdated: '2026-06-18T14:30:00+01:00',
+  source: 'seed',
+}
 
 export const BILL_PROVIDERS: BillProvider[] = [
   { id: 'airtime', name: 'Airtime', icon: '📱', type: 'airtime', accountLabel: 'Phone Number', accountPlaceholder: '0803 000 0000', helperText: 'Top up a valid Nigerian mobile number instantly.', minAmount: 50, maxAmount: 50000, requiresNetwork: true, requiresAccount: true, isActive: true },
@@ -73,9 +90,9 @@ export const DEPOSIT_UIDS: Record<string, Record<string, string>> = {
 }
 
 export const MOCK_TRANSACTIONS = [
-  { id: 't1', type: 'p2p_deposit',    status: 'success', amount: 25000,  fee: 0,   description: 'P2P Deposit — AdiolaStore',   reference: 'MFP-284711', createdAt: '2025-06-11T10:23:00Z', icon: '⬇' },
+  { id: 't1', type: 'p2p_deposit',    status: 'success', amount: 25000,  fee: 0,   description: 'Deposit — AdiolaStore',   reference: 'MFP-284711', createdAt: '2025-06-11T10:23:00Z', icon: '⬇' },
   { id: 't2', type: 'airtime',        status: 'success', amount: -2000,  fee: 0,   description: 'Airtime — MTN',              reference: 'MFP-284698', createdAt: '2025-06-11T07:45:00Z', icon: '📱' },
-  { id: 't3', type: 'p2p_withdrawal', status: 'success', amount: -15000, fee: 0,   description: 'P2P Withdrawal — AdiolaStore', reference: 'MFP-284501', createdAt: '2025-06-10T15:12:00Z', icon: '⬆' },
+  { id: 't3', type: 'p2p_withdrawal', status: 'success', amount: -15000, fee: 0,   description: 'Withdrawal — AdiolaStore', reference: 'MFP-284501', createdAt: '2025-06-10T15:12:00Z', icon: '⬆' },
   { id: 't4', type: 'crypto_sell',    status: 'success', amount: 38000,  fee: 200, description: 'USDT Sell — 50 USDT',        reference: 'MFP-284422', createdAt: '2025-06-10T09:30:00Z', icon: '₿' },
   { id: 't5', type: 'cable',          status: 'success', amount: -9900,  fee: 0,   description: 'DStv Compact',               reference: 'MFP-284310', createdAt: '2025-06-10T11:04:00Z', icon: '📺' },
   { id: 't6', type: 'referral_bonus', status: 'success', amount: 200,    fee: 0,   description: 'Referral Bonus — Yusuf',     reference: 'MFP-284205', createdAt: '2025-06-10T14:00:00Z', icon: '₦' },

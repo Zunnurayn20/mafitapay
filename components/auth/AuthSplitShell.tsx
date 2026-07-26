@@ -1,7 +1,8 @@
 'use client'
 
-import { ReactNode } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { ArrowLeftRight, BadgeCheck, Receipt, ShieldCheck } from 'lucide-react'
+import { isNativeApp } from '@/lib/client/native-app'
 
 interface AuthSplitShellProps {
   children: ReactNode
@@ -30,7 +31,16 @@ const features = [
   },
 ]
 
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=ng.mafitapay.app'
+const APP_STORE_URL = 'https://apps.apple.com/app/mafitapay/id0000000000'
+
 export function AuthSplitShell({ children }: AuthSplitShellProps) {
+  const [nativeApp, setNativeApp] = useState(false)
+
+  useEffect(() => {
+    setNativeApp(isNativeApp())
+  }, [])
+
   return (
     <div className="relative z-[1] min-h-screen overflow-hidden bg-[var(--page-bg)] px-4 py-6 lg:px-8 lg:py-8">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(202,165,96,.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(46,170,92,.12),transparent_28%),linear-gradient(135deg,rgba(140,107,49,.08),transparent_44%,rgba(202,165,96,.03))]" />
@@ -98,22 +108,36 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             })}
           </div>
 
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <button type="button" aria-label="Get MafitaPay on Google Play" className="transition-transform hover:-translate-y-0.5">
-              <img
-                src="/google-play.png"
-                alt="Get it on Google Play"
-                className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
-              />
-            </button>
-            <button type="button" aria-label="Download MafitaPay on the App Store" className="transition-transform hover:-translate-y-0.5">
-              <img
-                src="/app-store.png"
-                alt="Download on the App Store"
-                className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
-              />
-            </button>
-          </div>
+          {!nativeApp ? (
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <a
+                href={PLAY_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Get MafitaPay on Google Play"
+                className="transition-transform hover:-translate-y-0.5"
+              >
+                <img
+                  src="/google-play.png"
+                  alt="Get it on Google Play"
+                  className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
+                />
+              </a>
+              <a
+                href={APP_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Download MafitaPay on the App Store"
+                className="transition-transform hover:-translate-y-0.5"
+              >
+                <img
+                  src="/app-store.png"
+                  alt="Download on the App Store"
+                  className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
+                />
+              </a>
+            </div>
+          ) : null}
         </section>
 
         <section className="relative flex justify-center lg:justify-end">

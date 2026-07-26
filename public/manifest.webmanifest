@@ -1,0 +1,25 @@
+{
+  "name": "MafitaPay",
+  "short_name": "MafitaPay",
+  "description": "Secure NGN wallet, NGX stocks watchlist, crypto, and bills — built for Nigerians.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c0907",
+  "theme_color": "#0c0907",
+  "icons": [
+    {
+      "src": "/mafitapay-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/mafitapay-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

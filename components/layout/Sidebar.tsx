@@ -6,7 +6,7 @@ import { useAppStore } from '@/store'
 import { isAdminEmail } from '@/lib/admin-access'
 import { formatNGN } from '@/lib/utils'
 import {
-  LayoutDashboard, ClipboardList, ArrowLeftRight, Zap,
+  LayoutDashboard, ClipboardList, TrendingUp, Zap,
   Receipt, Users, UserCircle, ShieldCheck, LogOut, ChevronRight, BarChart3
 } from 'lucide-react'
 
@@ -16,7 +16,7 @@ const NAV = [
   { section: 'Main', items: [
     { href: '/dashboard',  label: 'Dashboard',     Icon: LayoutDashboard },
     { href: '/history',    label: 'Transactions',  Icon: ClipboardList },
-    { href: '/p2p',        label: 'P2P Market',    Icon: ArrowLeftRight },
+    { href: '/stocks',     label: 'Stocks',        Icon: TrendingUp },
     { href: '/crypto',     label: 'Crypto',        Icon: Zap },
     { href: '/crypto/orders', label: 'Crypto Orders', Icon: ClipboardList },
   ]},

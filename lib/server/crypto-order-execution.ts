@@ -69,6 +69,11 @@ export async function triggerCryptoOrderExecution(input: {
       to: quote.transaction!.to,
       data: quote.transaction!.data,
       value: quote.transaction!.value,
+      attribution: {
+        pairId: order.pairId,
+        amount: order.amountNgn,
+        action: 'buy_zerox_swap',
+      },
     })
 
     await updateCryptoOrderProviderState({
@@ -149,10 +154,18 @@ export async function triggerCryptoOrderExecution(input: {
       }
     }
 
+    // The transactionRequest (and its .data) was produced by LiFi from a /quote that included our dataSuffix (see fetchLifiQuote).
+    // We pass attribution context so the Base broadcast emits the full audit log with builder + order info.
+    // This covers "pass dataSuffix context when building/using txRequest before broadcast".
     execution = await broadcastBaseTransaction({
       to: transactionRequest.to,
       data: transactionRequest.data,
       value: transactionRequest.value,
+      attribution: {
+        pairId: order.pairId,
+        amount: order.amountNgn,
+        action: 'buy_lifi_route',
+      },
     })
 
     await updateCryptoOrderProviderState({

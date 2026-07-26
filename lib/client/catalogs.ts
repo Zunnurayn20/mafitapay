@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { BILL_PROVIDERS, CRYPTO_ASSETS, NETWORK_PROVIDERS, P2P_MERCHANTS } from '@/lib/constants'
-import type { BankDirectoryEntry, BillProvider, CryptoAsset, NetworkProvider, P2PMerchant } from '@/types'
+import { BILL_PROVIDERS, CRYPTO_ASSETS, NETWORK_PROVIDERS, NGX_MARKET_SUMMARY, NGX_STOCKS } from '@/lib/constants'
+import { enrichStockQuote } from '@/lib/stock-filters'
+import type { BankDirectoryEntry, BillProvider, CryptoAsset, NetworkProvider, StockQuote, StocksMarketSource, StocksMarketSummary } from '@/types'
 
 const CRYPTO_ASSETS_CACHE_KEY = 'mafitapay.cryptoAssets'
 const CRYPTO_ASSETS_CLIENT_REFRESH_TTL_MS = 45 * 1000
@@ -21,9 +22,15 @@ const networkProviderListeners = new Set<(providers: NetworkProvider[]) => void>
 const BILL_CATALOG_FORCE_REFRESH_DEBOUNCE_MS = 60 * 1000
 const BILL_PROVIDER_DISPLAY_ORDER = ['airtime', 'data', 'cable', 'electric', 'education', 'gas', 'insurance', 'water'] as const
 const HIDDEN_CRYPTO_PAIR_IDS = new Set<CryptoAsset['id']>(['USDC_SOLANA'])
-let p2pMerchantsSnapshot: P2PMerchant[] = P2P_MERCHANTS
-let p2pMerchantsFetchPromise: Promise<void> | null = null
-const p2pMerchantListeners = new Set<(merchants: P2PMerchant[]) => void>()
+let stocksSnapshot: StockQuote[] = NGX_STOCKS.map(enrichStockQuote)
+let stocksSummarySnapshot: StocksMarketSummary = NGX_MARKET_SUMMARY
+let stocksSourceSnapshot: StocksMarketSource = 'seed'
+let stocksFetchPromise: Promise<void> | null = null
+let stocksLastFetchedAt = 0
+const STOCKS_CLIENT_REFRESH_TTL_MS = 20 * 60 * 1000
+const stocksListeners = new Set<(stocks: StockQuote[]) => void>()
+const stocksSummaryListeners = new Set<(summary: StocksMarketSummary) => void>()
+const stocksSourceListeners = new Set<(source: StocksMarketSource) => void>()
 const bankDirectorySnapshot = new Map<string, BankDirectoryEntry[]>()
 const bankDirectoryInflight = new Map<string, Promise<void>>()
 const bankDirectoryListeners = new Map<string, Set<(banks: BankDirectoryEntry[]) => void>>()
@@ -129,10 +136,24 @@ function emitBillCatalog(nextProviders: BillProvider[], nextNetworkProviders: Ne
   }
 }
 
-function emitP2PMerchants(nextMerchants: P2PMerchant[]) {
-  p2pMerchantsSnapshot = nextMerchants
-  for (const listener of p2pMerchantListeners) {
-    listener(nextMerchants)
+function emitStocks(
+  nextStocks: StockQuote[],
+  nextSummary = stocksSummarySnapshot,
+  nextSource: StocksMarketSource = stocksSourceSnapshot,
+) {
+  const enrichedStocks = nextStocks.map(enrichStockQuote)
+  stocksSnapshot = enrichedStocks
+  stocksSummarySnapshot = nextSummary
+  stocksSourceSnapshot = nextSource
+  stocksLastFetchedAt = Date.now()
+  for (const listener of stocksListeners) {
+    listener(enrichedStocks)
+  }
+  for (const listener of stocksSummaryListeners) {
+    listener(nextSummary)
+  }
+  for (const listener of stocksSourceListeners) {
+    listener(nextSource)
   }
 }
 
@@ -228,25 +249,30 @@ async function loadCryptoAssets(options?: { force?: boolean; liveOnly?: boolean 
   return cryptoAssetsFetchPromise
 }
 
-async function loadP2PMerchants() {
-  if (p2pMerchantsFetchPromise) return p2pMerchantsFetchPromise
+async function loadStocksMarket() {
+  if (stocksFetchPromise) return stocksFetchPromise
 
-  p2pMerchantsFetchPromise = fetch('/api/p2p', { credentials: 'include', cache: 'no-store' })
+  stocksFetchPromise = fetch('/api/stocks', { credentials: 'include', cache: 'no-store' })
     .then(async response => {
       const payload = await response.json()
       if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || 'Failed to load merchants.')
+        throw new Error(payload.error || 'Failed to load stocks market.')
       }
-      if (Array.isArray(payload.data) && payload.data.length > 0) {
-        emitP2PMerchants(payload.data as P2PMerchant[])
-      }
+      const nextStocks = Array.isArray(payload.data?.stocks) ? payload.data.stocks as StockQuote[] : stocksSnapshot
+      const nextSummary = payload.data?.summary ?? stocksSummarySnapshot
+      const nextSource = payload.data?.source === 'live'
+        || payload.data?.source === 'stale'
+        || payload.data?.source === 'seed'
+        ? payload.data.source
+        : stocksSourceSnapshot
+      emitStocks(nextStocks, nextSummary, nextSource)
     })
     .catch(() => undefined)
     .finally(() => {
-      p2pMerchantsFetchPromise = null
+      stocksFetchPromise = null
     })
 
-  return p2pMerchantsFetchPromise
+  return stocksFetchPromise
 }
 
 async function loadBankDirectory(country: string) {
@@ -327,18 +353,33 @@ export function useCryptoAssetsRefreshing() {
   return refreshing
 }
 
-export function useP2PMerchants() {
-  const [merchants, setMerchants] = useState<P2PMerchant[]>(p2pMerchantsSnapshot)
+export function useStocksMarket() {
+  const [stocks, setStocks] = useState<StockQuote[]>(stocksSnapshot)
+  const [summary, setSummary] = useState(stocksSummarySnapshot)
+  const [source, setSource] = useState<StocksMarketSource>(stocksSourceSnapshot)
 
   useEffect(() => {
-    p2pMerchantListeners.add(setMerchants)
-    void loadP2PMerchants()
+    stocksListeners.add(setStocks)
+    stocksSummaryListeners.add(setSummary)
+    stocksSourceListeners.add(setSource)
+
+    void loadStocksMarket()
+
+    const interval = window.setInterval(() => {
+      if (Date.now() - stocksLastFetchedAt >= STOCKS_CLIENT_REFRESH_TTL_MS) {
+        void loadStocksMarket()
+      }
+    }, 60_000)
+
     return () => {
-      p2pMerchantListeners.delete(setMerchants)
+      stocksListeners.delete(setStocks)
+      stocksSummaryListeners.delete(setSummary)
+      stocksSourceListeners.delete(setSource)
+      window.clearInterval(interval)
     }
   }, [])
 
-  return merchants
+  return { stocks, summary, source }
 }
 
 export function useBillProviders() {

@@ -28,7 +28,7 @@ export function Topbar({ title }: TopbarProps) {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(13,13,20,.94)] backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(13,13,20,.94)] pt-[env(safe-area-inset-top)] backdrop-blur-xl">
       <div className="flex min-h-16 flex-wrap items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
         {searchOpen ? (
           <div className="order-2 flex basis-full items-center gap-2 border border-[var(--border)] bg-[var(--clay)] px-3 py-2">

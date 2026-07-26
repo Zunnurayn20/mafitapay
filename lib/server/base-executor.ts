@@ -18,6 +18,7 @@ import {
   type Hex,
 } from 'viem'
 import { getCryptoAssetById } from '@/lib/server/data'
+import { sanitizeEvmRpcUrls } from '@/lib/server/evm-rpc'
 
 const DEFAULT_BASE_EXECUTOR_ADDRESS = '0xA37cd2CACF7ac304b6f966e980952910D7750921'
 const DEFAULT_BASE_RPC_URL = 'https://mainnet.base.org'
@@ -37,11 +38,35 @@ export function getBaseBuilderDataSuffix() {
   return DATA_SUFFIX
 }
 
+export function logBaseAttribution(input: {
+  depositAddress?: string
+  builderCode: string
+  txHash?: string
+  pairId?: string
+  amount?: string | number
+  action?: string
+  fromAddress?: string
+}) {
+  console.log(
+    `[base] Base tx originated from deposit ${input.depositAddress || input.fromAddress || 'N/A'} with builder code ${input.builderCode}`,
+    {
+      builderCode: input.builderCode,
+      depositAddress: input.depositAddress,
+      fromAddress: input.fromAddress,
+      txHash: input.txHash,
+      pairId: input.pairId,
+      amount: input.amount,
+      action: input.action,
+    }
+  )
+}
+
 export function getBaseExecutorConfig() {
-  const rpcUrls = (process.env.MAFITAPAY_BASE_RPC_URLS?.trim() || process.env.MAFITAPAY_BASE_RPC_URL?.trim() || DEFAULT_BASE_RPC_URL)
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
+  const rawRpc = process.env.MAFITAPAY_BASE_RPC_URLS?.trim() || process.env.MAFITAPAY_BASE_RPC_URL?.trim() || DEFAULT_BASE_RPC_URL
+  const { rpcUrls, dropped } = sanitizeEvmRpcUrls(rawRpc, DEFAULT_BASE_RPC_URL)
+  if (dropped.length > 0) {
+    console.warn('[base] dropped invalid Base RPC URLs from env:', dropped.map(url => url.replace(/\/v2\/[^/]+/, '/v2/[REDACTED]')))
+  }
   const rpcUrl = rpcUrls[0] || DEFAULT_BASE_RPC_URL
   const privateKey = process.env.MAFITAPAY_BASE_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined
   const configuredAddress = getAddress(process.env.MAFITAPAY_BASE_EXECUTOR_ADDRESS?.trim() || DEFAULT_BASE_EXECUTOR_ADDRESS)
@@ -258,9 +283,17 @@ export async function broadcastBaseTransaction(input: {
   to: string
   data?: string
   value?: string | number | bigint
+  /** Optional context for attribution logs (e.g. order pair, originating deposit for traceability) */
+  attribution?: {
+    depositAddress?: string
+    pairId?: string
+    amount?: string | number
+    action?: string
+  }
 }) {
   try {
     const { account, walletClient } = getBaseClients()
+    const baseConfig = getBaseExecutorConfig()
     if (!isAddress(input.to)) {
       throw new Error('Invalid Base transaction target address.')
     }
@@ -282,6 +315,18 @@ export async function broadcastBaseTransaction(input: {
       data: input.data as Hex | undefined,
       value,
       chain: base,
+    })
+
+    // Always emit the audit-style attribution log for any Base-originated tx (covers buy LiFi paths, 0x, deliveries, etc.)
+    // This helps with Base dashboard WUT / builder code correlation.
+    logBaseAttribution({
+      builderCode: baseConfig.builderCode,
+      fromAddress: account.address,
+      txHash: hash,
+      depositAddress: input.attribution?.depositAddress,
+      pairId: input.attribution?.pairId,
+      amount: input.attribution?.amount,
+      action: input.attribution?.action || 'broadcast_base_tx',
     })
 
     return {
@@ -431,6 +476,13 @@ export async function ensureBaseEthLiquidity(amountWei: string | bigint) {
   })
   await publicClient.waitForTransactionReceipt({ hash })
 
+  logBaseAttribution({
+    builderCode: config.builderCode,
+    fromAddress: account.address,
+    txHash: hash,
+    action: 'base_weth_unwrap_for_eth_liquidity',
+  })
+
   return {
     unwrapped: true as const,
     amountWei: deficit.toString(),
@@ -485,6 +537,15 @@ export async function broadcastBaseDeliveryForOrder(order: CryptoOrder) {
       args: [to, toUnits(order.cryptoAmount, 6)],
     })
 
+    logBaseAttribution({
+      builderCode: config.builderCode,
+      fromAddress: account.address,
+      txHash: hash,
+      pairId: order.pairId,
+      amount: order.cryptoAmount,
+      action: 'base_usdc_delivery',
+    })
+
     return {
       mode: 'delivery' as const,
       asset: 'USDC_BASE' as const,
@@ -498,6 +559,15 @@ export async function broadcastBaseDeliveryForOrder(order: CryptoOrder) {
     const delivery = await broadcastBaseEthTransfer({
       to,
       amountWei: toUnits(order.cryptoAmount, 18),
+    })
+
+    logBaseAttribution({
+      builderCode: config.builderCode,
+      fromAddress: delivery.from,
+      txHash: delivery.hash,
+      pairId: order.pairId,
+      amount: order.cryptoAmount,
+      action: 'base_eth_delivery',
     })
 
     return {
@@ -535,6 +605,14 @@ export async function broadcastBaseUsdcTransfer(input: {
     abi: erc20Abi,
     functionName: 'transfer',
     args: [to, amountUnits],
+  })
+
+  logBaseAttribution({
+    builderCode: config.builderCode,
+    fromAddress: account.address,
+    txHash: hash,
+    action: 'base_usdc_transfer',
+    amount: amountUnits.toString(),
   })
 
   return {

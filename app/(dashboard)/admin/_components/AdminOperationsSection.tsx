@@ -1,11 +1,54 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
+
+function PendingCexIntentsList({ reloadKey }: { reloadKey?: number }) {
+  const [items, setItems] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/admin/crypto-deposits', { credentials: 'include', cache: 'no-store' })
+      const json = await res.json()
+      setItems(json?.pendingCexIntents || [])
+    } catch {
+      setItems([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void load() }, [reloadKey])
+
+  if (items.length === 0) {
+    return <div className="text-[8px] text-[var(--muted)]">No pending CEX deposit intents (memos issued to users via SellModal Binance tab).</div>
+  }
+
+  return (
+    <div className="border border-[var(--border)] bg-[var(--clay2)] p-2 text-[8px]">
+      <div className="font-bold uppercase tracking-[1px] text-[var(--gold2)] mb-1">Pending CEX intents (outstanding memos — waiting for real Binance internal transfer into the receiver account)</div>
+      <div className="max-h-32 overflow-auto space-y-0.5 font-mono">
+        {items.slice(0, 20).map((it: any, idx: number) => (
+          <div key={idx} className="flex gap-2 border-b border-[var(--border)] pb-0.5">
+            <span className="text-[var(--muted)]">{new Date(it.createdAt || it.created_at).toLocaleTimeString()}</span>
+            <span className="font-bold">{it.reference || it.memo}</span>
+            <span>{it.userId || it.user_id}</span>
+            <span className="text-[var(--gold2)]">{it.pairId || it.pair_id}</span>
+            <span>exp {it.expectedAmountCrypto || it.expected_amount_crypto || 0}</span>
+          </div>
+        ))}
+      </div>
+      <div className="text-[7px] text-[var(--muted)] mt-1">These are the references users were told to put in Binance "Remark". The poller matches them against actual deposits returned by Binance API. Use the Record form below (with exact memo) to force-credit for testing.</div>
+      <Button variant="secondary" className="text-[8px] mt-1" onClick={() => void load()} disabled={loading}>Refresh pending list</Button>
+    </div>
+  )
+}
 
 export function AdminOperationsSection({ workspace, submodule }: { workspace: AdminWorkspaceState; submodule?: AdminSubmodule }) {
   const [selectedCryptoOrderId, setSelectedCryptoOrderId] = useState<string | null>(null)
@@ -17,6 +60,8 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const [selectedDepositEventId, setSelectedDepositEventId] = useState<string | null>(null)
   const [resweepingEventId, setResweepingEventId] = useState<string | null>(null)
   const [depositPage, setDepositPage] = useState(0)
+  const [syncingBinanceCex, setSyncingBinanceCex] = useState(false)
+  const [recordingCex, setRecordingCex] = useState(false)
   const DEPOSIT_PAGE_SIZE = 20
   const {
     cryptoOrders,
@@ -308,6 +353,100 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                 })
               }
             }} className="text-[10px]">Force Scan + Refresh</Button>
+            <Button 
+              onClick={async () => {
+                setSyncingBinanceCex(true)
+                try {
+                  await fetch('/api/admin/crypto-deposits', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ intent: 'sync-binance-cex' }),
+                  })
+                  await reloadCryptoDepositEvents?.()
+                } finally {
+                  setSyncingBinanceCex(false)
+                }
+              }} 
+              disabled={syncingBinanceCex}
+              className="text-[10px]"
+            >
+              {syncingBinanceCex ? 'Syncing Binance CEX…' : 'Sync Binance CEX'}
+            </Button>
+
+            {/* Quick win: manual create Binance intent and record deposit (for testing/manual) */}
+            {/* CEX parked — pending list and most binance UI hidden to reduce noise while on on-chain focus.
+            <PendingCexIntentsList reloadKey={refreshingCryptoDepositEvents ? 1 : 0} /> */}
+            <div className="mt-2 text-[8px] border-t border-[var(--border)] pt-1">
+              <div className="flex gap-1 mb-1">
+                <input id="binance-user" placeholder="user id" className="flex-1 border px-1 py-0.5 text-[8px]" />
+                <input id="binance-pair" placeholder="pair e.g. USDT or USDT_BSC" className="w-20 border px-1 py-0.5 text-[8px]" defaultValue="USDT" />
+                <input id="binance-amt" placeholder="amt" className="w-12 border px-1 py-0.5 text-[8px]" />
+                <Button 
+                  onClick={async () => {
+                    const uid = (document.getElementById('binance-user') as HTMLInputElement)?.value?.trim()
+                    const p = (document.getElementById('binance-pair') as HTMLInputElement)?.value?.trim()
+                    const a = (document.getElementById('binance-amt') as HTMLInputElement)?.value?.trim()
+                    if (uid && p && a) {
+                      try {
+                        const res = await fetch('/api/admin/crypto-deposits', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ intent: 'create-binance-intent', userId: uid, pairId: p, expectedAmountCrypto: Number(a) }),
+                        })
+                        const d = await res.json()
+                        alert('Intent ref: ' + (d.data?.reference || JSON.stringify(d)))
+                        await reloadCryptoDepositEvents?.()
+                      } catch (e) {
+                        alert('Failed to create intent')
+                      }
+                    }
+                  }} 
+                  disabled={recordingCex}
+                  className="text-[8px]"
+                >
+                  Create Intent
+                </Button>
+              </div>
+              <div className="flex gap-1">
+                <input id="record-user" placeholder="user" className="flex-1 border px-1 py-0.5 text-[8px]" />
+                <input id="record-pair" placeholder="pair (e.g. USDC or USDC_BASE)" className="w-20 border px-1 py-0.5 text-[8px]" defaultValue="USDC" />
+                <input id="record-amt" placeholder="amt" className="w-12 border px-1 py-0.5 text-[8px]" />
+                <input id="record-tx" placeholder="binance txid" className="flex-1 border px-1 py-0.5 text-[8px]" />
+                <input id="record-memo" placeholder="memo/ref" className="flex-1 border px-1 py-0.5 text-[8px]" />
+                <Button 
+                  onClick={async () => {
+                    const u = (document.getElementById('record-user') as HTMLInputElement)?.value?.trim()
+                    const p = (document.getElementById('record-pair') as HTMLInputElement)?.value?.trim()
+                    const a = (document.getElementById('record-amt') as HTMLInputElement)?.value?.trim()
+                    const t = (document.getElementById('record-tx') as HTMLInputElement)?.value?.trim()
+                    const m = (document.getElementById('record-memo') as HTMLInputElement)?.value?.trim()
+                    if (u && p && a && t) {
+                      setRecordingCex(true)
+                      try {
+                        const res = await fetch('/api/admin/crypto-deposits', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ intent: 'record-binance', userId: u, pairId: p, amountCrypto: Number(a), amountUnits: (Number(a)*1e6).toFixed(0), cexTxId: t, memo: m }),
+                        })
+                        const json = await res.json().catch(() => ({}))
+                        if (!res.ok) {
+                          alert('Record failed: ' + (json.error || res.statusText))
+                        } else {
+                          alert('Recorded successfully')
+                        }
+                        await reloadCryptoDepositEvents?.()
+                      } finally {
+                        setRecordingCex(false)
+                      }
+                    }
+                  }} 
+                  disabled={recordingCex}
+                  className="text-[8px]"
+                >
+                  {recordingCex ? 'Recording...' : 'Record Deposit'}
+                </Button>
+              </div>
+            </div>
           </div>
           <div className="text-[8px] text-[var(--muted)] mt-1">Useful for missed detections, test sends, or addresses that fell outside the recent window.</div>
         </div>
@@ -324,6 +463,8 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                 <th className="text-right p-2">Amount</th>
                 <th className="text-left p-2">User</th>
                 <th className="text-left p-2">Status</th>
+                <th className="text-left p-2">Source</th>
+                <th className="text-left p-2">Memo / CEX</th>
                 <th className="text-left p-2">Sweep</th>
                 <th className="text-left p-2">Sweep Tx / Error</th>
                 <th className="text-left p-2">Time</th>
@@ -332,7 +473,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             </thead>
             <tbody>
               {paginatedDepositEvents.length === 0 && (
-                <tr><td colSpan={9} className="p-3 text-center text-[var(--muted)]">No events match the current filters.</td></tr>
+                <tr><td colSpan={11} className="p-3 text-center text-[var(--muted)]">No events match the current filters.</td></tr>
               )}
               {paginatedDepositEvents.map((ev: any) => {
                 const ext = ev.externalEventId || ev.external_event_id
@@ -349,6 +490,10 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                       <span className={`px-1 py-px ${ev.status === 'matched' ? 'text-[var(--green2)]' : ev.status === 'unmatched' ? 'text-[var(--gold2)]' : ''}`}>
                         {(ev.status || ev.Status || '').toUpperCase()}
                       </span>
+                    </td>
+                    <td className="p-2 text-[8px]">{(ev.source || 'onchain').toUpperCase()}</td>
+                    <td className="p-2 font-mono text-[8px] max-w-[120px] truncate" title={ev.memo || ev.cexUid || ''}>
+                      {ev.memo || (ev.cexUid ? `UID:${String(ev.cexUid).slice(0,8)}` : '—')}
                     </td>
                     <td className="p-2">
                       <span className={`px-1 py-px ${isSwept ? 'text-[var(--green2)]' : isFailing ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>

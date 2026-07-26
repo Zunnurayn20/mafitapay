@@ -50,9 +50,9 @@ function formatTransactionTitle(tx: Transaction, cryptoAsset?: { symbol?: string
       case 'reward_bonus':
         return 'Reward Bonus'
       case 'p2p_deposit':
-        return 'P2P Deposit'
+        return 'Deposit'
       case 'p2p_withdrawal':
-        return 'P2P Withdrawal'
+        return 'Withdrawal'
       default:
         return tx.description
     }
@@ -250,57 +250,74 @@ export function RecentTransactions() {
 
   return (
     <>
-      <Card pattern="soft">
+      <Card pattern="plain">
         <CardHeader>
-          <CardTitle>Recent Transactions</CardTitle>
-          <CardAction onClick={() => router.push('/history')}>View All →</CardAction>
+          <CardTitle>Recent activity</CardTitle>
+          <CardAction onClick={() => router.push('/history')}>See all</CardAction>
         </CardHeader>
-        <div className="divide-y divide-[var(--border)]">
-          {recent.map(tx => {
-            const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
-            const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
-            const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
-            const statusIcon = getStatusIcon(tx.status)
+        {recent.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-[var(--muted)]">
+            No transactions yet. Fund your wallet to get started.
+          </div>
+        ) : (
+          <div>
+            {recent.map((tx, index) => {
+              const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
+              const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
+              const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
+              const statusIcon = getStatusIcon(tx.status)
 
-            return (
-              <button
-                key={tx.id}
-                type="button"
-                onClick={() => void openDetail(tx.id)}
-                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-[rgba(26,26,46,.6)]"
-              >
-                <div className="w-8 flex-shrink-0">
-                  {cryptoAsset ? (
-                    <AssetLogo
-                      src={cryptoAsset.icon}
-                      alt={`${cryptoAsset.symbol} logo`}
-                      fallback={cryptoAsset.symbol.slice(0, 1)}
-                      className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(79,70,229,.1)]"
-                      imgClassName="h-5 w-5 object-contain"
-                      textClassName="text-[15px] font-bold text-[var(--gold2)]"
-                    />
-                  ) : (
-                    <div className="text-[18px]">{icon}</div>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="truncate text-[13px] font-semibold text-[var(--text)]">{formatTransactionTitle(tx, cryptoAsset)}</div>
-                    <span className={`flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold leading-none shadow-[inset_0_1px_0_rgba(255,255,255,.18)] ${statusIcon.className}`}>
-                      {statusIcon.icon}
-                    </span>
+              return (
+                <button
+                  key={tx.id}
+                  type="button"
+                  onClick={() => void openDetail(tx.id)}
+                  className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-[rgba(202,165,96,0.05)] ${
+                    index !== recent.length - 1 ? 'border-b border-[rgba(63,52,40,0.7)]' : ''
+                  }`}
+                >
+                  <div className="w-10 flex-shrink-0">
+                    {cryptoAsset ? (
+                      <AssetLogo
+                        src={cryptoAsset.icon}
+                        alt={`${cryptoAsset.symbol} logo`}
+                        fallback={cryptoAsset.symbol.slice(0, 1)}
+                        className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[rgba(202,165,96,0.1)]"
+                        imgClassName="h-5 w-5 object-contain"
+                        textClassName="text-[15px] font-bold text-[var(--gold2)]"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[rgba(34,27,21,0.9)] text-[16px]">
+                        {icon}
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-1 text-[9px] font-mono text-[var(--muted)]">
-                    {fmtDate(tx.createdAt)}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="truncate text-[13.5px] font-semibold text-[var(--text)]">
+                        {formatTransactionTitle(tx, cryptoAsset)}
+                      </div>
+                      <span
+                        className={`flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold leading-none ${statusIcon.className}`}
+                      >
+                        {statusIcon.icon}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-[var(--muted)]">{fmtDate(tx.createdAt)}</div>
                   </div>
-                </div>
-                <div className={`text-right text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
-                  {tx.amount > 0 ? '+' : ''}{formatNGN(tx.amount)}
-                </div>
-              </button>
-            )
-          })}
-        </div>
+                  <div
+                    className={`shrink-0 text-right font-mono text-[13px] font-semibold ${
+                      tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'
+                    }`}
+                  >
+                    {tx.amount > 0 ? '+' : ''}
+                    {formatNGN(tx.amount)}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </Card>
 
       <Modal

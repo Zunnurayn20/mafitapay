@@ -1,6 +1,7 @@
 import type { CryptoOrder } from '@/types'
 import { privateKeyToAccount } from 'viem/accounts'
 import { bsc } from 'viem/chains'
+import { sanitizeEvmRpcUrls } from '@/lib/server/evm-rpc'
 import {
   createPublicClient,
   createWalletClient,
@@ -19,10 +20,11 @@ const DEFAULT_BSC_USDT_ADDRESS = '0x55d398326f99059fF775485246999027B3197955'
 const MIN_BSC_GAS_BUFFER_WEI = parseUnits('0.00003', 18)
 
 export function getBscExecutorConfig() {
-  const rpcUrls = (process.env.MAFITAPAY_BSC_RPC_URLS?.trim() || process.env.MAFITAPAY_BSC_RPC_URL?.trim() || DEFAULT_BSC_RPC_URL)
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
+  const rawRpc = process.env.MAFITAPAY_BSC_RPC_URLS?.trim() || process.env.MAFITAPAY_BSC_RPC_URL?.trim() || DEFAULT_BSC_RPC_URL
+  const { rpcUrls, dropped } = sanitizeEvmRpcUrls(rawRpc, DEFAULT_BSC_RPC_URL)
+  if (dropped.length > 0) {
+    console.warn('[bsc] dropped invalid BSC RPC URLs from env:', dropped)
+  }
   const rpcUrl = rpcUrls[0] || DEFAULT_BSC_RPC_URL
   const privateKey = process.env.MAFITAPAY_BSC_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined
   const configuredAddress = process.env.MAFITAPAY_BSC_EXECUTOR_ADDRESS?.trim()

@@ -9,7 +9,6 @@ import {
   MOCK_USER,
   MOCK_WALLET,
   NETWORK_PROVIDERS,
-  P2P_MERCHANTS,
 } from '../constants'
 import { getEffectiveQuoteTtlSeconds } from '../crypto-rules'
 import { getExecutionRailForAsset } from '../crypto-execution'
@@ -18,7 +17,12 @@ import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
-import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CryptoOrder, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, P2PMerchant, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
+import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositIntent, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
+import {
+  settleDirectCryptoDeposit,
+  settleCryptoSellDeposit,
+} from './crypto-deposit-scanner'
+import crypto from 'node:crypto'
 
 type SqliteStatement = {
   run: (...args: unknown[]) => { changes?: number }
@@ -270,14 +274,14 @@ type CryptoDepositEventRow = {
   id: string
   external_event_id: string
   user_id: string
-  address_id: string
-  address_family: CryptoDepositEvent['addressFamily']
+  address_id: string | null
+  address_family: string | null
   pair_id: string
-  network: string
+  network: string | null
   asset_symbol: string
   amount_crypto: number
   amount_units: string
-  tx_hash: string
+  tx_hash: string | null
   block_number: string | null
   log_index: number | null
   status: string
@@ -290,6 +294,11 @@ type CryptoDepositEventRow = {
   payload: string | null
   created_at: string
   updated_at: string
+  source?: string | null
+  cex_exchange?: string | null
+  cex_uid?: string | null
+  cex_tx_id?: string | null
+  memo?: string | null
 }
 
 type TransactionRow = {
@@ -410,23 +419,6 @@ type BiometricApprovalRow = {
   expires_at: string
   created_at: string
   used_at: string | null
-}
-
-type P2PMerchantRow = {
-  id: string
-  name: string
-  initial: string
-  bank: string
-  account_number: string
-  account_name: string
-  completion_rate: number
-  total_trades: number
-  min_amount: number
-  max_amount: number
-  available_balance: number
-  is_online: number
-  created_at: string
-  updated_at: string
 }
 
 type CryptoPairRow = {
@@ -763,7 +755,7 @@ function defaultDb(): AppDatabase {
           id: `n_${randomBytes(6).toString('hex')}`,
           userId: MOCK_USER.id,
           title: 'Deposit received',
-          message: 'P2P Deposit of ₦25,000 received',
+          message: 'Deposit of ₦25,000 received',
           type: 'success',
           read: false,
           createdAt: '2025-06-11T10:23:00Z',
@@ -959,23 +951,6 @@ function mapBiometricCredentialRow(row: BiometricCredentialRow): BiometricCreden
     label: row.label ?? undefined,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at ?? undefined,
-  }
-}
-
-function mapP2PMerchantRow(row: P2PMerchantRow): P2PMerchant {
-  return {
-    id: row.id,
-    name: row.name,
-    initial: row.initial,
-    bank: row.bank,
-    accountNumber: row.account_number,
-    accountName: row.account_name,
-    completionRate: Number(row.completion_rate),
-    totalTrades: Number(row.total_trades),
-    minAmount: Number(row.min_amount),
-    maxAmount: Number(row.max_amount),
-    availableBalance: Number(row.available_balance),
-    isOnline: Boolean(row.is_online),
   }
 }
 
@@ -1274,14 +1249,14 @@ function mapCryptoDepositEventRow(row: CryptoDepositEventRow): CryptoDepositEven
     id: row.id,
     externalEventId: row.external_event_id,
     userId: row.user_id,
-    addressId: row.address_id,
-    addressFamily: row.address_family,
+    addressId: row.address_id ?? undefined,
+    addressFamily: (row.address_family as CryptoDepositEvent['addressFamily']) ?? undefined,
     pairId: row.pair_id as CryptoDepositEvent['pairId'],
-    network: row.network,
+    network: row.network ?? undefined,
     assetSymbol: row.asset_symbol,
     amountCrypto: Number(row.amount_crypto),
     amountUnits: row.amount_units,
-    txHash: row.tx_hash,
+    txHash: row.tx_hash ?? undefined,
     blockNumber: row.block_number ?? undefined,
     logIndex: row.log_index ?? undefined,
     status: row.status === 'matched' || row.status === 'ignored' ? row.status : 'unmatched',
@@ -1294,6 +1269,47 @@ function mapCryptoDepositEventRow(row: CryptoDepositEventRow): CryptoDepositEven
     cryptoOrderId: row.crypto_order_id ?? undefined,
     transactionId: row.transaction_id ?? undefined,
     payload: parseJson(row.payload, undefined),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    source: (row.source as CryptoDepositEvent['source']) ?? 'onchain',
+    cexExchange: row.cex_exchange ?? undefined,
+    cexUid: row.cex_uid ?? undefined,
+    cexTxId: row.cex_tx_id ?? undefined,
+    memo: row.memo ?? undefined,
+  }
+}
+
+type CexDepositIntentRow = {
+  id: string
+  user_id: string
+  reference: string
+  exchange: string
+  pair_id: string
+  expected_amount_crypto: number
+  cex_uid: string
+  memo?: string | null
+  status: string
+  matched_event_id?: string | null
+  expires_at?: string | null
+  note?: string | null
+  created_at: string
+  updated_at: string
+}
+
+function mapCexDepositIntentRow(row: CexDepositIntentRow): CexDepositIntent {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    reference: row.reference,
+    exchange: row.exchange as CexDepositIntent['exchange'],
+    pairId: row.pair_id as CexDepositIntent['pairId'],
+    expectedAmountCrypto: Number(row.expected_amount_crypto),
+    cexUid: row.cex_uid,
+    memo: row.memo ?? undefined,
+    status: (row.status as CexDepositIntent['status']) || 'pending',
+    matchedEventId: row.matched_event_id ?? undefined,
+    expiresAt: row.expires_at ?? undefined,
+    note: row.note ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -1898,30 +1914,70 @@ function initSchema(db: DatabaseSync) {
       id TEXT PRIMARY KEY,
       external_event_id TEXT NOT NULL UNIQUE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      address_id TEXT NOT NULL REFERENCES crypto_deposit_addresses(id) ON DELETE CASCADE,
-      address_family TEXT NOT NULL,
+      -- address_id is only for on-chain (wallet) deposits. For CEX internal transfers (e.g. Binance)
+      -- this will be NULL. We use source + cex_* fields instead.
+      address_id TEXT REFERENCES crypto_deposit_addresses(id) ON DELETE CASCADE,
+      address_family TEXT,
       pair_id TEXT NOT NULL,
-      network TEXT NOT NULL,
+      network TEXT,
       asset_symbol TEXT NOT NULL,
       amount_crypto REAL NOT NULL,
       amount_units TEXT NOT NULL,
-      tx_hash TEXT NOT NULL,
+      tx_hash TEXT,
       block_number TEXT,
       log_index INTEGER,
       status TEXT NOT NULL,
+      -- For CEX deposits we keep sweep_* fields for future manual sweep tracking, but they are not auto-managed.
       sweep_status TEXT NOT NULL DEFAULT 'pending',
       sweep_tx_hash TEXT,
       sweep_error TEXT,
       swept_at TEXT,
       crypto_order_id TEXT,
       transaction_id TEXT,
-      payload TEXT,
+      -- New for CEX support (starting with Binance)
+      source TEXT NOT NULL DEFAULT 'onchain',           -- 'onchain' | 'binance_internal'
+      cex_exchange TEXT,                                -- 'binance'
+      cex_uid TEXT,                                     -- our platform UID on the exchange
+      cex_tx_id TEXT,                                   -- Binance tranId / internal transfer id
+      memo TEXT,                                        -- the reference/memo the user was instructed to include
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_crypto_deposit_events_user_created_at
       ON crypto_deposit_events(user_id, created_at DESC);
+
+    -- CEX deposit intents (for Binance internal transfers etc.). Users initiate these
+    -- to get a reference/memo to include when sending from the exchange.
+    CREATE TABLE IF NOT EXISTS cex_deposit_intents (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reference TEXT NOT NULL UNIQUE,               -- code the user puts in Binance "Remark/Memo"
+      exchange TEXT NOT NULL,                       -- 'binance'
+      pair_id TEXT NOT NULL,
+      expected_amount_crypto REAL NOT NULL,
+      cex_uid TEXT NOT NULL,                        -- our platform's UID on the exchange
+      memo TEXT,
+      status TEXT NOT NULL,                         -- 'pending' | 'matched' | 'expired' | 'cancelled'
+      matched_event_id TEXT REFERENCES crypto_deposit_events(id),
+      expires_at TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cex_deposit_intents_user_created_at
+      ON cex_deposit_intents(user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_cex_deposit_intents_reference
+      ON cex_deposit_intents(reference);
+
+    -- Persisted incremental scan state for the on-chain deposit scanner (so restarts don't cause
+    -- large historical re-scans or delays in picking up recent deposits).
+    CREATE TABLE IF NOT EXISTS scanner_state (
+      key TEXT PRIMARY KEY,
+      block_number TEXT NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS bill_providers (
       id TEXT PRIMARY KEY,
@@ -2264,6 +2320,90 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'crypto_deposit_events', 'sweep_tx_hash', 'TEXT')
   ensureColumn(db, 'crypto_deposit_events', 'sweep_error', 'TEXT')
   ensureColumn(db, 'crypto_deposit_events', 'swept_at', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'source', "TEXT NOT NULL DEFAULT 'onchain'")
+  ensureColumn(db, 'crypto_deposit_events', 'cex_exchange', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'cex_uid', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'cex_tx_id', 'TEXT')
+  ensureColumn(db, 'crypto_deposit_events', 'memo', 'TEXT')
+
+  ensureColumn(db, 'cex_deposit_intents', 'memo', 'TEXT')
+  ensureColumn(db, 'cex_deposit_intents', 'matched_event_id', 'TEXT')
+  ensureColumn(db, 'cex_deposit_intents', 'expires_at', 'TEXT')
+  ensureColumn(db, 'cex_deposit_intents', 'note', 'TEXT')
+
+  // Migration: make address_id nullable for cex/binance_internal deposits (existing DBs had NOT NULL)
+  // This must succeed without leaving open transactions, otherwise market snapshots and other DB ops will fail with "cannot start a transaction within a transaction".
+  try {
+    const colInfo = db.prepare(`PRAGMA table_info(crypto_deposit_events)`).all() as any[];
+    const addrCol = colInfo.find((c: any) => c.name === 'address_id');
+    if (addrCol && addrCol.notnull === 1) {
+      console.log('[db migration] Making address_id nullable in crypto_deposit_events for CEX support...');
+      // Backfill legacy NULLs first (sweep_status etc were added via ensureColumn and old rows may have NULLs)
+      db.prepare(`UPDATE crypto_deposit_events SET sweep_status = COALESCE(sweep_status, 'pending') WHERE sweep_status IS NULL`).run();
+      db.prepare(`UPDATE crypto_deposit_events SET source = COALESCE(source, 'onchain') WHERE source IS NULL`).run();
+      // Drop any leftover from previous partial migration
+      db.exec(`DROP TABLE IF EXISTS crypto_deposit_events_new;`);
+      db.exec(`
+        PRAGMA foreign_keys = OFF;
+        BEGIN TRANSACTION;
+        CREATE TABLE crypto_deposit_events_new AS SELECT * FROM crypto_deposit_events;
+        DROP TABLE crypto_deposit_events;
+        CREATE TABLE crypto_deposit_events (
+          id TEXT PRIMARY KEY,
+          external_event_id TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          address_id TEXT REFERENCES crypto_deposit_addresses(id) ON DELETE CASCADE,
+          address_family TEXT,
+          pair_id TEXT NOT NULL,
+          network TEXT,
+          asset_symbol TEXT NOT NULL,
+          amount_crypto REAL NOT NULL,
+          amount_units TEXT NOT NULL,
+          tx_hash TEXT,
+          block_number TEXT,
+          log_index INTEGER,
+          status TEXT NOT NULL,
+          sweep_status TEXT NOT NULL DEFAULT 'pending',
+          sweep_tx_hash TEXT,
+          sweep_error TEXT,
+          swept_at TEXT,
+          crypto_order_id TEXT,
+          transaction_id TEXT,
+          payload TEXT,
+          source TEXT NOT NULL DEFAULT 'onchain',
+          cex_exchange TEXT,
+          cex_uid TEXT,
+          cex_tx_id TEXT,
+          memo TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO crypto_deposit_events (
+          id, external_event_id, user_id, address_id, address_family, pair_id, network, asset_symbol,
+          amount_crypto, amount_units, tx_hash, block_number, log_index, status,
+          sweep_status, sweep_tx_hash, sweep_error, swept_at, crypto_order_id, transaction_id, payload,
+          source, cex_exchange, cex_uid, cex_tx_id, memo, created_at, updated_at
+        ) SELECT 
+          id, external_event_id, user_id, address_id, address_family, pair_id, network, asset_symbol,
+          amount_crypto, amount_units, tx_hash, block_number, log_index, status,
+          COALESCE(sweep_status, 'pending'), sweep_tx_hash, sweep_error, swept_at, crypto_order_id, transaction_id, payload,
+          COALESCE(source, 'onchain'), cex_exchange, cex_uid, cex_tx_id, memo, created_at, updated_at
+        FROM crypto_deposit_events_new;
+        DROP TABLE crypto_deposit_events_new;
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+      `);
+      // Recreate index
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_crypto_deposit_events_user_created_at
+          ON crypto_deposit_events(user_id, created_at DESC);
+      `);
+      console.log('[db migration] address_id is now nullable.');
+    }
+  } catch (e) {
+    try { db.exec('ROLLBACK; PRAGMA foreign_keys = ON;'); } catch {}
+    console.error('[db migration] Failed to make address_id nullable (cex support may fail on insert):', e);
+  }
   ensureColumn(db, 'crypto_quotes', 'provider_payload', 'TEXT')
   ensureColumn(db, 'security_settings', 'transaction_pin_hash', 'TEXT')
   ensureColumn(db, 'security_settings', 'transaction_pin_salt', 'TEXT')
@@ -2575,7 +2715,7 @@ function hasAnyUsers(db: DatabaseSync) {
 
 function hasCatalogRows(
   db: DatabaseSync,
-  table: 'p2p_merchants' | 'crypto_pairs' | 'bill_providers' | 'network_providers'
+  table: 'crypto_pairs' | 'bill_providers' | 'network_providers'
 ) {
   const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }
   return row.count > 0
@@ -2583,34 +2723,6 @@ function hasCatalogRows(
 
 function seedCatalogTables(db: DatabaseSync) {
   const now = new Date().toISOString()
-
-  if (!hasCatalogRows(db, 'p2p_merchants')) {
-    const insertMerchant = db.prepare(`
-      INSERT INTO p2p_merchants (
-        id, name, initial, bank, account_number, account_name, completion_rate, total_trades,
-        min_amount, max_amount, available_balance, is_online, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-
-    for (const merchant of P2P_MERCHANTS) {
-      insertMerchant.run(
-        merchant.id,
-        merchant.name,
-        merchant.initial,
-        merchant.bank,
-        merchant.accountNumber,
-        merchant.accountName,
-        merchant.completionRate,
-        merchant.totalTrades,
-        merchant.minAmount,
-        merchant.maxAmount,
-        merchant.availableBalance,
-        merchant.isOnline ? 1 : 0,
-        now,
-        now
-      )
-    }
-  }
 
   if (!hasCatalogRows(db, 'crypto_pairs')) {
     const insertAsset = db.prepare(`
@@ -4320,6 +4432,7 @@ export async function listCryptoDepositEvents(input: {
   pairId?: string
   status?: CryptoDepositEvent['status']
   sweepStatus?: string
+  source?: 'onchain' | 'binance_internal'
 } = {}): Promise<CryptoDepositEvent[]> {
   await ensureDbReady()
   let sql = `SELECT * FROM crypto_deposit_events WHERE 1=1`
@@ -4339,6 +4452,11 @@ export async function listCryptoDepositEvents(input: {
   if (input.sweepStatus) {
     sql += ` AND sweep_status = ?`
     params.push(input.sweepStatus)
+  }
+  // Support filtering by CEX / source for the new Binance internal flow
+  if ((input as any).source) {
+    sql += ` AND source = ?`
+    params.push((input as any).source)
   }
   sql += ` ORDER BY created_at DESC LIMIT ?`
   params.push(Math.min(200, input.limit ?? 50))
@@ -4360,20 +4478,26 @@ export async function getCryptoDepositAddressByAddress(address: string): Promise
 export async function createCryptoDepositEvent(input: {
   externalEventId: string
   userId: string
-  addressId: string
-  addressFamily: CryptoDepositEvent['addressFamily']
+  addressId?: string | null
+  addressFamily?: CryptoDepositEvent['addressFamily'] | null
   pairId: CryptoDepositEvent['pairId']
-  network: string
+  network?: string | null
   assetSymbol: string
   amountCrypto: number
   amountUnits: string
-  txHash: string
+  txHash?: string | null
   blockNumber?: string
   logIndex?: number
   status: CryptoDepositEvent['status']
   cryptoOrderId?: string
   transactionId?: string
   payload?: Record<string, unknown>
+  // CEX fields (Binance internal first). source defaults to onchain for backward compat.
+  source?: 'onchain' | 'binance_internal'
+  cexExchange?: string
+  cexUid?: string
+  cexTxId?: string
+  memo?: string
 }): Promise<CryptoDepositEvent> {
   await ensureDbReady()
   const existing = await getCryptoDepositEventByExternalId(input.externalEventId)
@@ -4381,30 +4505,40 @@ export async function createCryptoDepositEvent(input: {
 
   const now = new Date().toISOString()
   const id = `cde_${randomBytes(6).toString('hex')}`
+  const source = input.source ?? 'onchain'
+
   getDb().prepare(`
     INSERT INTO crypto_deposit_events (
-      id, external_event_id, user_id, address_id, address_family, pair_id, network, asset_symbol, amount_crypto, amount_units, tx_hash, block_number, log_index, status, sweep_status, crypto_order_id, transaction_id, payload, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, external_event_id, user_id, address_id, address_family, pair_id, network, asset_symbol,
+      amount_crypto, amount_units, tx_hash, block_number, log_index, status, sweep_status,
+      crypto_order_id, transaction_id, payload, source, cex_exchange, cex_uid, cex_tx_id, memo,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(external_event_id) DO NOTHING
   `).run(
     id,
     input.externalEventId,
     input.userId,
-    input.addressId,
-    input.addressFamily,
+    input.addressId ?? null,
+    input.addressFamily ?? null,
     input.pairId,
-    input.network,
+    input.network ?? null,
     input.assetSymbol,
     input.amountCrypto,
     input.amountUnits,
-    input.txHash,
+    input.txHash ?? null,
     input.blockNumber ?? null,
     input.logIndex ?? null,
     input.status,
-    input.status === 'matched' ? 'pending' : 'skipped',
+    'pending',
     input.cryptoOrderId ?? null,
     input.transactionId ?? null,
     input.payload ? JSON.stringify(input.payload) : null,
+    source,
+    input.cexExchange ?? null,
+    input.cexUid ?? null,
+    input.cexTxId ?? null,
+    input.memo ?? null,
     now,
     now
   )
@@ -4412,6 +4546,415 @@ export async function createCryptoDepositEvent(input: {
   const event = await getCryptoDepositEventByExternalId(input.externalEventId)
   if (!event) throw new Error('Unable to create crypto deposit event.')
   return event
+}
+
+// === CEX Deposit Intents (Binance internal transfers etc.) ===
+
+export async function createCexDepositIntent(input: {
+  userId: string
+  reference: string
+  exchange: 'binance'
+  pairId: CryptoPairId
+  expectedAmountCrypto: number
+  cexUid: string
+  memo?: string
+  expiresAt?: string
+  note?: string
+}): Promise<CexDepositIntent> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const id = `cei_${randomBytes(6).toString('hex')}`
+
+  getDb().prepare(`
+    INSERT INTO cex_deposit_intents (
+      id, user_id, reference, exchange, pair_id, expected_amount_crypto, cex_uid, memo, status, expires_at, note, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.userId,
+    input.reference,
+    input.exchange,
+    input.pairId,
+    input.expectedAmountCrypto,
+    input.cexUid,
+    input.memo ?? null,
+    'pending',
+    input.expiresAt ?? null,
+    input.note ?? null,
+    now,
+    now
+  )
+
+  const row = getDb().prepare('SELECT * FROM cex_deposit_intents WHERE id = ? LIMIT 1').get(id) as CexDepositIntentRow | undefined
+  if (!row) throw new Error('Unable to create CEX deposit intent.')
+  return mapCexDepositIntentRow(row)
+}
+
+export async function getCexDepositIntentByReference(reference: string): Promise<CexDepositIntent | null> {
+  await ensureDbReady()
+  const row = getDb().prepare('SELECT * FROM cex_deposit_intents WHERE reference = ? LIMIT 1').get(reference) as CexDepositIntentRow | undefined
+  return row ? mapCexDepositIntentRow(row) : null
+}
+
+export async function listCexDepositIntents(input?: { userId?: string; status?: CexDepositIntent['status']; limit?: number }): Promise<CexDepositIntent[]> {
+  await ensureDbReady()
+  const limit = Math.min(100, input?.limit ?? 50)
+  const where: string[] = []
+  const args: any[] = []
+
+  if (input?.userId) {
+    where.push('user_id = ?')
+    args.push(input.userId)
+  }
+  if (input?.status) {
+    where.push('status = ?')
+    args.push(input.status)
+  }
+
+  const sql = `
+    SELECT * FROM cex_deposit_intents
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY created_at DESC
+    LIMIT ?
+  `
+  const rows = getDb().prepare(sql).all(...args, limit) as CexDepositIntentRow[]
+  return rows.map(mapCexDepositIntentRow)
+}
+
+export async function markCexDepositIntentMatched(intentId: string, eventId: string): Promise<CexDepositIntent | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE cex_deposit_intents
+    SET status = 'matched', matched_event_id = ?, updated_at = ?
+    WHERE id = ?
+  `).run(eventId, now, intentId)
+
+  const row = getDb().prepare('SELECT * FROM cex_deposit_intents WHERE id = ? LIMIT 1').get(intentId) as CexDepositIntentRow | undefined
+  return row ? mapCexDepositIntentRow(row) : null
+}
+
+// Persisted last-scanned block for the deposit scanner (per chain/pair key like "base:ETH_BASE:native").
+// This prevents large historical re-scans after restarts and ensures recent deposits are picked up promptly
+// in the next watchdog cycle.
+export async function getLastScannedBlock(key: string): Promise<bigint | null> {
+  await ensureDbReady()
+  const row = getDb().prepare('SELECT block_number FROM scanner_state WHERE key = ?').get(key) as { block_number?: string } | undefined
+  return row?.block_number ? BigInt(row.block_number) : null
+}
+
+export async function setLastScannedBlock(key: string, block: bigint): Promise<void> {
+  await ensureDbReady()
+  getDb().prepare(`
+    INSERT INTO scanner_state (key, block_number) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET block_number = excluded.block_number
+  `).run(key, block.toString())
+}
+
+// Record a Binance internal transfer deposit (no on-chain address).
+// This creates the event and immediately triggers NGN credit (direct or via pending sell order).
+// No sweep is performed (manual control on Binance as requested).
+export async function recordBinanceInternalDeposit(input: {
+  userId: string
+  pairId: CryptoPairId
+  amountCrypto: number
+  amountUnits: string
+  cexTxId: string
+  memo?: string
+  cexUid?: string
+  payload?: Record<string, unknown>
+}): Promise<CryptoDepositEvent> {
+  await ensureDbReady()
+
+  const externalEventId = `binance:internal:${input.cexTxId}`
+  const existing = await getCryptoDepositEventByExternalId(externalEventId)
+  if (existing) return existing
+
+  if (CEX_DEBUG) console.log(`[cex-binance] recordBinanceInternalDeposit user=${input.userId} pair=${input.pairId} amountCrypto=${input.amountCrypto} cexTxId=${input.cexTxId} memo=${input.memo || ''}`)
+
+  // Create the CEX-sourced event (address-less)
+  const event = await createCryptoDepositEvent({
+    externalEventId,
+    userId: input.userId,
+    addressId: null,
+    addressFamily: null,
+    pairId: input.pairId,
+    network: null,
+    assetSymbol: input.pairId.split('_')[0] || 'CRYPTO',
+    amountCrypto: input.amountCrypto,
+    amountUnits: input.amountUnits,
+    txHash: input.cexTxId,
+    status: 'unmatched',
+    source: 'binance_internal',
+    cexExchange: 'binance',
+    cexUid: input.cexUid ?? (process.env.MAFITAPAY_BINANCE_DEPOSIT_UID || 'BINANCE_UID_NOT_SET'),
+    cexTxId: input.cexTxId,
+    memo: input.memo,
+    payload: input.payload,
+  })
+
+  // Reuse the exact same credit logic as on-chain direct deposits.
+  // This will find a pending sell order (if any) or do direct NGN credit + notification.
+  const settled = await (async () => {
+    const order = await findPendingCryptoSellOrderForDeposit({
+      userId: input.userId,
+      pairId: input.pairId,
+      amountCrypto: input.amountCrypto,
+    })
+
+    if (order) {
+      await settleCryptoSellDeposit({
+        order,
+        event,
+        txHash: input.cexTxId,
+        amountUnits: input.amountUnits,
+        amountCrypto: input.amountCrypto,
+      })
+      const matched = await markCryptoDepositEventMatched({
+        externalEventId,
+        cryptoOrderId: order.id,
+        transactionId: order.transactionId,
+      })
+      return matched ?? event
+    } else {
+      // Direct NGN credit path (no pending sell order)
+      // minimal asset shape is sufficient for the settle function
+      return await settleDirectCryptoDeposit({ event, asset: { pairId: input.pairId } as any })
+    }
+  })()
+
+  // Mark as matched if not already (for direct path)
+  if (settled.status === 'unmatched') {
+    await markCryptoDepositEventMatched({
+      externalEventId,
+      transactionId: `binance_${input.cexTxId}`,
+    })
+  }
+
+  // If there was a pending intent with this memo, mark it matched too (for manual records)
+  if (input.memo) {
+    try {
+      const intent = await getCexDepositIntentByReference(input.memo)
+      if (intent && intent.status === 'pending' && settled.id) {
+        await markCexDepositIntentMatched(intent.id, settled.id)
+      }
+    } catch {}
+  }
+
+  if (CEX_DEBUG) console.log(`[cex-binance] record complete for ${externalEventId}`)
+  return (await getCryptoDepositEventByExternalId(externalEventId)) || settled
+}
+
+// === Binance CEX poller (quick win for auto-detection of internal transfers) ===
+// Requires MAFITAPAY_BINANCE_API_KEY and MAFITAPAY_BINANCE_API_SECRET (read-only deposit history perms)
+// Polls recent deposit history and matches pending cex_deposit_intents by memo + amount.
+// Calls recordBinanceInternalDeposit on match (which handles credit, no sweep).
+// Note: For prod, store keys encrypted (use SENSITIVE_DATA_KEY like deposit secrets) and decrypt on use.
+//
+// CEX is currently parked / skipped while focusing on on-chain deposits.
+// All verbose [cex-binance] logs are gated behind MAFITAPAY_DEBUG_CEX=1 (or DEBUG_CRYPTO=1)
+// so they do not pollute the on-chain scanner output.
+const CEX_DEBUG = process.env.MAFITAPAY_DEBUG_CEX === '1' || process.env.MAFITAPAY_DEBUG_CRYPTO === '1';
+
+export async function syncBinanceCexDeposits() {
+  if (CEX_DEBUG) console.log('[cex-binance] syncBinanceCexDeposits starting...')
+  const apiKey = process.env.MAFITAPAY_BINANCE_API_KEY?.trim()
+  const apiSecret = process.env.MAFITAPAY_BINANCE_API_SECRET?.trim()
+  const depositUid = process.env.MAFITAPAY_BINANCE_DEPOSIT_UID?.trim()
+
+  if (!apiKey || !apiSecret) {
+    if (CEX_DEBUG) console.warn('[cex-binance] Binance API key/secret not configured. Skipping sync. (Set MAFITAPAY_BINANCE_API_KEY and SECRET for auto CEX detection)')
+    return { synced: 0, matched: 0, error: 'no_api_keys' }
+  }
+
+  if (CEX_DEBUG) console.log('[cex-binance] Binance keys present, attempting API call...')
+
+  // Test basic public connectivity first (this will tell us if the *server process* can even reach Binance at all)
+  try {
+    if (CEX_DEBUG) console.log('[cex-binance] Testing basic public connectivity to api.binance.com...')
+    const timeRes = await fetch('https://api.binance.com/api/v3/time', { method: 'GET' })
+    const timeData = await timeRes.json().catch(() => ({}))
+    if (CEX_DEBUG) console.log('[cex-binance] Basic /time test:', timeRes.status, 'serverTime:', timeData.serverTime || 'n/a')
+    if (!timeRes.ok) {
+      if (CEX_DEBUG) console.warn('[cex-binance] Basic connectivity test got non-OK from Binance public endpoint.')
+    }
+  } catch (connErr) {
+    if (CEX_DEBUG) {
+      console.error('[cex-binance] BASIC CONNECTIVITY TEST TO BINANCE FAILED:', connErr instanceof Error ? connErr.message : connErr)
+      if (connErr instanceof Error && connErr.cause) {
+        console.error('[cex-binance] Error cause:', connErr.cause)
+      }
+      console.error('[cex-binance] This means the Next.js server process cannot reach api.binance.com, even though your browser/machine claims internet.')
+
+      // WSL2 DNS is the #1 cause when google etc work but api.binance.com specifically ENOTFOUNDs
+      let isWSLEnv = false
+      try {
+        if (process.env.WSL_DISTRO_NAME || process.env.WSLENV) isWSLEnv = true
+        else {
+          const fs = await import('node:fs')
+          const ver = fs.readFileSync('/proc/version', 'utf8')
+          isWSLEnv = /microsoft-standard-WSL/i.test(ver) || /WSL2/i.test(ver)
+        }
+      } catch {}
+      if (isWSLEnv || (connErr instanceof Error && /ENOTFOUND|getaddrinfo/i.test(connErr.message + String(connErr.cause || '')))) {
+        console.error('[cex-binance] *** DETECTED WSL2 ENVIRONMENT + DNS FAILURE (common for api.binance.com subdomain) ***')
+        console.error('[cex-binance] Your Windows host browser resolves fine and "has internet", but the WSL Ubuntu (where `npm run dev` runs) uses an auto-generated /etc/resolv.conf (nameserver 10.255.255.254) that fails to resolve api.binance.com.')
+        console.error('[cex-binance] Binance IP whitelist + read-only key are irrelevant until DNS works from inside WSL.')
+        console.error('[cex-binance] APPLY THIS FIX NOW (in the same WSL terminal where you run the dev server):')
+        console.error('  sudo bash -c \'echo -e "[network]\\ngenerateResolvConf = false" > /etc/wsl.conf\'')
+        console.error('  sudo rm -f /etc/resolv.conf')
+        console.error('  sudo bash -c \'echo -e "nameserver 8.8.8.8\\nnameserver 1.1.1.1\\noptions edns0\\n" > /etc/resolv.conf\'')
+        console.error('  # Then from a *Windows* PowerShell (not WSL):   wsl --shutdown')
+        console.error('  # Re-open your WSL terminal, cd /home/mafita/mafitapay, run: npm run dev')
+        console.error('[cex-binance] TEMPORARY (quick test, lost on some restarts):')
+        console.error('  sudo bash -c \'echo -e "nameserver 8.8.8.8\\nnameserver 1.1.1.1" > /etc/resolv.conf\'')
+        console.error('  # Then immediately test: node -e "fetch(\'https://api.binance.com/api/v3/time\').then(r=>r.json()).then(console.log)"')
+      } else {
+        console.error('[cex-binance] Common causes: proxy env vars (HTTP_PROXY/HTTPS_PROXY), DNS resolver differences in Node vs browser, IPv6 issues, firewall per-process, or the dev server running in a container/WSL without host net access.')
+      }
+    }
+    return { synced: 0, matched: 0, error: 'basic_connectivity_failed' }
+  }
+
+  // Always fetch server time first for accurate timestamp (avoids clock skew / recvWindow issues)
+  let serverTime = Date.now()
+  try {
+    const timeRes = await fetch('https://api.binance.com/api/v3/time')
+    if (timeRes.ok) {
+      const timeData = await timeRes.json()
+      serverTime = timeData.serverTime
+      if (CEX_DEBUG) console.log('[cex-binance] Binance server time fetched successfully:', serverTime)
+    } else {
+      if (CEX_DEBUG) console.warn('[cex-binance] Failed to fetch server time, using local time. Status:', timeRes.status)
+    }
+  } catch (timeErr) {
+    if (CEX_DEBUG) console.warn('[cex-binance] Error fetching Binance server time (using local):', timeErr instanceof Error ? timeErr.message : timeErr)
+  }
+
+  await ensureDbReady()
+
+  const pendingIntents = await listCexDepositIntents({ status: 'pending' })
+  if (pendingIntents.length === 0) {
+    return { synced: 0, matched: 0 }
+  }
+
+  if (CEX_DEBUG) console.log(`[cex-binance] ${pendingIntents.length} pending CEX intent(s) waiting for deposit. Memos: ${pendingIntents.map(i => `${i.memo} (pair=${i.pairId}, exp=${i.expectedAmountCrypto})`).join(' | ')}`)
+
+  // Fetch recent deposits (last 24h, limit 100)
+  // Use serverTime for timestamp to avoid recvWindow/timestamp errors from local clock skew.
+  const timestamp = serverTime
+  const recvWindow = 60000
+  const startTime = timestamp - 24 * 60 * 60 * 1000 // last 24 hours
+  const query = `timestamp=${timestamp}&recvWindow=${recvWindow}&startTime=${startTime}&limit=100`
+  const signature = crypto.createHmac('sha256', apiSecret).update(query).digest('hex')
+  const url = `https://api.binance.com/sapi/v1/capital/deposit/hisrec?${query}&signature=${signature}`
+
+  try {
+    if (CEX_DEBUG) console.log('[cex-binance] Calling Binance deposit history API (signed)...')
+    const res = await fetch(url, {
+      headers: {
+        'X-MBX-APIKEY': apiKey,
+      },
+    })
+    if (!res.ok) {
+      const errText = await res.text().catch(() => 'no body')
+      if (CEX_DEBUG) console.warn(`[cex-binance] Binance API HTTP error ${res.status}: ${errText}`)
+      return { synced: 0, matched: 0, error: `http_${res.status}` }
+    }
+    const deposits: any[] = await res.json()
+    if (CEX_DEBUG) {
+      console.log(`[cex-binance] Binance API success, got ${deposits.length} deposit records`)
+      if (deposits.length === 0) {
+        console.log('[cex-binance] No deposits returned for last 24h. If you just performed a UID/internal transfer with one of the memos above: (1) confirm the USDT (or asset) credit arrived in the Binance account tied to these API keys (check the account\'s Deposit/Transaction history in Binance app/web and look for the exact memo in Remark), (2) UID off-chain transfers can take a short time to index in /hisrec, (3) make sure you used "Internal Transfer / To Binance User (UID)" not a blockchain network withdraw. The poller will keep checking.')
+      }
+    }
+
+    let matched = 0
+    for (const d of deposits) {
+      if (!d || !d.amount || !d.coin) continue
+      const memo = (d.memo || d.remark || '').trim()
+      if (!memo) continue
+
+      const depAmount = Number(d.amount)
+      const candidates = pendingIntents.filter(i => i.memo === memo)
+      const matchingIntent = pendingIntents.find(i =>
+        i.memo === memo &&
+        i.pairId.toUpperCase().includes(d.coin.toUpperCase()) &&
+        (i.expectedAmountCrypto <= 0 || Math.abs(i.expectedAmountCrypto - depAmount) < Math.max(0.01, depAmount * 0.01))
+      )
+
+      if (candidates.length > 0 && !matchingIntent) {
+        if (CEX_DEBUG) console.warn('[cex-binance] Deposit memo matched a pending intent but pair/amount filter rejected it', { memo, coin: d.coin, amount: depAmount, candidates: candidates.map(c => ({pair: c.pairId, exp: c.expectedAmountCrypto})) })
+      }
+
+      if (matchingIntent) {
+        try {
+          await recordBinanceInternalDeposit({
+            userId: matchingIntent.userId,
+            pairId: matchingIntent.pairId,
+            amountCrypto: depAmount,
+            amountUnits: String(d.amount),
+            cexTxId: String(d.txId || d.tranId || d.insertTime || Date.now()),
+            memo,
+            cexUid: depositUid,
+            payload: { binanceDeposit: d },
+          })
+          const matchedEvent = await getCryptoDepositEventByExternalId(`binance:internal:${d.txId || d.tranId || Date.now()}`)
+          if (matchedEvent) {
+            await markCexDepositIntentMatched(matchingIntent.id, matchedEvent.id)
+          }
+          matched++
+          if (CEX_DEBUG) console.log('[cex-binance] Matched and credited intent', matchingIntent.reference, 'tx', d.txId || d.tranId)
+        } catch (e) {
+          if (CEX_DEBUG) console.warn('[cex-binance] Failed to record matched deposit', e)
+        }
+      }
+    }
+
+    if (CEX_DEBUG) console.log(`[cex-binance] sync complete: checked ${deposits.length} deposits, matched ${matched}`)
+    return { synced: deposits.length, matched }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (CEX_DEBUG) {
+      console.error('[cex-binance] Sync failed with exception:', msg)
+      if (e instanceof Error && e.cause) {
+        console.error('[cex-binance] Error cause:', e.cause)
+      }
+      if (msg.toLowerCase().includes('fetch') || msg.includes('Failed to fetch')) {
+        // Re-detect WSL for the signed-call failure path too
+        let isWSLEnv2 = false
+        try {
+          if (process.env.WSL_DISTRO_NAME || process.env.WSLENV) isWSLEnv2 = true
+          else {
+            const fs = await import('node:fs')
+            const ver = fs.readFileSync('/proc/version', 'utf8')
+            isWSLEnv2 = /microsoft-standard-WSL/i.test(ver) || /WSL2/i.test(ver)
+          }
+        } catch {}
+        if (isWSLEnv2 || /ENOTFOUND|getaddrinfo/i.test(msg + ' ' + String((e as any)?.cause || ''))) {
+          console.warn('[cex-binance] WSL2 DNS failure (api.binance.com not resolving inside WSL). Apply the /etc/wsl.conf + resolv.conf + wsl --shutdown steps printed in the basic connectivity error above.')
+        } else {
+          console.warn('[cex-binance] Likely network or connectivity issue reaching api.binance.com from the *server process*. Even if browser has internet:')
+          console.warn('  - Check if the Next.js dev server process can reach external sites (try node -e "fetch(\'https://api.binance.com/api/v3/time\').then(r=>r.json()).then(console.log)" )')
+          console.warn('  - Corporate proxy, VPN, firewall, DNS, or IPv6 issues can affect Node but not browser.')
+          console.warn('  - Binance may rate-limit or geo-block the IP. For local testing, use the manual "Record Deposit" form.')
+        }
+      }
+    }
+    return { synced: 0, matched: 0, error: 'fetch_failed' }
+  }
+}
+
+let binanceCexInterval: NodeJS.Timeout | null = null
+
+export function ensureBinanceCexDepositSyncWatchdog() {
+  if (binanceCexInterval) return
+  if (CEX_DEBUG) console.log('[cex-binance] starting watchdog (every 30s)')
+  binanceCexInterval = setInterval(() => {
+    void syncBinanceCexDeposits().catch(err => {
+      if (CEX_DEBUG) console.warn('[cex-binance] watchdog error', err instanceof Error ? err.message : err)
+    })
+  }, 30000)
 }
 
 export async function markCryptoDepositEventMatched(input: {
@@ -4482,6 +5025,24 @@ export async function markCryptoDepositEventSweepFailed(input: {
     WHERE external_event_id = ?
   `).run(input.error.slice(0, 500), now, input.externalEventId)
   return getCryptoDepositEventByExternalId(input.externalEventId)
+}
+
+export async function updateCryptoDepositEventConversion(externalEventId: string, conversion: any) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const existing = await getCryptoDepositEventByExternalId(externalEventId)
+  if (!existing) return null
+  const payload = {
+    ...(existing.payload || {}),
+    conversion,
+  }
+  getDb().prepare(`
+    UPDATE crypto_deposit_events
+    SET payload = ?,
+        updated_at = ?
+    WHERE external_event_id = ?
+  `).run(JSON.stringify(payload), now, externalEventId)
+  return getCryptoDepositEventByExternalId(externalEventId)
 }
 
 export async function findPendingCryptoSellOrderForDeposit(input: {
@@ -5401,75 +5962,6 @@ export async function getNotificationsForUser(userId: string): Promise<Notificat
     .prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId) as NotificationRow[]
   return rows.map(mapNotificationRow)
-}
-
-export async function getP2PMerchants(): Promise<P2PMerchant[]> {
-  await ensureDbReady()
-  const rows = getDb()
-    .prepare('SELECT * FROM p2p_merchants ORDER BY is_online DESC, completion_rate DESC, total_trades DESC')
-    .all() as P2PMerchantRow[]
-  return rows.map(mapP2PMerchantRow)
-}
-
-export async function getP2PMerchantById(id: string): Promise<P2PMerchant | null> {
-  await ensureDbReady()
-  const row = getDb()
-    .prepare('SELECT * FROM p2p_merchants WHERE id = ? LIMIT 1')
-    .get(id) as P2PMerchantRow | undefined
-  return row ? mapP2PMerchantRow(row) : null
-}
-
-export async function upsertP2PMerchants(merchants: P2PMerchant[]) {
-  await ensureDbReady()
-  const db = getDb()
-  const now = new Date().toISOString()
-  const statement = db.prepare(`
-    INSERT INTO p2p_merchants (
-      id, name, initial, bank, account_number, account_name, completion_rate, total_trades,
-      min_amount, max_amount, available_balance, is_online, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      initial = excluded.initial,
-      bank = excluded.bank,
-      account_number = excluded.account_number,
-      account_name = excluded.account_name,
-      completion_rate = excluded.completion_rate,
-      total_trades = excluded.total_trades,
-      min_amount = excluded.min_amount,
-      max_amount = excluded.max_amount,
-      available_balance = excluded.available_balance,
-      is_online = excluded.is_online,
-      updated_at = excluded.updated_at
-  `)
-
-  db.exec('BEGIN')
-  try {
-    for (const merchant of merchants) {
-      statement.run(
-        merchant.id,
-        merchant.name,
-        merchant.initial,
-        merchant.bank,
-        merchant.accountNumber,
-        merchant.accountName,
-        merchant.completionRate,
-        merchant.totalTrades,
-        merchant.minAmount,
-        merchant.maxAmount,
-        merchant.availableBalance,
-        merchant.isOnline ? 1 : 0,
-        now,
-        now
-      )
-    }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
-
-  return getP2PMerchants()
 }
 
 export async function getCryptoAssets(options?: { forceRefresh?: boolean; liveOnly?: boolean }): Promise<CryptoAsset[]> {

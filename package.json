@@ -10,9 +10,27 @@
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "dev:mobile": "next dev --webpack --hostname 0.0.0.0 --port 3000",
+    "mobile:icons": "node scripts/generate-android-branding.mjs",
+    "mobile:sync": "node ./node_modules/@capacitor/cli/bin/capacitor sync android",
+    "mobile:install": "npm install",
+    "mobile:open": "npx cap open android",
+    "mobile:open:win": "cmd.exe /c start \"\" \"C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe\" \"C:\\Users\\zagal\\mafitapay\\android\"",
+    "mobile:mirror:win": "rsync -a --delete --exclude node_modules --exclude .next --exclude android/.gradle --exclude android/app/build --exclude android/build ./ /mnt/c/Users/zagal/mafitapay/",
+    "mobile:setup:win": "npm run mobile:mirror:win && npm install --prefix /mnt/c/Users/zagal/mafitapay",
+    "mobile:run": "MAFITAPAY_MOBILE_SERVER_URL=http://10.0.2.2:3000 npx cap run android",
+    "mobile:run:prod": "npx cap run android",
+    "mobile:bundle": "cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/keyboard": "^8.0.5",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.2",
     "@mysten/sui": "^2.16.0",
     "@noble/curves": "^2.2.0",
     "@scure/base": "^2.2.0",
@@ -51,6 +69,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
+    "jimp": "^1.6.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

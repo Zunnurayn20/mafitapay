@@ -172,19 +172,34 @@ export interface Transaction {
   metadata?: Record<string, unknown>
 }
 
-export interface P2PMerchant {
+export type StocksMarketSource = 'live' | 'seed' | 'stale'
+
+export interface StocksMarketSummary {
+  indexName: string
+  indexValue: number
+  changePercent: number
+  marketStatus: 'watch_only'
+  exchange: 'NGX'
+  lastUpdated: string
+  source?: StocksMarketSource
+  listedCount?: number
+}
+
+export interface StockQuote {
   id: string
+  symbol: string
   name: string
-  initial: string
-  bank: string
-  accountNumber: string
-  accountName: string
-  completionRate: number
-  totalTrades: number
-  minAmount: number
-  maxAmount: number
-  availableBalance: number
-  isOnline: boolean
+  sector: string
+  subSector?: string
+  marketClassification?: string
+  exchange: 'NGX'
+  logoUrl?: string
+  isHalal?: boolean
+  priceNgn: number
+  changePercent: number
+  volume?: number
+  marketCapNgn?: number
+  isWatchOnly: true
 }
 
 export type KnownCryptoPairId =
@@ -301,14 +316,14 @@ export interface CryptoDepositEvent {
   id: string
   externalEventId: string
   userId: string
-  addressId: string
-  addressFamily: CryptoDepositAddressFamily
+  addressId?: string | null
+  addressFamily?: CryptoDepositAddressFamily | null
   pairId: CryptoPairId
-  network: string
+  network?: string | null
   assetSymbol: string
   amountCrypto: number
   amountUnits: string
-  txHash: string
+  txHash?: string | null
   blockNumber?: string
   logIndex?: number
   status: 'matched' | 'unmatched' | 'ignored'
@@ -319,6 +334,29 @@ export interface CryptoDepositEvent {
   cryptoOrderId?: string
   transactionId?: string
   payload?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  // CEX support (Binance internal transfers first). No auto-sweep; manual funds control on exchange.
+  source?: 'onchain' | 'binance_internal'
+  cexExchange?: string
+  cexUid?: string
+  cexTxId?: string
+  memo?: string
+}
+
+export interface CexDepositIntent {
+  id: string
+  userId: string
+  reference: string
+  exchange: 'binance'
+  pairId: CryptoPairId
+  expectedAmountCrypto: number
+  cexUid: string
+  memo?: string
+  status: 'pending' | 'matched' | 'expired' | 'cancelled'
+  matchedEventId?: string
+  expiresAt?: string
+  note?: string
   createdAt: string
   updatedAt: string
 }

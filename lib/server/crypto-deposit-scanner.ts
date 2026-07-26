@@ -12,6 +12,7 @@ import { base, bsc, polygon } from 'viem/chains'
 import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
+import { sanitizeEvmRpcUrls } from '@/lib/server/evm-rpc'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
@@ -27,23 +28,74 @@ import {
   getCryptoAssets,
   getCryptoDepositEventByExternalId,
   getCryptoDepositAddressByAddress,
+  getTransactionById,
   listCryptoDepositAddressesByFamily,
   markCryptoDepositEventMatched,
+  markCryptoDepositEventSweepFailed,
   updateCryptoOrderExecution,
   updateCryptoOrderProviderState,
+  getLastScannedBlock,
+  setLastScannedBlock as persistLastScannedBlock,
 } from '@/lib/server/data'
 import { formatCrypto, sanitizeUrlForLogs } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
-const SCAN_BLOCK_WINDOW = BigInt(64) // reduced to avoid RPC log query limits on public nodes and speed up native scans
-const WATCHDOG_INTERVAL_MS = 60_000
+const SCAN_BLOCK_WINDOW = BigInt(256) // larger window for native EVM deposits (Base ETH etc) to reduce risk of missing txs due to timing/RPC lag in small incremental scans. ERC20 still uses chunked getLogs. For prod prefer dedicated RPCs.
+const POLYGON_NATIVE_INITIAL_SCAN_WINDOW = BigInt(
+  Number(process.env.MAFITAPAY_POLYGON_NATIVE_INITIAL_SCAN_BLOCKS ?? 900) || 900
+)
+const WATCHDOG_INTERVAL_MS = 15_000 // more frequent scans so on-chain deposits (especially small test ones) reflect faster in NGN balance. With persisted state + min-recent coverage we avoid excessive RPC load.
 const MIN_SYNC_INTERVAL_MS = Math.max(
-  30_000,
-  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SCAN_INTERVAL_MS ?? 60_000) || 60_000
+  15_000,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SCAN_INTERVAL_MS ?? 15_000) || 15_000
+)
+const ASSET_SCAN_TIMEOUT_MS = Math.max(
+  45_000,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_ASSET_TIMEOUT_MS ?? 120_000) || 120_000
+)
+// When the persisted cursor is far behind, scan this many recent blocks so deposits that
+// landed while the scanner was stuck are still found (without replaying the entire chain).
+const GAP_LOOKBACK_BLOCKS = BigInt(
+  Math.max(128, Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_GAP_LOOKBACK_BLOCKS ?? 512) || 512)
+)
+// BSC/Polygon/Solana etc. use a smaller catch-up window so one sync cycle does not spend
+// 2+ minutes on non-Base chains while you are testing Base deposits locally.
+const SECONDARY_GAP_LOOKBACK_BLOCKS = BigInt(
+  Math.max(256, Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SECONDARY_GAP_LOOKBACK_BLOCKS ?? 512) || 512)
 )
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
 
-const DEFAULT_POLYGON_RPC_URL = 'https://rpc.ankr.com/polygon'
+const DEFAULT_POLYGON_RPC_URL = 'https://rpc.ankr.com/polygon' // fallback only; prefer MAFITAPAY_POLYGON_RPC_URLS with Alchemy
+
+// Control verbose on-chain deposit scanner logs (matched, persistAndSettle etc.)
+// Set MAFITAPAY_VERBOSE_DEPOSIT_SCANNER=1 to re-enable full on-chain spam (including TON).
+// Default is quiet (TON logger removed) so cex-binance logs and your manual tests stand out.
+const VERBOSE_DEPOSIT_SCANNER = process.env.MAFITAPAY_VERBOSE_DEPOSIT_SCANNER === '1'
+
+// Known-dead / permanently unreliable Polygon public RPC hosts.
+// We ALWAYS strip these, even if the user has them in MAFITAPAY_POLYGON_RPC_URLS.
+// The public Blast API is dead and will never come back.
+const DEAD_POLYGON_RPC_HOSTS = [
+  'blastapi.io',
+  'public.blastapi.io',
+  'polygon-rpc.com',
+];
+
+export function sanitizePolygonRpcUrls(raw: string): string[] {
+  if (!raw?.trim()) return [];
+  let urls = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // Remove any dead hosts (blast, old polygon-rpc.com, etc.)
+  urls = urls.filter(u => {
+    const lower = u.toLowerCase();
+    return !DEAD_POLYGON_RPC_HOSTS.some(dead => lower.includes(dead));
+  });
+
+  return urls;
+}
 const warnedOnce = new Set<string>()
 
 async function getLogsChunked(
@@ -55,18 +107,26 @@ async function getLogsChunked(
   let current = baseParams.fromBlock
   const { fromBlock: _f, toBlock: _t, ...filter } = baseParams
   let coveredTo = baseParams.fromBlock - BigInt(1)
+  let consecutiveFailures = 0
+  const MAX_CONSECUTIVE_FAILURES = 5
   while (current <= baseParams.toBlock) {
     const end = current + chunkSize > baseParams.toBlock ? baseParams.toBlock : current + chunkSize
     try {
       const chunk = await client.getLogs({ ...filter, fromBlock: current, toBlock: end })
       logs.push(...chunk)
+      consecutiveFailures = 0
       const expected = coveredTo + BigInt(1)
       if (current === expected) {
         coveredTo = end
       }
       // only advance covered for contiguous successful prefix from window start (prevents skipping holes on flaky RPCs)
     } catch (err) {
+      consecutiveFailures += 1
       console.warn(`[crypto-deposit-scanner] getLogs chunk ${current}-${end} failed (will continue):`, err instanceof Error ? err.message : err)
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        console.warn(`[crypto-deposit-scanner] getLogs aborting after ${MAX_CONSECUTIVE_FAILURES} consecutive chunk failures — check RPC URLs for this chain`)
+        break
+      }
       // continue; do not advance coveredTo so tail (incl this chunk) gets retried next sync
     }
     current = end + BigInt(1)
@@ -125,25 +185,33 @@ function createBscClient() {
 
 function createPolygonClient() {
   let raw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || '')
-  if (!raw) {
+
+  // Drop dead hosts (Blast, llamarpc) and bare Ankr endpoints that now require API keys.
+  let rpcUrls = sanitizePolygonRpcUrls(raw)
+  const { rpcUrls: sanitized, dropped } = sanitizeEvmRpcUrls(rpcUrls.join(','), DEFAULT_POLYGON_RPC_URL)
+  rpcUrls = sanitized.filter((url) => url.startsWith('http'))
+  if (dropped.length > 0) {
+    console.warn('[crypto-deposit-scanner] dropped invalid Polygon RPC URLs:', dropped.map(url => url.replace(/\/v2\/[^/]+/, '/v2/[REDACTED]')))
+  }
+
+  if (rpcUrls.length === 0) {
+    // Fall back to Alchemy (preferred) or authenticated Ankr multichain URL from env
     const alchemyKey = process.env.ALCHEMY_API_KEY?.trim()
+    const polygonRpc = process.env.MAFITAPAY_POLYGON_RPC_URL?.trim()
     if (alchemyKey) {
-      raw = `https://polygon-mainnet.g.alchemy.com/v2/${alchemyKey}`
+      rpcUrls = [`https://polygon-mainnet.g.alchemy.com/v2/${alchemyKey}`]
+    } else if (polygonRpc && polygonRpc.includes('/multichain/')) {
+      rpcUrls = [polygonRpc]
     } else {
-      raw = DEFAULT_POLYGON_RPC_URL
+      rpcUrls = [DEFAULT_POLYGON_RPC_URL]
     }
   }
-  let rpcUrls = raw.split(',').map(item => item.trim()).filter(Boolean)
-  // Avoid falling back all the way to the known-broken public polygon-rpc.com if user listed better ones first
-  const BROKEN_POLYGON_DEFAULT = 'https://polygon-rpc.com'
-  if (rpcUrls.length > 1) {
-    rpcUrls = rpcUrls.filter(u => !u.toLowerCase().includes('polygon-rpc.com'))
-    if (rpcUrls.length === 0) rpcUrls = [BROKEN_POLYGON_DEFAULT]
-  }
+
   const transport = rpcUrls.length > 1
     ? fallback(rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
-    : http(rpcUrls[0] || BROKEN_POLYGON_DEFAULT, { retryCount: 1, timeout: 10_000 })
-  console.log(`[crypto-deposit-scanner] polygon RPCs configured (after filtering broken defaults): ${rpcUrls.map(sanitizeUrlForLogs).join(' | ')}`)
+    : http(rpcUrls[0], { retryCount: 1, timeout: 10_000 })
+
+  console.log(`[crypto-deposit-scanner] polygon RPCs configured (after removing dead endpoints incl. Blast): ${rpcUrls.map(sanitizeUrlForLogs).join(' | ')}`)
   return createPublicClient({ chain: polygon, transport })
 }
 
@@ -197,7 +265,15 @@ function createNearScannerProvider() {
 function getSupportedAssets(): SupportedDepositAsset[] {
   const baseConfig = getBaseExecutorConfig()
   const bscConfig = getBscExecutorConfig()
-  return [
+  const assets: SupportedDepositAsset[] = [
+    {
+      chain: 'base',
+      pairId: 'ETH_BASE',
+      network: 'Base',
+      symbol: 'ETH',
+      decimals: 18,
+      kind: 'native',
+    },
     {
       chain: 'base',
       pairId: 'USDC_BASE',
@@ -208,10 +284,10 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       tokenAddress: baseConfig.usdcAddress,
     },
     {
-      chain: 'base',
-      pairId: 'ETH_BASE',
-      network: 'Base',
-      symbol: 'ETH',
+      chain: 'bsc',
+      pairId: 'BNB_BSC',
+      network: 'BSC',
+      symbol: 'BNB',
       decimals: 18,
       kind: 'native',
     },
@@ -223,14 +299,6 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       decimals: 18,
       kind: 'erc20',
       tokenAddress: bscConfig.usdtAddress,
-    },
-    {
-      chain: 'bsc',
-      pairId: 'BNB_BSC',
-      network: 'BSC',
-      symbol: 'BNB',
-      decimals: 18,
-      kind: 'native',
     },
     {
       chain: 'polygon',
@@ -301,6 +369,38 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       kind: 'native',
     },
   ]
+
+  const chainOrder = ['base', 'bsc', 'polygon', 'solana', 'ton', 'sui', 'near'] as const
+  const kindOrder: Record<SupportedDepositAsset['kind'], number> = {
+    native: 0,
+    spl: 0,
+    coin: 0,
+    token: 0,
+    jetton: 0,
+    erc20: 1,
+  }
+
+  return assets.sort((a, b) => {
+    const chainDiff = chainOrder.indexOf(a.chain) - chainOrder.indexOf(b.chain)
+    if (chainDiff !== 0) return chainDiff
+    return kindOrder[a.kind] - kindOrder[b.kind]
+  })
+}
+
+async function withAssetScanTimeout<T>(label: string, fn: () => Promise<T>) {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${ASSET_SCAN_TIMEOUT_MS}ms`))
+        }, ASSET_SCAN_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function buildAddressLookup(addresses: CryptoDepositAddress[]) {
@@ -320,20 +420,47 @@ function buildAddressLookup(addresses: CryptoDepositAddress[]) {
   return lookup
 }
 
-function getScanRange(key: string, latestBlock: bigint) {
+async function getScanRange(key: string, latestBlock: bigint, window = SCAN_BLOCK_WINDOW) {
   const state = getScannerState()
-  const previous = state.lastBlockByKey[key]
-  const fromBlock = previous
+  let previous: bigint | null | undefined = state.lastBlockByKey[key]
+  if (previous === undefined) {
+    previous = await getLastScannedBlock(key)
+    if (previous !== null) {
+      state.lastBlockByKey[key] = previous
+    }
+  }
+
+  const recentFrom = latestBlock > window ? latestBlock - window : BigInt(0)
+  let fromBlock = previous !== null && previous !== undefined
     ? previous + BigInt(1)
-    : latestBlock > SCAN_BLOCK_WINDOW
-      ? latestBlock - SCAN_BLOCK_WINDOW
-      : BigInt(0)
+    : recentFrom
+
+  // If persisted cursor fell far behind (timeouts, RPC failures, long downtime), do not try to
+  // catch up hundreds of thousands of blocks in one sync — that blocks the recent tail where
+  // live deposits land. Jump to the recent window instead.
+  const chain = (key.split(':')[0] || 'base') as ScanChain
+  const gapLookback = chain === 'base' ? GAP_LOOKBACK_BLOCKS : SECONDARY_GAP_LOOKBACK_BLOCKS
+  const gap = latestBlock - fromBlock
+  if (gap > window) {
+    const lookbackFrom = latestBlock > gapLookback ? latestBlock - gapLookback : BigInt(0)
+    if (VERBOSE_DEPOSIT_SCANNER || gap > window * BigInt(4)) {
+      console.warn(
+        `[crypto-deposit-scanner] ${key}: scan cursor ${previous?.toString() ?? 'none'} is ${gap.toString()} blocks behind head ${latestBlock.toString()}; scanning last ${(latestBlock - lookbackFrom).toString()} blocks (gap lookback)`
+      )
+    }
+    fromBlock = lookbackFrom
+  }
+
+  // Pull back if cursor is ahead of the recent window (restart / state skew).
+  if (fromBlock > recentFrom) fromBlock = recentFrom
+
   return { fromBlock, toBlock: latestBlock }
 }
 
-function setLastScannedBlock(key: string, block: bigint) {
+async function setLastScannedBlock(key: string, block: bigint) {
   const state = getScannerState()
   state.lastBlockByKey[key] = block
+  await persistLastScannedBlock(key, block)
 }
 
 function normalizeTonBigInt(value: unknown): bigint {
@@ -352,6 +479,32 @@ function normalizeTonBigInt(value: unknown): bigint {
   return BigInt(0)
 }
 
+async function sweepCryptoDepositEventSafely(event: CryptoDepositEvent) {
+  try {
+    const result = await sweepCryptoDepositEvent(event)
+    // Re-fetch to confirm latest sweep status/tx for observability
+    const refreshed = await getCryptoDepositEventByExternalId(event.externalEventId)
+    console.log(`[crypto-deposit-scanner] sweep after credit completed for ${event.externalEventId}: swept=${result?.swept} sweepTx=${refreshed?.sweepTxHash || 'n/a'} sweepStatus=${refreshed?.sweepStatus || 'n/a'}`)
+    return result
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn('[crypto-deposit-scanner] sweep failed after deposit settlement; NGN credit remains recorded. Marking sweep failure for visibility.', {
+      externalEventId: event.externalEventId,
+      pairId: event.pairId,
+      message: msg,
+    })
+    try {
+      await markCryptoDepositEventSweepFailed({
+        externalEventId: event.externalEventId,
+        error: `post_credit_sweep_failed: ${msg}`,
+      })
+    } catch (markErr) {
+      console.warn('[crypto-deposit-scanner] also failed to mark sweep failure', markErr)
+    }
+    return { swept: false, reason: 'sweep_failed_after_settlement' }
+  }
+}
+
 async function persistAndSettleDeposit(input: {
   asset: SupportedDepositAsset
   address: CryptoDepositAddress
@@ -362,7 +515,9 @@ async function persistAndSettleDeposit(input: {
   logIndex?: number
   payload?: Record<string, unknown>
 }) {
-  console.log(`[crypto-deposit-scanner] persistAndSettleDeposit external=${input.externalEventId} pair=${input.asset.pairId} amountUnits=${input.amountUnits.toString()} tx=${input.txHash} user=${input.address.userId}`)
+  if (VERBOSE_DEPOSIT_SCANNER) {
+    console.log(`[crypto-deposit-scanner] persistAndSettleDeposit external=${input.externalEventId} pair=${input.asset.pairId} amountUnits=${input.amountUnits.toString()} tx=${input.txHash} user=${input.address.userId}`)
+  }
   const existing = await getCryptoDepositEventByExternalId(input.externalEventId)
   if (existing) {
     if (existing.status !== 'unmatched') {
@@ -375,18 +530,20 @@ async function persistAndSettleDeposit(input: {
       amountCrypto: existing.amountCrypto,
     })
     if (!order) {
+      console.log(`[crypto-deposit-scanner] re-processing unmatched event ${input.externalEventId} — attempting direct NGN credit now`)
       const direct = await settleDirectCryptoDeposit({
         event: existing,
         asset: input.asset,
       })
-      await sweepCryptoDepositEvent(direct)
+      const sweepResult = await sweepCryptoDepositEventSafely(direct)
+      console.log(`[crypto-deposit-scanner] re-try direct credit + sweep for ${input.externalEventId}: credited=${direct?.status !== 'unmatched'} sweep=${JSON.stringify(sweepResult)}`)
       return { event: direct, settled: true, duplicate: true }
     }
 
     await settleCryptoSellDeposit({
       order,
       event: existing,
-      txHash: existing.txHash,
+      txHash: existing.txHash ?? existing.externalEventId,
       blockNumber: existing.blockNumber,
       logIndex: existing.logIndex,
       amountUnits: existing.amountUnits,
@@ -397,7 +554,7 @@ async function persistAndSettleDeposit(input: {
       cryptoOrderId: order.id,
       transactionId: order.transactionId,
     })
-    await sweepCryptoDepositEvent(matched ?? existing)
+    await sweepCryptoDepositEventSafely(matched ?? existing)
     return { event: matched ?? existing, settled: true, duplicate: true }
   }
 
@@ -451,12 +608,14 @@ async function persistAndSettleDeposit(input: {
   console.log(`[crypto-deposit-scanner] created deposit event ${event.id} status=${eventStatus} amountCrypto=${amountCrypto} for pair=${input.asset.pairId}`)
 
   if (!order) {
-    console.log(`[crypto-deposit-scanner] no pending sell order, doing direct NGN credit for ${input.externalEventId}`)
+    console.log(`[crypto-deposit-scanner] no pending sell order for ${input.externalEventId} — will attempt direct NGN credit (POL and other EVM deposits go through this path)`)
     const direct = await settleDirectCryptoDeposit({
       event,
       asset: input.asset,
     })
-    await sweepCryptoDepositEvent(direct)
+    const sweepResult = await sweepCryptoDepositEventSafely(direct)
+    // Extra visibility for the exact case the user reported (POL credit + sweep uncertainty)
+    console.log(`[crypto-deposit-scanner] direct NGN credit + sweep path completed for ${input.externalEventId}: credited=${direct?.status !== 'unmatched'} sweepResult=${JSON.stringify(sweepResult)}`)
     return { event: direct, settled: true, duplicate: false }
   }
 
@@ -470,65 +629,97 @@ async function persistAndSettleDeposit(input: {
     amountUnits: input.amountUnits.toString(),
     amountCrypto,
   })
-  await sweepCryptoDepositEvent(event)
+  await sweepCryptoDepositEventSafely(event)
 
   return { event, settled: true, duplicate: false }
 }
 
-async function settleDirectCryptoDeposit(input: {
+export async function settleDirectCryptoDeposit(input: {
   event: CryptoDepositEvent
   asset: SupportedDepositAsset
 }) {
-  console.log(`[crypto-deposit-scanner] settleDirectCryptoDeposit for event=${input.event.externalEventId} pair=${input.asset.pairId} cryptoAmount=${input.event.amountCrypto}`)
-  const assets = await getCryptoAssets({ forceRefresh: true, liveOnly: true })
-  const liveAsset = assets.find(item => item.id === input.asset.pairId)
-  const sellRate = typeof liveAsset?.sellRate === 'number' ? liveAsset.sellRate : 0
-  console.log(`[crypto-deposit-scanner] live rate for ${input.asset.pairId}: ${sellRate} (liveAsset=${!!liveAsset})`)
-  if (!liveAsset || !Number.isFinite(sellRate) || sellRate <= 0) {
-    throw new Error(`Live sell rate is unavailable for ${input.asset.pairId}.`)
+  if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
+    console.log(`[crypto-deposit-scanner] settleDirectCryptoDeposit for event=${input.event.externalEventId} pair=${input.asset.pairId} cryptoAmount=${input.event.amountCrypto}`)
+  }
+  // Use non-liveOnly so we reliably get the configured sellRate for direct credits (important for POL and other assets where live market may be temporarily missing)
+  const assets = await getCryptoAssets({ forceRefresh: true })
+  // For cex deposits, pairId may be short symbol like "USDT" (not full "USDT_BSC").
+  // Prefer exact id match, fallback to symbol match (for cex short names in manual tests).
+  let assetForRate = assets.find(item => item.id === input.asset.pairId)
+  if (!assetForRate) {
+    const symbol = (input.asset.pairId || '').split('_')[0].toUpperCase()
+    assetForRate = assets.find(item => 
+      item.symbol.toUpperCase() === symbol || 
+      item.id.toUpperCase() === symbol || 
+      item.id.toUpperCase().startsWith(symbol + '_')
+    )
+  }
+  let sellRate = typeof assetForRate?.sellRate === 'number' ? assetForRate.sellRate : 0
+
+  if (!Number.isFinite(sellRate) || sellRate <= 0) {
+    // Last resort: try the asset's own configured rate if present on the SupportedDepositAsset (some paths carry it)
+    // @ts-expect-error - optional on the local asset type
+    sellRate = typeof input.asset.sellRate === 'number' ? input.asset.sellRate : sellRate
+  }
+
+  if (!Number.isFinite(sellRate) || sellRate <= 0) {
+    console.error(`[crypto-deposit-scanner] No usable sell rate for direct NGN credit of ${input.asset.pairId}. For CEX deposits, use a valid full pairId with configured sellRate (e.g. USDT_BSC) or the base symbol (fallback will attempt to resolve). Event left unmatched.`)
+    return input.event
+  }
+
+  if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
+    console.log(`[crypto-deposit-scanner] rate for ${input.asset.pairId} (direct credit): ${sellRate} (assetFound=${!!assetForRate})`)
   }
 
   const amountNgn = Number((input.event.amountCrypto * sellRate).toFixed(2))
   if (!Number.isFinite(amountNgn) || amountNgn <= 0) {
-    throw new Error(`Calculated NGN credit is invalid for ${input.asset.pairId}.`)
+    console.error(`[crypto-deposit-scanner] Calculated NGN credit invalid for ${input.asset.pairId} (amountCrypto=${input.event.amountCrypto}, rate=${sellRate}). Leaving unmatched.`)
+    return input.event
   }
 
-  console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol}`)
+  if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
+    console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol} (rate=${sellRate})`)
+  }
   const now = new Date().toISOString()
   const transactionId = `tx_${input.event.externalEventId.replace(/[^a-zA-Z0-9]/g, '').slice(-24)}`
-  await applyWalletMutation({
-    userId: input.event.userId,
-    asset: 'NGN',
-    balanceDelta: amountNgn,
-    transaction: {
-      id: transactionId,
-      type: 'crypto_sell',
-      status: 'success',
-      amount: amountNgn,
-      fee: 0,
-      description: `Sell ${formatCrypto(input.event.amountCrypto, input.asset.symbol)}`,
-      reference: transactionId,
-      recipient: 'MafitaPay crypto deposit',
-      narration: `${input.asset.symbol} deposit auto-credited`,
-      createdAt: now,
-      icon: '₿',
-      metadata: {
-        pairId: input.asset.pairId,
-        symbol: input.asset.symbol,
-        network: input.asset.network,
-        settlementFlow: 'direct_crypto_deposit',
-        settlementKind: 'crypto_sell_auto_credit',
-        walletAsset: 'NGN',
-        depositEventId: input.event.id,
-        depositTxHash: input.event.txHash,
-        depositAddressId: input.event.addressId,
-        amountCrypto: input.event.amountCrypto,
-        amountUnits: input.event.amountUnits,
-        unitRate: sellRate,
-        liveRate: sellRate,
+  const existingTransaction = await getTransactionById(input.event.userId, transactionId)
+  if (!existingTransaction) {
+    await applyWalletMutation({
+      userId: input.event.userId,
+      asset: 'NGN',
+      balanceDelta: amountNgn,
+      transaction: {
+        id: transactionId,
+        type: 'crypto_sell',
+        status: 'success',
+        amount: amountNgn,
+        fee: 0,
+        description: `Sell ${formatCrypto(input.event.amountCrypto, input.asset.symbol)}`,
+        reference: transactionId,
+        recipient: 'MafitaPay crypto deposit',
+        narration: `${input.asset.symbol} deposit auto-credited`,
+        createdAt: now,
+        icon: '₿',
+        metadata: {
+          pairId: input.asset.pairId,
+          symbol: input.asset.symbol,
+          network: input.asset.network,
+          settlementFlow: 'direct_crypto_deposit',
+          settlementKind: 'crypto_sell_auto_credit',
+          walletAsset: 'NGN',
+          depositEventId: input.event.id,
+          depositTxHash: input.event.txHash,
+          depositAddressId: input.event.addressId,
+          amountCrypto: input.event.amountCrypto,
+          amountUnits: input.event.amountUnits,
+          unitRate: sellRate,
+          liveRate: sellRate,
+        },
       },
-    },
-  })
+    })
+  } else {
+    console.log(`[crypto-deposit-scanner] direct credit transaction already exists for event=${input.event.externalEventId}; marking event matched without duplicating NGN credit`)
+  }
 
   const matched = await markCryptoDepositEventMatched({
     externalEventId: input.event.externalEventId,
@@ -542,11 +733,13 @@ async function settleDirectCryptoDeposit(input: {
     type: 'success',
   }))
 
-  console.log(`[crypto-deposit-scanner] direct credit successful for event=${input.event.externalEventId} tx=${transactionId} NGN=${amountNgn}`)
+  if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
+    console.log(`[crypto-deposit-scanner] direct credit successful for event=${input.event.externalEventId} tx=${transactionId} NGN=${amountNgn}`)
+  }
   return matched ?? input.event
 }
 
-async function settleCryptoSellDeposit(input: {
+export async function settleCryptoSellDeposit(input: {
   order: CryptoOrder
   event: CryptoDepositEvent
   txHash: string
@@ -600,8 +793,12 @@ async function scanErc20Deposits(input: {
 
   const latestBlock = await input.client.getBlockNumber()
   const rangeKey = `${input.asset.chain}:${input.asset.pairId}:erc20`
-  const { fromBlock, toBlock } = getScanRange(rangeKey, latestBlock)
-  const erc20ChunkSize = input.asset.chain === 'bsc' ? BigInt(16) : BigInt(100)
+  const { fromBlock, toBlock } = await getScanRange(rangeKey, latestBlock)
+  const erc20ChunkSize = input.asset.chain === 'bsc'
+    ? BigInt(16)
+    : input.asset.chain === 'base'
+      ? BigInt(25)
+      : BigInt(50)
   const { logs, coveredTo } = await getLogsChunked(input.client, {
     address: input.asset.tokenAddress as Address,
     event: TRANSFER_EVENT,
@@ -611,7 +808,7 @@ async function scanErc20Deposits(input: {
 
   let detected = 0
   let settled = 0
-  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} erc20: fetched ${logs.length} logs in range (chunked to avoid limits)`)
+  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} erc20: scanning from ${fromBlock} to ${toBlock}, fetched ${logs.length} logs in range (chunked to avoid limits)`)
   for (const log of logs) {
     const to = typeof log.args.to === 'string' ? log.args.to : ''
     const address = input.lookup.get(to.toLowerCase())
@@ -619,7 +816,9 @@ async function scanErc20Deposits(input: {
     const value = typeof log.args.value === 'bigint' ? log.args.value : BigInt(0)
     const txHash = log.transactionHash
     const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${txHash}:${log.logIndex?.toString() ?? '0'}`
-    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched erc20 deposit: to=${to} value=${value.toString()} tx=${txHash}`)
+    if (VERBOSE_DEPOSIT_SCANNER) {
+      console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched erc20 deposit: to=${to} value=${value.toString()} tx=${txHash}`)
+    }
     const result = await persistAndSettleDeposit({
       asset: input.asset,
       address,
@@ -642,7 +841,7 @@ async function scanErc20Deposits(input: {
   // advance only to contiguous covered prefix (from start of this window); tail/holes retried on next sync to avoid permanently skipping blocks when public RPCs rate-limit getLogs
   let advanceTo = coveredTo >= fromBlock ? coveredTo : fromBlock - BigInt(1)
   if (advanceTo < BigInt(0)) advanceTo = BigInt(0)
-  setLastScannedBlock(rangeKey, advanceTo)
+  await setLastScannedBlock(rangeKey, advanceTo)
 
   if (input.asset.chain === 'bsc' && input.asset.pairId === 'USDT_BSC' && logs.length === 0 && coveredTo < toBlock) {
     if (!warnedOnce.has('bsc-usdt-logs')) {
@@ -662,50 +861,85 @@ async function scanNativeDeposits(input: {
 }) {
   const latestBlock = await input.client.getBlockNumber()
   const nativeKey = `${input.asset.chain}:${input.asset.pairId}:native`
-  const { fromBlock, toBlock } = getScanRange(nativeKey, latestBlock)
+  const scanWindow = input.asset.chain === 'polygon' ? POLYGON_NATIVE_INITIAL_SCAN_WINDOW : SCAN_BLOCK_WINDOW
+  let { fromBlock, toBlock } = await getScanRange(nativeKey, latestBlock, scanWindow)
+  // Always ensure we cover a decent recent window for native deposits so very recent sends
+  // are caught promptly even if incremental state is "ahead" or after restarts.
+  const MIN_RECENT_NATIVE = BigInt(256)
+  const recentFrom = latestBlock > MIN_RECENT_NATIVE ? latestBlock - MIN_RECENT_NATIVE : BigInt(0)
+  if (fromBlock > recentFrom) fromBlock = recentFrom
   let detected = 0
   let settled = 0
   const totalBlocks = Number(toBlock) - Number(fromBlock) + 1
-  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} native: scanning ${totalBlocks} blocks (batched for speed)`)
+  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} native: scanning ${totalBlocks} blocks newest-first (batched for speed) from ${fromBlock} to ${toBlock} (key=${nativeKey})`)
 
-  const BATCH_SIZE = 8 // small batches to not overwhelm RPCs
-  for (let start = fromBlock; start <= toBlock; start += BigInt(BATCH_SIZE)) {
-    const end = start + BigInt(BATCH_SIZE) - BigInt(1) > toBlock ? toBlock : start + BigInt(BATCH_SIZE) - BigInt(1)
+  const BATCH_SIZE = totalBlocks > 512 ? 16 : 8 // wider batches when recovering a stuck cursor
+  let completedFullWindow = true
+  for (let end = toBlock; end >= fromBlock; end -= BigInt(BATCH_SIZE)) {
+    const start = end - BigInt(BATCH_SIZE) + BigInt(1) < fromBlock ? fromBlock : end - BigInt(BATCH_SIZE) + BigInt(1)
     const promises: Promise<any>[] = []
-    for (let b = start; b <= end; b += BigInt(1)) {
+    for (let b = end; b >= start; b -= BigInt(1)) {
       promises.push( input.client.getBlock({ blockNumber: b, includeTransactions: true }) )
     }
-    const batchBlocks = await Promise.all(promises)
-    for (let i = 0; i < batchBlocks.length; i++) {
-      const blockNumber = start + BigInt(i)
-      const block = batchBlocks[i]
+    const processBlock = async (blockNumber: bigint, block: { transactions: unknown[] }) => {
       for (const tx of block.transactions) {
         if (typeof tx === 'string') continue
-        if (!tx.to || tx.value <= BigInt(0)) continue
-        const address = input.lookup.get(tx.to.toLowerCase())
+        const parsed = tx as { to?: string | null; value?: bigint; hash?: string; from?: string }
+        if (!parsed.to || !parsed.value || parsed.value <= BigInt(0)) continue
+        const address = input.lookup.get(parsed.to.toLowerCase())
         if (!address) continue
-        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${tx.to} value=${tx.value.toString()} tx=${tx.hash} block=${blockNumber}`)
-        const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${tx.hash}:native`
+        if (VERBOSE_DEPOSIT_SCANNER) {
+          console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${parsed.to} value=${parsed.value.toString()} tx=${parsed.hash} block=${blockNumber}`)
+        }
+        const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${parsed.hash}:native`
         const result = await persistAndSettleDeposit({
           asset: input.asset,
           address,
           externalEventId,
-          amountUnits: tx.value,
-          txHash: tx.hash,
+          amountUnits: parsed.value,
+          txHash: parsed.hash!,
           blockNumber,
           payload: {
             type: 'native_transfer',
-            from: tx.from,
-            to: tx.to,
+            from: parsed.from,
+            to: parsed.to,
           },
         })
         if (!result.duplicate) detected += 1
         if (result.settled) settled += 1
       }
     }
+
+    let batchBlocks: any[] | null = null
+    try {
+      batchBlocks = await Promise.all(promises)
+    } catch (error) {
+      console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native block batch ${start}-${end} failed; retrying block-by-block:`, error instanceof Error ? error.message : error)
+    }
+
+    if (batchBlocks) {
+      for (let i = 0; i < batchBlocks.length; i++) {
+        await processBlock(end - BigInt(i), batchBlocks[i])
+      }
+      continue
+    }
+
+    for (let b = end; b >= start; b -= BigInt(1)) {
+      try {
+        const block = await input.client.getBlock({ blockNumber: b, includeTransactions: true })
+        await processBlock(b, block)
+      } catch (error) {
+        completedFullWindow = false
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native block ${b} failed; newest blocks were prioritized and this window will retry next sync:`, error instanceof Error ? error.message : error)
+        break
+      }
+    }
+    if (!completedFullWindow) break
   }
 
-  setLastScannedBlock(nativeKey, toBlock)
+  if (completedFullWindow) {
+    await setLastScannedBlock(nativeKey, toBlock)
+  }
   return { detected, settled }
 }
 
@@ -738,7 +972,9 @@ async function scanTonDeposits(input: {
         const txHash = tx.hash().toString('hex')
         // Use normalized for external id
         const externalEventId = `ton:${input.asset.pairId}:${txHash}:native`
-        console.log(`[crypto-deposit-scanner] TON_TON matched native deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
+        if (VERBOSE_DEPOSIT_SCANNER) {
+          console.log(`[crypto-deposit-scanner] TON_TON matched native deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
+        }
         const result = await persistAndSettleDeposit({
           asset: input.asset,
           address: addr,
@@ -826,7 +1062,9 @@ async function scanSolanaDeposits(input: {
 
         const txHash = sigInfo.signature
         const externalEventId = `solana:${input.asset.pairId}:${txHash}:${isNative ? 'native' : 'spl'}`
-        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched ${isNative ? 'native' : 'spl'} deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
+        if (VERBOSE_DEPOSIT_SCANNER) {
+          console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched ${isNative ? 'native' : 'spl'} deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
+        }
         const result = await persistAndSettleDeposit({
           asset: input.asset,
           address: addr,
@@ -894,7 +1132,9 @@ async function scanSuiDeposits(input: {
         if (value <= BigInt(0)) continue
 
         const externalEventId = `sui:${input.asset.pairId}:${digest}`
-        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${addr.address} value=${value.toString()} tx=${digest}`)
+        if (VERBOSE_DEPOSIT_SCANNER) {
+          console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${addr.address} value=${value.toString()} tx=${digest}`)
+        }
         const result = await persistAndSettleDeposit({
           asset: input.asset,
           address: addr,
@@ -976,7 +1216,9 @@ async function scanNearDeposits(input: {
                   const addressRec = nearAddrs.find((a) => a.address.toLowerCase() === receiver.toLowerCase())
                   if (!addressRec) continue
 
-                  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${receiver} value=${value.toString()} tx=${txHash}`)
+                  if (VERBOSE_DEPOSIT_SCANNER) {
+                    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${receiver} value=${value.toString()} tx=${txHash}`)
+                  }
                   const result = await persistAndSettleDeposit({
                     asset: input.asset,
                     address: addressRec,
@@ -1052,7 +1294,8 @@ export async function syncCryptoDepositEventsOnce() {
     const polyRpcRaw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
     const suiRpcRaw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC_URL)
     const nearRpcRaw = (process.env.MAFITAPAY_NEAR_RPC_URLS?.trim() || process.env.MAFITAPAY_NEAR_RPC_URL?.trim() || DEFAULT_NEAR_RPC_URLS[0])
-    console.log(`[crypto-deposit-scanner] RPCs base[0]=${sanitizeUrlForLogs(baseCfg.rpcUrls[0])} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(polyRpcRaw.split(',')[0])} sui[0]=${sanitizeUrlForLogs(suiRpcRaw.split(',')[0])} near[0]=${sanitizeUrlForLogs(nearRpcRaw)}`)
+    const sanitizedPolygon = sanitizePolygonRpcUrls(polyRpcRaw)
+    console.log(`[crypto-deposit-scanner] RPCs base(${baseCfg.rpcUrls.length})=${baseCfg.rpcUrls.map(sanitizeUrlForLogs).join(' | ')} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(sanitizedPolygon[0] || polyRpcRaw.split(',')[0])} (raw had ${polyRpcRaw.split(',').length} entries) sui[0]=${sanitizeUrlForLogs(suiRpcRaw.split(',')[0])} near[0]=${sanitizeUrlForLogs(nearRpcRaw)}`)
     let detected = 0
     let settled = 0
     const errors: string[] = []
@@ -1062,40 +1305,37 @@ export async function syncCryptoDepositEventsOnce() {
     for (const asset of getSupportedAssets()) {
       try {
         console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
-        const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
-        if (isEvm) {
-          const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
-          const result = asset.kind === 'erc20'
-            ? await scanErc20Deposits({ asset, client, lookup })
-            : await scanNativeDeposits({ asset, client, lookup })
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
-        } else if (asset.chain === 'ton') {
-          const result = await scanTonDeposits({ asset, client: tonClient, lookup })
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
-        } else if (asset.chain === 'solana') {
-          const result = await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
-        } else if (asset.chain === 'sui') {
-          const result = await scanSuiDeposits({ asset, client: suiClient, lookup })
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
-        } else if (asset.chain === 'near') {
-          const result = await scanNearDeposits({ asset, provider: nearProvider, lookup })
-          console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
-          assetResults.push({ detected: result.detected, settled: result.settled, error: null })
-        } else {
+        const result = await withAssetScanTimeout(asset.pairId, async () => {
+          const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
+          if (isEvm) {
+            const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
+            return asset.kind === 'erc20'
+              ? await scanErc20Deposits({ asset, client, lookup })
+              : await scanNativeDeposits({ asset, client, lookup })
+          }
+          if (asset.chain === 'ton') {
+            return await scanTonDeposits({ asset, client: tonClient, lookup })
+          }
+          if (asset.chain === 'solana') {
+            return await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
+          }
+          if (asset.chain === 'sui') {
+            return await scanSuiDeposits({ asset, client: suiClient, lookup })
+          }
+          if (asset.chain === 'near') {
+            return await scanNearDeposits({ asset, provider: nearProvider, lookup })
+          }
           console.log(`[crypto-deposit-scanner] ${asset.pairId} on ${asset.chain}: no scanner configured`)
-          assetResults.push({ detected: 0, settled: 0, error: null })
-        }
+          return { detected: 0, settled: 0 }
+        })
+        console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+        assetResults.push({ detected: result.detected, settled: result.settled, error: null })
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'scan failed'
         console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
         if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
           warnedOnce.add('polygon-rpc')
-          console.warn(`[crypto-deposit-scanner] Polygon RPC failed (common on public Polygon endpoints that have disabled free/tenant-less access). Check the "polygon RPCs configured" line above for the list that was actually tried. We auto-use ALCHEMY_API_KEY if present (https://polygon-mainnet.g.alchemy.com/v2/KEY). Set MAFITAPAY_POLYGON_RPC_URL or _URLS (or ensure Alchemy app includes Polygon) and restart.`)
+          console.warn(`[crypto-deposit-scanner] Polygon RPC failed. We now aggressively drop dead endpoints (especially the permanently dead public.blastapi.io / Blast API). Check the "polygon RPCs configured (after removing dead endpoints incl. Blast)" line. Prefer MAFITAPAY_POLYGON_RPC_URLS with your Alchemy key. Falling back to Ankr if needed.`)
         }
         assetResults.push({ detected: 0, settled: 0, error: `${asset.pairId}: ${msg}` })
       }
@@ -1122,6 +1362,15 @@ export function ensureCryptoDepositScannerWatchdog() {
       console.warn('[crypto-deposit-scanner] watchdog_error', error instanceof Error ? error.message : error)
     })
   }, WATCHDOG_INTERVAL_MS)
+
+  // CEX Binance internal poller (UID transfers) is temporarily disabled / parked
+  // while we focus exclusively on on-chain deposit testing for the other assets
+  // (Sui, NEAR, Polygon, TON, different networks, etc.).
+  // The auto watchdog and its [cex-binance] logs are silenced to reduce noise.
+  // Re-enable by uncommenting below when ready to resume CEX work.
+  // import('@/lib/server/data').then(({ ensureBinanceCexDepositSyncWatchdog }) => {
+  //   ensureBinanceCexDepositSyncWatchdog()
+  // }).catch(() => {})
 }
 
 export async function kickCryptoDepositScanner() {

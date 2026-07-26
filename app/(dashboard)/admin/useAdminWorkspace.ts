@@ -381,7 +381,6 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [runningWebhookTest, setRunningWebhookTest] = useState(false)
   const [webhookTestResult, setWebhookTestResult] = useState<{ status: number; body: unknown } | null>(null)
   const [drafts, setDrafts] = useState<Record<AdminKey, string>>({
-    merchants: '[]',
     assets: '[]',
     rewardRules: '[]',
     billProviders: '[]',

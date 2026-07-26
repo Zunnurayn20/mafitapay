@@ -48,7 +48,7 @@ export default function KycPage() {
         }
       : {
           headline: 'Verification required',
-          body: 'Upload a valid government ID to unlock higher transaction limits and full P2P access.',
+          body: 'Upload a valid government ID to unlock higher transaction limits and full platform access.',
         }
 
   async function submitKyc() {
@@ -117,7 +117,7 @@ export default function KycPage() {
           <div className="space-y-3">
             {[
               ['Daily transfer limit', user?.kycStatus === 'verified' ? '₦500,000' : '₦50,000', user?.kycStatus === 'verified' ? 100 : 10],
-              ['P2P deposit limit', user?.kycStatus === 'verified' ? '₦1,000,000' : '₦25,000', user?.kycStatus === 'verified' ? 100 : 2.5],
+              ['Monthly deposit limit', user?.kycStatus === 'verified' ? '₦1,000,000' : '₦25,000', user?.kycStatus === 'verified' ? 100 : 2.5],
               ['Crypto volume', user?.kycStatus === 'verified' ? '₦500,000' : '₦76,000', user?.kycStatus === 'verified' ? 100 : 15],
             ].map(([label, value, pct]) => (
               <div key={label as string}>

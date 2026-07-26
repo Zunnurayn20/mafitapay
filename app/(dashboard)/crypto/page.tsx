@@ -47,7 +47,9 @@ export default function CryptoPage() {
   const cryptoTxs = transactions.filter(tx => tx.type.startsWith('crypto'))
   const shouldMaskStaleSnapshot = refreshingAssets && assets.some(asset => asset.pricingSource !== 'live')
   const marketStripAssets = Array.from(
-    assets.reduce((map, asset) => {
+    assets
+      .filter(asset => isStablecoin(asset.symbol))
+      .reduce((map, asset) => {
       const current = map.get(asset.symbol)
       if (!current) {
         map.set(asset.symbol, asset)
@@ -109,8 +111,8 @@ export default function CryptoPage() {
   const showMarketSkeleton = assets.length === 0 && refreshingAssets
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 border border-[var(--border)] bg-[var(--clay)] px-5 py-4 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-        <div>
+      <div className="flex items-start justify-between gap-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-4 sm:px-5 lg:px-6">
+        <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center gap-2">
             <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">Market Prices (USD)</div>
             {refreshingAssets && (
@@ -119,14 +121,14 @@ export default function CryptoPage() {
               </div>
             )}
           </div>
-            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
-              {showMarketSkeleton ? Array.from({ length: 8 }).map((_, index) => (
-                <div key={`market-skeleton-${index}`} className="space-y-1.5">
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-3 w-4/5" />
-                </div>
-              )) : marketStripAssets.map(a => (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {showMarketSkeleton ? Array.from({ length: 4 }).map((_, index) => (
+              <div key={`market-skeleton-${index}`} className="space-y-1.5">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
+            )) : marketStripAssets.map(a => (
               <div key={a.id}>
                 <div className="flex items-center gap-1.5">
                   <AssetLogo
@@ -137,9 +139,12 @@ export default function CryptoPage() {
                     imgClassName="h-4 w-4 object-contain"
                     textClassName="font-display text-[10px] font-bold text-[var(--gold2)]"
                   />
-                  <div className="truncate text-[12px] font-bold font-mono text-[var(--text)]">
-                    {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
-                  </div>
+                  <div className="truncate text-[11px] font-bold text-[var(--gold2)]">{a.symbol}</div>
+                </div>
+                <div className="mt-1 truncate text-[12px] font-bold font-mono text-[var(--text)]">
+                  {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
+                  {' = '}
+                  <span className="text-[var(--green2)]">{formatNGN(a.marketRate || a.buyRate)}</span>
                 </div>
                 <div className="mt-1 flex items-center gap-1">
                   <div className={`truncate text-[8px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
@@ -153,8 +158,7 @@ export default function CryptoPage() {
             ))}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => openModal('buy')} size="sm">⬇ Buy Crypto</Button>
+        <div className="flex shrink-0">
           <Button variant="secondary" onClick={() => openModal('sell')} size="sm">⬆ Sell Crypto</Button>
         </div>
       </div>

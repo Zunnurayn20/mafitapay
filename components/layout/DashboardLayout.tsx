@@ -19,7 +19,7 @@ import { FullScreenAppLoading } from '@/components/ui/RouteLoading'
 const TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/history': 'Transactions',
-  '/p2p': 'P2P Market',
+  '/stocks': 'Stocks',
   '/crypto': 'Crypto',
   '/crypto/orders': 'Crypto Orders',
   '/bills': 'Bills & Airtime',
@@ -217,7 +217,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       '/crypto',
       '/crypto/orders',
       '/bills',
-      '/p2p',
+      '/stocks',
       '/kyc',
     ]
 

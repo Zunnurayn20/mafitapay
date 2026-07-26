@@ -18,7 +18,7 @@ export function StatCards() {
   const pending = transactions.filter(item => item.status === 'pending' || item.status === 'processing')
   const totalInflows = successful.filter(item => item.amount > 0).reduce((sum, item) => sum + item.amount, 0)
   const totalOutflows = successful.filter(item => item.amount < 0).reduce((sum, item) => sum + Math.abs(item.amount), 0)
-  const p2pTrades = successful.filter(item => item.type.startsWith('p2p')).length
+  const cryptoTrades = successful.filter(item => item.type === 'crypto_buy' || item.type === 'crypto_sell').length
   const cryptoVolume = successful
     .filter(item => item.type === 'crypto_buy' || item.type === 'crypto_sell')
     .reduce((sum, item) => sum + Math.abs(item.amount), 0)
@@ -47,9 +47,9 @@ export function StatCards() {
     {
       label: 'Crypto Volume',
       value: formatCompactNgn(cryptoVolume),
-      sub: p2pTrades > 0 ? `${p2pTrades} completed P2P trade${p2pTrades === 1 ? '' : 's'}` : 'No completed P2P trades yet',
+      sub: cryptoTrades > 0 ? `${cryptoTrades} completed crypto trade${cryptoTrades === 1 ? '' : 's'}` : 'No completed crypto trades yet',
       color: 'var(--purple)',
-      subColor: p2pTrades > 0 ? 'var(--green2)' : 'var(--muted)',
+      subColor: cryptoTrades > 0 ? 'var(--green2)' : 'var(--muted)',
     },
   ]
 

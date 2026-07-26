@@ -11,7 +11,7 @@ import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
-const FILTERS = ['All','Deposits','Withdrawals','Bills','Crypto','P2P']
+const FILTERS = ['All','Deposits','Withdrawals','Bills','Crypto']
 
 function compactHash(value: string, head = 8, tail = 6) {
   if (value.length <= head + tail + 3) return value
@@ -60,9 +60,9 @@ function formatHistoryTitle(tx: Transaction, cryptoAsset?: { network?: string; s
       case 'reward_bonus':
         return 'Reward Bonus'
       case 'p2p_deposit':
-        return 'P2P Deposit'
+        return 'Deposit'
       case 'p2p_withdrawal':
-        return 'P2P Withdrawal'
+        return 'Withdrawal'
       default:
         return tx.description
     }
@@ -213,7 +213,6 @@ export default function HistoryPage() {
     if (filter === 'Withdrawals') return tx.type.includes('withdrawal') || tx.type.includes('transfer_out')
     if (filter === 'Bills')       return ['airtime','data','electric','cable','education','gas','insurance','water'].includes(tx.type)
     if (filter === 'Crypto')      return tx.type.startsWith('crypto')
-    if (filter === 'P2P')         return tx.type.startsWith('p2p')
     return true
   })
 
