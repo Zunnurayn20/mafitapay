@@ -28,8 +28,8 @@ export function Topbar({ title }: TopbarProps) {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--coal)] pt-[env(safe-area-inset-top)]">
-      <div className="flex min-h-16 flex-wrap items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
+    <header className="fixed left-0 right-0 top-0 z-40 h-[var(--app-topbar-height)] border-b border-[var(--border)] bg-[var(--coal)] pt-[env(safe-area-inset-top)] lg:left-64">
+      <div className="flex h-full flex-wrap items-center gap-3 px-4 py-2 sm:px-6 lg:px-8">
         {searchOpen ? (
           <div className="order-2 flex basis-full items-center gap-2 border border-[var(--border)] bg-[var(--clay)] px-3 py-2">
             <Search size={14} className="flex-shrink-0 text-[var(--muted)]" />

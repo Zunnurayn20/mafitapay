@@ -61,13 +61,20 @@
 }
 
 html {
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background-color: var(--page-bg);
   color: var(--text);
 }
 
 body {
-  min-height: 100vh;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   margin: 0;
   background-color: var(--page-bg);
   color: var(--text);
@@ -76,6 +83,35 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.3s, color 0.2s;
+}
+#app-root {
+  position: relative;
+  z-index: 1;
+  height: 100dvh;
+  min-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+:root {
+  --app-topbar-height: calc(4rem + env(safe-area-inset-top));
+  --app-ticker-height: 2.25rem;
+  --app-mobile-nav-height: calc(5.5rem + env(safe-area-inset-bottom));
+  --admin-topbar-height: calc(7.5rem + env(safe-area-inset-top));
+}
+
+.app-fixed-viewport {
+  height: 100dvh;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+.app-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 body::before {
@@ -297,5 +333,132 @@ body::before {
 html[data-native-app='android'] body,
 html[data-native-app='ios'] body {
   -webkit-tap-highlight-color: transparent;
-  overscroll-behavior-y: none;
+  user-select: none;
+}
+
+html[data-native-app] input,
+html[data-native-app] textarea,
+html[data-native-app] [contenteditable='true'] {
+  user-select: text;
+}
+
+/* ── Brand splash (Online Data Sub style, Mafita gold palette) ── */
+.splash-screen {
+  min-height: 100dvh;
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--page-bg);
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    1.5rem
+    max(1.5rem, env(safe-area-inset-bottom));
+}
+
+.splash-logo-wrap {
+  position: relative;
+  width: 6rem;
+  height: 6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.splash-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1.5px solid rgba(202, 165, 96, 0.55);
+  animation: splash-pulse 2.8s ease-out infinite;
+  pointer-events: none;
+}
+
+.splash-ring:nth-child(2) {
+  animation-delay: 0.9s;
+}
+
+.splash-mark {
+  position: relative;
+  z-index: 1;
+  width: 4.25rem;
+  height: 4.25rem;
+  border-radius: 1.15rem;
+  background: var(--coal);
+  border: 1px solid rgba(202, 165, 96, 0.28);
+  box-shadow: 0 14px 32px -18px rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  animation: splash-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.splash-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.splash-title {
+  margin-top: 1.35rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-family: var(--font-display), Georgia, serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  animation: splash-fadein 0.4s ease-out 0.1s both;
+}
+
+.splash-title-gold {
+  color: var(--gold2);
+}
+
+.splash-tagline {
+  margin-top: 0.45rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  animation: splash-fadein 0.4s ease-out 0.18s both;
+}
+
+@keyframes splash-pulse {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.75;
+  }
+  70% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+@keyframes splash-pop {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes splash-fadein {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

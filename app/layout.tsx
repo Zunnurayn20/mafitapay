@@ -30,9 +30,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body>
         <AppBootstrap />
-        {children}
+        <div id="app-root">{children}</div>
       </body>
     </html>
   )
 }
+
 

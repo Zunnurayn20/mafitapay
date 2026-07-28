@@ -291,20 +291,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
     <ErrorBoundary>
       <BiometricGate>
-        <div className="relative z-[1] min-h-screen">
+        <div className="app-fixed-viewport relative z-[1]">
           {isAdminRoute ? (
             <AdminShell>{children}</AdminShell>
           ) : (
             <>
-              <div className="min-h-screen lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
-                <div className="hidden lg:block">
+              <div className="h-full lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
+                <div className="hidden lg:block lg:h-full">
                   <Sidebar />
                 </div>
 
-                <div className="flex min-h-screen min-w-0 flex-col pb-20 lg:pb-0">
+                <div className="h-full min-w-0">
                   <Topbar title={title} />
-                  <Ticker />
-                  <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+                  <div className="fixed left-0 right-0 top-[var(--app-topbar-height)] z-30 lg:left-64">
+                    <Ticker />
+                  </div>
+                  <main className="app-scroll h-full px-4 pb-[var(--app-mobile-nav-height)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6">
                     <div className="mx-auto w-full max-w-7xl">{children}</div>
                   </main>
                 </div>
