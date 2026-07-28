@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
+import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN } from '@/lib/utils'
@@ -16,6 +17,7 @@ const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { refreshSession, showToast, securitySettings } = useAppStore()
+  const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [step, setStep] = useState<Step>('form')
   const [mode, setMode] = useState<'internal' | 'bank'>('internal')
@@ -125,7 +127,11 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     setStep('review')
   }
 
-  async function submitTransfer(input: { transactionPin?: string; biometricApprovalToken?: string }) {
+  async function submitTransfer(input: {
+    transactionPin?: string
+    biometricApprovalToken?: string
+    confirmWithBiometric?: boolean
+  }) {
     setStep('processing')
     setProcStep(1)
     try {
@@ -167,6 +173,20 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
       setPinVersion(current => current + 1)
     }
+  }
+
+  async function handleNativeBiometricApproval() {
+    const result = await confirmWithNativeBiometric({
+      title: 'Confirm transfer',
+      subtitle: 'Use fingerprint or face instead of PIN',
+    })
+    if (!result.verified) {
+      if (!result.cancelled) {
+        showToast(result.message || 'Biometric verification failed.', 'error')
+      }
+      return
+    }
+    await submitTransfer({ confirmWithBiometric: true })
   }
 
   const titles: Record<Step, string> = {
@@ -320,11 +340,13 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
         <PinPad
           key={pinVersion}
           onComplete={handlePin}
-          title="Confirm Transaction PIN"
+          title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
           subtitle={`Authorising ${formatNGN(amt)} → ${mode === 'internal' ? (resolvedRecipient?.name || recipient) : accountName}`}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
+          biometricBusy={nativeBiometricBusy}
         />
       )}
 

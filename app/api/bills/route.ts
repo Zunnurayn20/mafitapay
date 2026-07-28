@@ -71,6 +71,7 @@ export async function POST(req: Request) {
   const provider = typeof body.provider === 'string' ? body.provider : undefined
   const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
   const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
+  const confirmWithBiometric = body.confirmWithBiometric === true
   const billerCode = typeof body.billerCode === 'string' ? body.billerCode.trim() : undefined
   const itemCode = typeof body.itemCode === 'string' ? body.itemCode.trim() : undefined
   const providerPlanId = typeof body.providerPlanId === 'string' ? body.providerPlanId.trim() : undefined
@@ -151,7 +152,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken, confirmWithBiometric })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval failed.', success: false }, { status: 400 })
   }

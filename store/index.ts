@@ -204,6 +204,12 @@ export const useAppStore = create<AppStore>()(
       },
       logout: async () => {
         await fetch('/api/auth', { method: 'DELETE', credentials: 'include' })
+        try {
+          const { clearBiometricSession } = await import('@/lib/client/native-biometric')
+          clearBiometricSession()
+        } catch {
+          // ignore
+        }
         applySessionData(set, null)
       },
 

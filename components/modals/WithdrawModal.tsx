@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
+import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN, generateRef } from '@/lib/utils'
@@ -19,6 +20,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const closeModal = useAppStore(state => state.closeModal)
   const showToast = useAppStore(state => state.showToast)
   const securitySettings = useAppStore(state => state.securitySettings)
+  const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([])
   const [amount, setAmount] = useState('')
@@ -60,7 +62,11 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
     setStep('pin')
   }
 
-  async function submitWithdrawal(input: { transactionPin?: string; biometricApprovalToken?: string }) {
+  async function submitWithdrawal(input: {
+    transactionPin?: string
+    biometricApprovalToken?: string
+    confirmWithBiometric?: boolean
+  }) {
     const amt = parseFloat(amount) || 0
     if (!amt) { showToast('Enter a valid amount', 'error'); return }
 
@@ -128,6 +134,20 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
       setPinVersion(current => current + 1)
     }
+  }
+
+  async function handleNativeBiometricApproval() {
+    const result = await confirmWithNativeBiometric({
+      title: 'Confirm withdrawal',
+      subtitle: 'Use fingerprint or face instead of PIN',
+    })
+    if (!result.verified) {
+      if (!result.cancelled) {
+        showToast(result.message || 'Biometric verification failed.', 'error')
+      }
+      return
+    }
+    await submitWithdrawal({ confirmWithBiometric: true })
   }
 
   return (
@@ -199,11 +219,13 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         <PinPad
           key={pinVersion}
           onComplete={(pin) => void submitWithdrawal({ transactionPin: pin })}
-          title="Confirm Transaction PIN"
+          title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
           subtitle={`Authorising ${formatNGN(parseFloat(amount) || 0)} to ${accountName || 'bank beneficiary'}`}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
+          biometricBusy={nativeBiometricBusy}
         />
       )}
     </Modal>

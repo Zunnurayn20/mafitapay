@@ -144,6 +144,7 @@ export async function POST(req: Request) {
   const walletAddress = typeof body.walletAddress === 'string' ? body.walletAddress.trim() : ''
   const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
   const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
+  const confirmWithBiometric = body.confirmWithBiometric === true
 
   logCrypto('request', {
     intent,
@@ -418,7 +419,7 @@ export async function POST(req: Request) {
   let asset
   let quote
   try {
-    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken, confirmWithBiometric })
     const consumed = await consumeCryptoQuote(user.id, quoteId, action)
     asset = consumed.asset
     quote = consumed.quote

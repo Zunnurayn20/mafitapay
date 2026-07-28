@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
+import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { refreshBillCatalog, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
 import {
   getBillServiceConfig,
@@ -143,6 +144,7 @@ function getAmigoPriceHint(
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
   const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions, securitySettings } = useAppStore()
+  const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
   const orderedNetworkProviders = [...networkProviders].sort((a, b) => getNetworkProviderOrder(a.name) - getNetworkProviderOrder(b.name))
@@ -327,12 +329,14 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     selectedDataBundle?: typeof selectedDataBundle
     transactionPin?: string
     biometricApprovalToken?: string
+    confirmWithBiometric?: boolean
   }) {
     const nextAmount = overrides?.amount ?? amount
     const nextSelectedBundleCode = overrides?.selectedBundleCode ?? selectedBundleCode
     const nextSelectedDataBundle = overrides?.selectedDataBundle ?? selectedDataBundle
     const transactionPin = overrides?.transactionPin
     const biometricApprovalToken = overrides?.biometricApprovalToken
+    const confirmWithBiometric = overrides?.confirmWithBiometric
     const nextAmountNumber = Number(nextAmount)
     const nextAmountError = isDataService
       ? (!nextSelectedBundleCode || !nextSelectedDataBundle ? 'Select a valid data plan.' : null)
@@ -384,7 +388,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
       } : {}),
     }
 
-    if (!transactionPin && !biometricApprovalToken) {
+    if (!transactionPin && !biometricApprovalToken && !confirmWithBiometric) {
       setPendingRequest(nextRequest)
       setPinVersion(current => current + 1)
       setStep('pin')
@@ -403,6 +407,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           amount: amt,
           transactionPin,
           biometricApprovalToken,
+          confirmWithBiometric,
           billerCode: nextRequest.billerCode,
           itemCode: nextRequest.itemCode,
           providerPlanId: nextRequest.providerPlanId,
@@ -446,6 +451,23 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
       showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
       setPinVersion(current => current + 1)
     }
+  }
+
+  async function handleNativeBiometricApproval() {
+    const result = await confirmWithNativeBiometric({
+      title: 'Confirm bill payment',
+      subtitle: 'Use fingerprint or face instead of PIN',
+    })
+    if (!result.verified) {
+      if (!result.cancelled) {
+        showToast(result.message || 'Biometric verification failed.', 'error')
+      }
+      return
+    }
+    await confirm({
+      amount: pendingRequest ? String(pendingRequest.amount) : amount,
+      confirmWithBiometric: true,
+    })
   }
 
   return (
@@ -739,11 +761,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
             amount: pendingRequest ? String(pendingRequest.amount) : amount,
             transactionPin: pin,
           })}
-          title="Confirm Transaction PIN"
+          title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
           subtitle={`Authorising ${serviceName} payment for ₦${Number(pendingRequest?.amount ?? amount ?? 0).toLocaleString('en-NG')}`}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use biometrics' : undefined}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
+          biometricBusy={nativeBiometricBusy}
         />
       )}
     </Modal>

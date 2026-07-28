@@ -6,6 +6,18 @@ import { Card, CardAction, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { canUseBiometrics, enrollBiometricCredential } from '@/lib/client/biometric'
+import {
+  authenticateBiometric,
+  BIOMETRIC_TRANSACTION_KEY,
+  BIOMETRIC_UNLOCK_KEY,
+  biometricUnavailableHint,
+  clearBiometricSession,
+  getBiometricAvailability,
+  isNativeBiometricPlatform,
+  markBiometricSessionUnlocked,
+  readBiometricSetting,
+  writeBiometricSetting,
+} from '@/lib/client/native-biometric'
 import { useAppStore } from '@/store'
 
 interface BiometricCredentialItem {
@@ -46,6 +58,12 @@ export default function SecurityPage() {
   const [revokingOthers, setRevokingOthers] = useState(false)
   const [updatingSetting, setUpdatingSetting] = useState<string | null>(null)
   const [deactivating, setDeactivating] = useState(false)
+  const [nativeBiometricAvailable, setNativeBiometricAvailable] = useState(false)
+  const [nativeBiometricUnlock, setNativeBiometricUnlock] = useState(false)
+  const [nativeBiometricTransaction, setNativeBiometricTransaction] = useState(false)
+  const [nativeBiometricBusy, setNativeBiometricBusy] = useState(false)
+  const [nativeBiometricHint, setNativeBiometricHint] = useState<string | null>(null)
+  const [nativeBiometricError, setNativeBiometricError] = useState<string | null>(null)
 
   const activeSessions = sessions.map(session => ({
     id: session.token,
@@ -64,6 +82,51 @@ export default function SecurityPage() {
       }
     })()
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const availability = await getBiometricAvailability()
+      if (cancelled) return
+      setNativeBiometricAvailable(availability.available)
+      setNativeBiometricHint(
+        availability.available ? null : biometricUnavailableHint(availability.statusLabel),
+      )
+      setNativeBiometricUnlock(readBiometricSetting(BIOMETRIC_UNLOCK_KEY, false))
+      setNativeBiometricTransaction(readBiometricSetting(BIOMETRIC_TRANSACTION_KEY, false))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function toggleNativeBiometric(
+    key: string,
+    enabled: boolean,
+    setter: (value: boolean) => void,
+  ) {
+    if (!nativeBiometricAvailable || nativeBiometricBusy) return
+    setNativeBiometricBusy(true)
+    setNativeBiometricError(null)
+    const result = await authenticateBiometric({
+      title: enabled ? 'Enable biometrics' : 'Turn off biometrics',
+      subtitle: 'Use fingerprint or face to update this setting',
+    })
+    setNativeBiometricBusy(false)
+    if (!result.verified) {
+      if (!result.cancelled) {
+        setNativeBiometricError(result.message || 'Could not verify biometrics')
+      }
+      return
+    }
+    writeBiometricSetting(key, enabled)
+    setter(enabled)
+    if (key === BIOMETRIC_UNLOCK_KEY) {
+      if (enabled) markBiometricSessionUnlocked()
+      else clearBiometricSession()
+    }
+    showToast(enabled ? 'Biometric setting enabled.' : 'Biometric setting disabled.')
+  }
 
   useEffect(() => {
     if (!managingBiometric) return
@@ -592,14 +655,81 @@ export default function SecurityPage() {
           ) : null}
         </Card>
 
+        <Card className="mb-4 border-[rgba(202,165,96,.18)] p-6">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[rgba(202,165,96,.24)] bg-[rgba(202,165,96,.12)]">
+              <Fingerprint size={20} className="text-[var(--gold2)]" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-black text-[var(--text)]">Device biometrics</div>
+              <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
+                Fingerprint or face unlock in the Android app
+                {isNativeBiometricPlatform() && nativeBiometricAvailable ? ' — ready on this device.' : '.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            <label className={`flex items-center justify-between gap-3 ${!nativeBiometricAvailable ? 'opacity-60' : ''}`}>
+              <span>
+                <span className="block text-sm font-semibold text-[var(--text)]">Unlock app</span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                  Ask for fingerprint or face when opening the app.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={nativeBiometricUnlock}
+                disabled={!nativeBiometricAvailable || nativeBiometricBusy}
+                onChange={event =>
+                  void toggleNativeBiometric(BIOMETRIC_UNLOCK_KEY, event.target.checked, setNativeBiometricUnlock)
+                }
+                className="h-5 w-5 accent-[var(--gold)]"
+              />
+            </label>
+
+            <label className={`flex items-center justify-between gap-3 ${!nativeBiometricAvailable ? 'opacity-60' : ''}`}>
+              <span>
+                <span className="block text-sm font-semibold text-[var(--text)]">Verify transactions</span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                  Show fingerprint key on the PIN pad for send, bills, and crypto.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={nativeBiometricTransaction}
+                disabled={!nativeBiometricAvailable || nativeBiometricBusy}
+                onChange={event =>
+                  void toggleNativeBiometric(
+                    BIOMETRIC_TRANSACTION_KEY,
+                    event.target.checked,
+                    setNativeBiometricTransaction,
+                  )
+                }
+                className="h-5 w-5 accent-[var(--gold)]"
+              />
+            </label>
+          </div>
+
+          {nativeBiometricError ? (
+            <div className="mt-4 text-xs text-[var(--red2)]">{nativeBiometricError}</div>
+          ) : null}
+          {!nativeBiometricAvailable ? (
+            <div className="mt-4 text-xs leading-relaxed text-[var(--muted)]">
+              {nativeBiometricHint ||
+                'Biometric security needs the Android app on a device with fingerprint or face unlock set up.'}
+            </div>
+          ) : null}
+        </Card>
+
         <Card className="mb-4 border-[rgba(46,170,92,.18)] p-6">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
               <Fingerprint size={25} className={`mt-0.5 shrink-0 ${securitySettings?.hasBiometricCredential ? 'text-[var(--green2)]' : 'text-[var(--gold2)]'}`} />
               <div className="min-w-0">
-              <div className="text-[14px] font-black text-[var(--text)]">Biometric Approval</div>
+              <div className="text-[14px] font-black text-[var(--text)]">Passkey / WebAuthn</div>
               <div className="mt-1 text-[10px] text-[var(--muted)]">
-                Use Face ID, fingerprint, or passkey as a real WebAuthn approval path for sensitive transactions.
+                Use Face ID, fingerprint, or passkey as a WebAuthn approval path for sensitive transactions.
               </div>
               <div className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] ${securitySettings?.hasBiometricCredential ? 'bg-[rgba(46,170,92,.14)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'}`}>
                 {securitySettings?.hasBiometricCredential ? <CheckCircle2 size={12} /> : <Sparkles size={12} />}

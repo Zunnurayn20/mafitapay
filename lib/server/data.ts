@@ -7566,13 +7566,24 @@ export async function verifyTransactionPinForUser(userId: string, pin: string) {
 
 export async function verifySensitiveActionAuthorization(
   userId: string,
-  input: { transactionPin?: string; biometricApprovalToken?: string }
+  input: {
+    transactionPin?: string
+    biometricApprovalToken?: string
+    /** Device already verified fingerprint/face in the native app; session cookie still required. */
+    confirmWithBiometric?: boolean
+  }
 ) {
   const transactionPin = typeof input.transactionPin === 'string' ? input.transactionPin.trim() : ''
   const biometricApprovalToken = typeof input.biometricApprovalToken === 'string' ? input.biometricApprovalToken.trim() : ''
 
   if (transactionPin) {
     return verifyTransactionPinForUser(userId, transactionPin)
+  }
+
+  if (input.confirmWithBiometric === true) {
+    const settings = await getSecuritySettingsByUserId(userId)
+    if (!settings) throw new Error('Unable to validate biometric approval.')
+    return settings
   }
 
   if (biometricApprovalToken) {
