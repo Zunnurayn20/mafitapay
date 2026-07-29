@@ -110,95 +110,90 @@ export default function RegisterPage() {
 
   return (
     <AuthSplitShell>
-      <div className="lg:hidden text-center mb-8">
-        <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden">
-          <img
-            src="/mafitapay-logo.png"
-            alt="MafitaPay logo"
-            className="h-20 w-20 object-contain"
-          />
+      <div className="relative">
+      <div className="mb-5 flex items-center gap-3">
+        <img src="/mafitapay-logo.png" alt="" className="h-10 w-10 rounded-lg object-contain" />
+        <div>
+          <div className="font-display text-[20px] font-black text-[var(--text)]">
+            {step === 1 ? 'Create account' : 'Secure account'}
+          </div>
+          <div className="text-[11px] text-[var(--muted)]">
+            Step {step} of 2
+          </div>
         </div>
-        <div className="font-display font-black text-3xl text-[var(--text)]">MafitaPay</div>
-        <div className="text-[10px] text-[var(--muted)] uppercase tracking-widest mt-1">Create Your Account</div>
       </div>
 
-      <div className="relative overflow-hidden bg-[var(--coal)] border border-[var(--border)]">
-        <div className="ank-strip" />
-        <div className="p-7">
-          <div className="flex gap-2 mb-6">
-            {[1,2].map(s => (
-              <div key={s} className={`flex-1 h-1 ${s <= step ? 'bg-[var(--gold)]' : 'bg-[var(--border)]'}`} />
-            ))}
-          </div>
-          <div className="mb-5 flex items-center gap-3">
-            {step === 2 ? (
-              <button
-                type="button"
-                aria-label="Back to personal details"
-                onClick={handleBackToDetails}
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[rgba(255,255,255,.03)] text-[var(--text)] transition hover:border-[var(--gold)] hover:text-[var(--gold2)]"
-              >
-                <ArrowLeft size={16} />
-              </button>
-            ) : null}
-            <div className="font-display font-black text-[20px] text-[var(--text)]">
-              {step === 1 ? 'Personal Details' : 'Secure Your Account'}
+      <div className="mb-5 flex gap-2">
+        {[1, 2].map(s => (
+          <div key={s} className={`h-1 flex-1 ${s <= step ? 'bg-[var(--gold)]' : 'bg-[var(--border)]'}`} />
+        ))}
+      </div>
+      {step === 2 ? (
+        <button
+          type="button"
+          aria-label="Back to personal details"
+          onClick={handleBackToDetails}
+          className="mb-4 inline-flex items-center gap-2 text-[12px] font-bold text-[var(--gold2)]"
+        >
+          <ArrowLeft size={14} />
+          Back
+        </button>
+      ) : null}
+      <form onSubmit={handleSubmit} className="relative flex flex-col gap-4">
+        {step === 1 && (
+          <>
+            <Input label="Full Name" placeholder="Aminu Ibrahim" value={name} onChange={e => setName(e.target.value)} error={error && (!name.trim() || !email.trim() || !phone.trim()) ? error : undefined} />
+            <Input label="Email Address" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} error={error && !email.trim() ? error : undefined} />
+            <Input label="Phone Number" type="tel" placeholder="+2348012345678" value={phone} onChange={e => setPhone(e.target.value)} error={error && !phone.trim() ? error : undefined} />
+            <Input label="Referral Code (Optional)" placeholder="MAFAT2912" value={referralCode} onChange={e => setReferralCode(e.target.value.toUpperCase())} />
+          </>
+        )}
+        {step === 2 && (
+          <>
+            <Input label="Create Password" type="password" placeholder="At least 8 chars with letters and numbers" value={pass} onChange={e => setPass(e.target.value)} error={error ? error : undefined} />
+            <Input label="Confirm Password" type="password" placeholder="Repeat password" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} error={error ? error : undefined} />
+            <div className="border border-[rgba(79,70,229,.18)] border-l-4 border-l-[var(--gold)] bg-[rgba(79,70,229,.06)] p-3 text-[11px] text-[var(--text2)]">
+              By creating an account you agree to our <span className="cursor-pointer text-[var(--gold2)]">Terms of Service</span> and <span className="cursor-pointer text-[var(--gold2)]">Privacy Policy</span>.
             </div>
+          </>
+        )}
+        {error && (
+          <div className="border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[11px] text-[var(--red2)]">
+            {error}
           </div>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {step === 1 && (<>
-              <Input label="Full Name" placeholder="Aminu Ibrahim" value={name} onChange={e => setName(e.target.value)} error={error && (!name.trim() || !email.trim() || !phone.trim()) ? error : undefined} />
-              <Input label="Email Address" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} error={error && !email.trim() ? error : undefined} />
-              <Input label="Phone Number" type="tel" placeholder="+2348012345678" value={phone} onChange={e => setPhone(e.target.value)} error={error && !phone.trim() ? error : undefined} />
-              <Input label="Referral Code (Optional)" placeholder="MAFAT2912" value={referralCode} onChange={e => setReferralCode(e.target.value.toUpperCase())} />
-            </>)}
-            {step === 2 && (<>
-              <Input label="Create Password" type="password" placeholder="At least 8 chars with letters and numbers" value={pass} onChange={e => setPass(e.target.value)} error={error ? error : undefined} />
-              <Input label="Confirm Password" type="password" placeholder="Repeat password" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} error={error ? error : undefined} />
-              <div className="bg-[rgba(79,70,229,.06)] border border-[rgba(79,70,229,.18)] border-l-4 border-l-[var(--gold)] p-3 text-[11px] text-[var(--text2)]">
-                By creating an account you agree to our <span className="text-[var(--gold2)] cursor-pointer">Terms of Service</span> and <span className="text-[var(--gold2)] cursor-pointer">Privacy Policy</span>.
-              </div>
-            </>)}
-            {error && (
-              <div className="border border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] p-3 text-[11px] text-[var(--red2)]">
-                {error}
-              </div>
-            )}
-            <Button type="submit" loading={loading} className="w-full py-3.5">
-              {step === 1 ? 'Continue →' : 'Create Account'}
+        )}
+        <Button type="submit" loading={loading} className="w-full py-3.5">
+          {step === 1 ? 'Continue →' : 'Create Account'}
+        </Button>
+      </form>
+      <div className="mt-5 text-center text-[12px] text-[var(--muted)]">
+        Already have an account?{' '}
+        <span className="cursor-pointer font-bold text-[var(--gold2)]" onClick={() => router.push('/login')}>
+          Sign in →
+        </span>
+      </div>
+      {success ? (
+        <div className="absolute inset-0 z-20 flex items-center justify-center rounded-[2rem] bg-[rgba(8,7,5,.88)] px-5 backdrop-blur-md">
+          <div className="w-full border border-[rgba(202,165,96,.24)] bg-[var(--coal)] p-5 text-center shadow-[0_24px_70px_rgba(0,0,0,.35)]">
+            <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[rgba(46,170,92,.14)] text-[var(--green2)]">
+              ✓
+            </div>
+            <div className="mt-4 font-display text-[20px] font-black text-[var(--text)]">Check your email</div>
+            <div className="mt-2 text-[12px] leading-relaxed text-[var(--text2)]">{success}</div>
+            {verificationLink ? (
+              <a
+                className="mt-4 block break-all border border-[rgba(202,165,96,.22)] bg-[rgba(202,165,96,.08)] px-3 py-3 text-[11px] font-bold text-[var(--gold2)] underline"
+                href={verificationLink}
+              >
+                Open local verification link
+              </a>
+            ) : null}
+            <Button className="mt-4 w-full py-3" onClick={() => router.push('/login')}>
+              Go To Login
             </Button>
-          </form>
-          <div className="text-center mt-5 text-[12px] text-[var(--muted)]">
-            Already have an account?{' '}
-            <span className="text-[var(--gold2)] font-bold cursor-pointer" onClick={() => router.push('/login')}>Sign in →</span>
           </div>
         </div>
-        {success ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(8,7,5,.88)] px-5 backdrop-blur-md">
-            <div className="w-full border border-[rgba(202,165,96,.24)] bg-[var(--coal)] p-5 text-center shadow-[0_24px_70px_rgba(0,0,0,.35)]">
-              <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[rgba(46,170,92,.14)] text-[var(--green2)]">
-                ✓
-              </div>
-              <div className="mt-4 font-display text-[20px] font-black text-[var(--text)]">
-                Check your email
-              </div>
-              <div className="mt-2 text-[12px] leading-relaxed text-[var(--text2)]">
-                {success}
-              </div>
-              {verificationLink ? (
-                <a
-                  className="mt-4 block break-all border border-[rgba(202,165,96,.22)] bg-[rgba(202,165,96,.08)] px-3 py-3 text-[11px] font-bold text-[var(--gold2)] underline"
-                  href={verificationLink}
-                >
-                  Open local verification link
-                </a>
-              ) : null}
-              <Button className="mt-4 w-full py-3" onClick={() => router.push('/login')}>
-                Go To Login
-              </Button>
-            </div>
-          </div>
-        ) : null}
+      ) : null}
       </div>
     </AuthSplitShell>
   )

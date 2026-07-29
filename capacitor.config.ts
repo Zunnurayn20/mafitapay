@@ -19,13 +19,12 @@ const config: CapacitorConfig = {
   },
   plugins: {
     SplashScreen: {
-      launchShowDuration: 3200,
-      launchAutoHide: true,
-      launchFadeOutDuration: 420,
+      // Keep native splash until the web brand splash / app bootstrap hides it
+      launchShowDuration: 0,
+      launchAutoHide: false,
+      launchFadeOutDuration: 320,
       backgroundColor: '#0c0907',
       showSpinner: false,
-      androidSpinnerStyle: 'small',
-      spinnerColor: '#e0c48a',
       androidScaleType: 'CENTER_CROP',
       androidSplashResourceName: 'splash',
     },

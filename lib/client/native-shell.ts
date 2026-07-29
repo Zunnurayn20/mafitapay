@@ -1,8 +1,8 @@
 import { Capacitor } from '@capacitor/core'
 import { isNativeApp } from '@/lib/client/native-app'
 
-const MIN_SPLASH_MS = 1400
-const MAX_SPLASH_MS = 6000
+const MIN_SPLASH_MS = 1600
+const MAX_SPLASH_MS = 5000
 
 let initialized = false
 let splashStartedAt = 0
@@ -16,8 +16,12 @@ async function hideNativeSplash() {
   const remaining = Math.max(0, MIN_SPLASH_MS - elapsed)
 
   window.setTimeout(async () => {
-    const { SplashScreen } = await import('@capacitor/splash-screen')
-    await SplashScreen.hide({ fadeOutDuration: 420 })
+    try {
+      const { SplashScreen } = await import('@capacitor/splash-screen')
+      await SplashScreen.hide({ fadeOutDuration: 320 })
+    } catch {
+      // ignore
+    }
   }, remaining)
 }
 
@@ -35,21 +39,21 @@ export async function initializeNativeShell() {
   ])
 
   if (Capacitor.getPlatform() === 'android') {
-    await StatusBar.setStyle({ style: Style.Dark })
-    await StatusBar.setBackgroundColor({ color: '#0c0907' })
+    await StatusBar.setStyle({ style: Style.Dark }).catch(() => undefined)
+    await StatusBar.setBackgroundColor({ color: '#0c0907' }).catch(() => undefined)
   }
 
-  await Keyboard.setResizeMode({ mode: KeyboardResize.Body })
+  await Keyboard.setResizeMode({ mode: KeyboardResize.Body }).catch(() => undefined)
 
   App.addListener('backButton', ({ canGoBack }) => {
     if (canGoBack) {
       window.history.back()
       return
     }
-
     void App.exitApp()
   })
 
+  // Safety: never leave native splash forever if web route hangs
   window.setTimeout(() => {
     void hideNativeSplash()
   }, MAX_SPLASH_MS)

@@ -34,13 +34,40 @@ const features = [
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=ng.mafitapay.app'
 const APP_STORE_URL = 'https://apps.apple.com/app/mafitapay/id0000000000'
 
+function FormCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="w-full max-w-[400px] rounded-2xl border border-[rgba(202,165,96,.16)] bg-[var(--coal)] p-5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:p-6">
+      {children}
+    </div>
+  )
+}
+
 export function AuthSplitShell({ children }: AuthSplitShellProps) {
   const [nativeApp, setNativeApp] = useState(false)
+  const [compact, setCompact] = useState(true)
 
   useEffect(() => {
     setNativeApp(isNativeApp())
+    const mq = window.matchMedia('(max-width: 1023px)')
+    const apply = () => setCompact(mq.matches || isNativeApp())
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
   }, [])
 
+  // Mobile + native app: form card only
+  if (compact || nativeApp) {
+    return (
+      <div className="relative z-[1] flex min-h-screen items-center justify-center bg-[var(--page-bg)] px-4 py-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(202,165,96,.1),transparent_42%)]" />
+        <div className="relative w-full max-w-[400px]">
+          <FormCard>{children}</FormCard>
+        </div>
+      </div>
+    )
+  }
+
+  // Desktop web: marketing + form
   return (
     <div className="relative z-[1] min-h-screen overflow-hidden bg-[var(--page-bg)] px-4 py-6 lg:px-8 lg:py-8">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(202,165,96,.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(46,170,92,.12),transparent_28%),linear-gradient(135deg,rgba(140,107,49,.08),transparent_44%,rgba(202,165,96,.03))]" />
@@ -51,20 +78,12 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             'repeating-linear-gradient(45deg, rgba(202,165,96,.06) 0, rgba(202,165,96,.06) 2px, transparent 2px, transparent 24px), repeating-linear-gradient(-45deg, rgba(140,107,49,.05) 0, rgba(140,107,49,.05) 2px, transparent 2px, transparent 28px)',
         }}
       />
-      <div className="absolute left-[8%] top-[12%] hidden h-36 w-36 rotate-12 border border-[rgba(202,165,96,.18)] bg-[linear-gradient(135deg,rgba(202,165,96,.12),rgba(140,107,49,.02))] lg:block animate-float-soft" />
-      <div className="absolute bottom-[14%] left-[10%] hidden h-24 w-24 rotate-45 border border-[rgba(46,170,92,.16)] bg-[linear-gradient(135deg,rgba(46,170,92,.12),rgba(12,9,7,.02))] lg:block animate-float-soft [animation-delay:1.2s]" />
-      <div className="absolute right-[9%] top-[18%] hidden h-28 w-28 rounded-full border border-[rgba(202,165,96,.14)] bg-[radial-gradient(circle,rgba(202,165,96,.1),transparent_70%)] lg:block animate-soft-pulse" />
-      <div className="absolute right-[12%] bottom-[16%] hidden h-20 w-20 rounded-full border border-[rgba(46,170,92,.14)] bg-[radial-gradient(circle,rgba(46,170,92,.12),transparent_70%)] lg:block animate-soft-pulse [animation-delay:.8s]" />
 
-      <div className="relative mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-7xl items-center gap-10 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,.92fr)] lg:gap-14">
+      <div className="relative mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-7xl items-center gap-14 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,.92fr)]">
         <section className="relative pt-2">
           <div className="flex items-center gap-4">
             <div className="flex h-16 w-16 items-center justify-center overflow-hidden border border-[rgba(202,165,96,.2)] bg-[var(--coal)] shadow-[0_14px_34px_rgba(0,0,0,.18)]">
-              <img
-                src="/mafitapay-logo.png"
-                alt="MafitaPay logo"
-                className="h-16 w-16 object-contain"
-              />
+              <img src="/mafitapay-logo.png" alt="MafitaPay logo" className="h-16 w-16 object-contain" />
             </div>
             <div>
               <div className="font-display text-3xl font-black tracking-[0.14em] text-[var(--gold2)]">
@@ -77,7 +96,7 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
           </div>
 
           <div className="mt-10 max-w-2xl">
-            <h1 className="font-display text-[2.8rem] font-black leading-[0.95] text-[var(--text)] sm:text-[3.6rem] lg:text-[4.7rem]">
+            <h1 className="font-display text-[2.8rem] font-black leading-[0.95] text-[var(--text)] lg:text-[4.7rem]">
               Your Money.
               <br />
               Your Way.
@@ -86,7 +105,7 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
                 Limitless Possibilities.
               </span>
             </h1>
-            <p className="mt-5 max-w-xl text-[15px] leading-7 text-[var(--text2)] sm:text-[16px]">
+            <p className="mt-5 max-w-xl text-[15px] leading-7 text-[var(--text2)]">
               Send, receive, save and grow your money with MafitaPay. Fast, secure, reliable and built for you.
             </p>
           </div>
@@ -95,8 +114,11 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             {features.map(item => {
               const Icon = item.icon
               return (
-                <div key={item.title} className="flex items-start gap-3 rounded-[1.4rem] border border-[rgba(202,165,96,.16)] bg-[var(--clay)] px-4 py-4 shadow-[0_16px_36px_rgba(0,0,0,.12)] backdrop-blur">
-                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(202,165,96,.12)] text-[var(--gold2)] shadow-[inset_0_0_0_1px_rgba(202,165,96,.12)]">
+                <div
+                  key={item.title}
+                  className="flex items-start gap-3 rounded-[1.4rem] border border-[rgba(202,165,96,.16)] bg-[var(--clay)] px-4 py-4 shadow-[0_16px_36px_rgba(0,0,0,.12)]"
+                >
+                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(202,165,96,.12)] text-[var(--gold2)]">
                     <Icon size={18} />
                   </span>
                   <div>
@@ -108,42 +130,18 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             })}
           </div>
 
-          {!nativeApp ? (
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-              <a
-                href={PLAY_STORE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Get MafitaPay on Google Play"
-                className="transition-transform hover:-translate-y-0.5"
-              >
-                <img
-                  src="/google-play.png"
-                  alt="Get it on Google Play"
-                  className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
-                />
-              </a>
-              <a
-                href={APP_STORE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Download MafitaPay on the App Store"
-                className="transition-transform hover:-translate-y-0.5"
-              >
-                <img
-                  src="/app-store.png"
-                  alt="Download on the App Store"
-                  className="h-12 w-auto object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,.18)]"
-                />
-              </a>
-            </div>
-          ) : null}
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <a href={PLAY_STORE_URL} target="_blank" rel="noopener noreferrer" aria-label="Get MafitaPay on Google Play">
+              <img src="/google-play.png" alt="Get it on Google Play" className="h-12 w-auto object-contain" />
+            </a>
+            <a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" aria-label="Download on the App Store">
+              <img src="/app-store.png" alt="Download on the App Store" className="h-12 w-auto object-contain" />
+            </a>
+          </div>
         </section>
 
-        <section className="relative flex justify-center lg:justify-end">
-          <div className="w-full max-w-[440px] rounded-[2rem] border border-[rgba(202,165,96,.16)] bg-[var(--coal)] p-5 shadow-[0_30px_80px_rgba(0,0,0,.28)] backdrop-blur sm:p-6 lg:p-7">
-            {children}
-          </div>
+        <section className="relative flex justify-end">
+          <FormCard>{children}</FormCard>
         </section>
       </div>
     </div>

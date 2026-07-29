@@ -15,6 +15,15 @@ export function AppBootstrap() {
   }, [bootstrap])
 
   useEffect(() => {
+    // Hide native splash once app JS is up (brand web splash may still show briefly)
+    if (typeof window === 'undefined') return
+    const t = window.setTimeout(() => {
+      hideNativeSplashWhenReady()
+    }, isNativeApp() ? 400 : 0)
+    return () => window.clearTimeout(t)
+  }, [])
+
+  useEffect(() => {
     if (!isNativeApp() || !authResolved) return
     hideNativeSplashWhenReady()
   }, [authResolved])

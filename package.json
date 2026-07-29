@@ -21,7 +21,8 @@
     "mobile:setup:win": "npm run mobile:mirror:win && npm install --prefix /mnt/c/Users/zagal/mafitapay",
     "mobile:run": "MAFITAPAY_MOBILE_SERVER_URL=http://10.0.2.2:3000 npx cap run android",
     "mobile:run:prod": "npx cap run android",
-    "mobile:bundle": "cd android && ./gradlew bundleRelease"
+    "mobile:bundle": "cd android && ./gradlew bundleRelease",
+    "android:bundle": "cd android && gradlew.bat bundleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",
