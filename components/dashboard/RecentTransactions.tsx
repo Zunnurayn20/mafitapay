@@ -93,6 +93,36 @@ function getStatusIcon(status: Transaction['status']) {
   }
 }
 
+/** Soft tinted tile per transaction type (matches home quick-action colour language). */
+function getTransactionTypeIconStyle(type: Transaction['type'], amount: number) {
+  const styles: Record<Transaction['type'], string> = {
+    deposit: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    withdrawal: 'border-rose-200 bg-rose-50 text-rose-700',
+    transfer_in: 'border-green-200 bg-green-50 text-green-700',
+    transfer_out: 'border-sky-200 bg-sky-50 text-sky-700',
+    airtime: 'border-amber-200 bg-amber-50 text-amber-700',
+    data: 'border-blue-200 bg-blue-50 text-[#2C5AA0]',
+    electric: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    cable: 'border-violet-200 bg-violet-50 text-violet-700',
+    education: 'border-sky-200 bg-sky-50 text-sky-700',
+    gas: 'border-orange-200 bg-orange-50 text-orange-700',
+    insurance: 'border-rose-200 bg-rose-50 text-rose-700',
+    water: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+    crypto_buy: 'border-orange-200 bg-orange-50 text-orange-700',
+    crypto_sell: 'border-yellow-200 bg-yellow-50 text-yellow-800',
+    referral_bonus: 'border-lime-200 bg-lime-50 text-lime-700',
+    reward_bonus: 'border-teal-200 bg-teal-50 text-teal-700',
+    admin_credit: 'border-green-200 bg-green-50 text-green-700',
+    admin_debit: 'border-red-200 bg-red-50 text-red-700',
+    p2p_deposit: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    p2p_withdrawal: 'border-rose-200 bg-rose-50 text-rose-700',
+  }
+
+  return styles[type] || (amount > 0
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : 'border-slate-200 bg-slate-100 text-slate-700')
+}
+
 export function RecentTransactions() {
   const { transactions, showToast } = useAppStore()
   const router = useRouter()
@@ -266,6 +296,7 @@ export function RecentTransactions() {
               const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
               const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
               const statusIcon = getStatusIcon(tx.status)
+              const typeIconStyle = getTransactionTypeIconStyle(tx.type, tx.amount)
 
               return (
                 <button
@@ -282,12 +313,12 @@ export function RecentTransactions() {
                         src={cryptoAsset.icon}
                         alt={`${cryptoAsset.symbol} logo`}
                         fallback={cryptoAsset.symbol.slice(0, 1)}
-                        className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[rgba(202,165,96,0.1)]"
+                        className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border ${typeIconStyle}`}
                         imgClassName="h-5 w-5 object-contain"
-                        textClassName="text-[15px] font-bold text-[var(--gold2)]"
+                        textClassName="text-[15px] font-bold"
                       />
                     ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[rgba(34,27,21,0.9)] text-[16px]">
+                      <div className={`flex h-10 w-10 items-center justify-center rounded-xl border text-[16px] ${typeIconStyle}`}>
                         {icon}
                       </div>
                     )}
