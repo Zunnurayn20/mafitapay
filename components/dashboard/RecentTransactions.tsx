@@ -93,34 +93,36 @@ function getStatusIcon(status: Transaction['status']) {
   }
 }
 
-/** Soft tinted tile per transaction type (matches home quick-action colour language). */
+/** Dark tile surface (matches activity card); only the glyph keeps a type colour. */
+const TX_TILE = 'border-[var(--border)] bg-[var(--coal)]'
+
 function getTransactionTypeIconStyle(type: Transaction['type'], amount: number) {
   const styles: Record<Transaction['type'], string> = {
-    deposit: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    withdrawal: 'border-rose-200 bg-rose-50 text-rose-700',
-    transfer_in: 'border-green-200 bg-green-50 text-green-700',
-    transfer_out: 'border-sky-200 bg-sky-50 text-sky-700',
-    airtime: 'border-amber-200 bg-amber-50 text-amber-700',
-    data: 'border-blue-200 bg-blue-50 text-[#2C5AA0]',
-    electric: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    cable: 'border-violet-200 bg-violet-50 text-violet-700',
-    education: 'border-sky-200 bg-sky-50 text-sky-700',
-    gas: 'border-orange-200 bg-orange-50 text-orange-700',
-    insurance: 'border-rose-200 bg-rose-50 text-rose-700',
-    water: 'border-cyan-200 bg-cyan-50 text-cyan-700',
-    crypto_buy: 'border-orange-200 bg-orange-50 text-orange-700',
-    crypto_sell: 'border-yellow-200 bg-yellow-50 text-yellow-800',
-    referral_bonus: 'border-lime-200 bg-lime-50 text-lime-700',
-    reward_bonus: 'border-teal-200 bg-teal-50 text-teal-700',
-    admin_credit: 'border-green-200 bg-green-50 text-green-700',
-    admin_debit: 'border-red-200 bg-red-50 text-red-700',
-    p2p_deposit: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    p2p_withdrawal: 'border-rose-200 bg-rose-50 text-rose-700',
+    deposit: `${TX_TILE} text-emerald-400`,
+    withdrawal: `${TX_TILE} text-rose-400`,
+    transfer_in: `${TX_TILE} text-green-400`,
+    transfer_out: `${TX_TILE} text-sky-400`,
+    airtime: `${TX_TILE} text-amber-400`,
+    data: `${TX_TILE} text-sky-400`,
+    electric: `${TX_TILE} text-emerald-400`,
+    cable: `${TX_TILE} text-violet-400`,
+    education: `${TX_TILE} text-sky-400`,
+    gas: `${TX_TILE} text-orange-400`,
+    insurance: `${TX_TILE} text-rose-400`,
+    water: `${TX_TILE} text-cyan-400`,
+    crypto_buy: `${TX_TILE} text-orange-400`,
+    crypto_sell: `${TX_TILE} text-yellow-400`,
+    referral_bonus: `${TX_TILE} text-lime-400`,
+    reward_bonus: `${TX_TILE} text-teal-400`,
+    admin_credit: `${TX_TILE} text-green-400`,
+    admin_debit: `${TX_TILE} text-red-400`,
+    p2p_deposit: `${TX_TILE} text-emerald-400`,
+    p2p_withdrawal: `${TX_TILE} text-rose-400`,
   }
 
   return styles[type] || (amount > 0
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : 'border-slate-200 bg-slate-100 text-slate-700')
+    ? `${TX_TILE} text-emerald-400`
+    : `${TX_TILE} text-[var(--text2)]`)
 }
 
 export function RecentTransactions() {

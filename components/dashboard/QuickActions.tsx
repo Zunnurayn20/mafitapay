@@ -46,62 +46,65 @@ function FundingReceiptShell({
 
 const PRIMARY_IDS = ['airtime', 'data'] as const
 
+/** Icon tile surface matches activity cards (coal); only the glyph keeps a type color. */
+const TILE_SURFACE = 'bg-[var(--coal)] border-[var(--border)]'
+
 const ACTION_META: Record<string, { icon: LucideIcon; tint: string; label?: string }> = {
   airtime: {
     icon: Smartphone,
-    tint: 'bg-amber-50 text-amber-700 border-white/70',
+    tint: `${TILE_SURFACE} text-amber-400`,
     label: 'Airtime',
   },
   data: {
     icon: Wifi,
-    tint: 'bg-blue-50 text-[#2C5AA0] border-white/70',
+    tint: `${TILE_SURFACE} text-sky-400`,
     label: 'Data',
   },
   cable: {
     icon: Tv,
-    tint: 'bg-violet-50 text-violet-700 border-white/70',
+    tint: `${TILE_SURFACE} text-violet-400`,
   },
   electric: {
     icon: Zap,
-    tint: 'bg-emerald-50 text-emerald-700 border-white/70',
+    tint: `${TILE_SURFACE} text-emerald-400`,
   },
   education: {
     icon: GraduationCap,
-    tint: 'bg-sky-50 text-sky-700 border-white/70',
+    tint: `${TILE_SURFACE} text-sky-400`,
   },
   edu: {
     icon: GraduationCap,
-    tint: 'bg-sky-50 text-sky-700 border-white/70',
+    tint: `${TILE_SURFACE} text-sky-400`,
   },
   gas: {
     icon: Flame,
-    tint: 'bg-orange-50 text-orange-700 border-white/70',
+    tint: `${TILE_SURFACE} text-orange-400`,
   },
   insurance: {
     icon: Shield,
-    tint: 'bg-rose-50 text-rose-700 border-white/70',
+    tint: `${TILE_SURFACE} text-rose-400`,
   },
   insure: {
     icon: Shield,
-    tint: 'bg-rose-50 text-rose-700 border-white/70',
+    tint: `${TILE_SURFACE} text-rose-400`,
   },
   water: {
     icon: Droplets,
-    tint: 'bg-cyan-50 text-cyan-700 border-white/70',
+    tint: `${TILE_SURFACE} text-cyan-400`,
   },
   crypto: {
     icon: Bitcoin,
-    tint: 'bg-orange-50 text-orange-700 border-white/70',
+    tint: `${TILE_SURFACE} text-orange-400`,
     label: 'Crypto',
   },
   stocks: {
     icon: TrendingUp,
-    tint: 'bg-yellow-50 text-yellow-800 border-white/70',
+    tint: `${TILE_SURFACE} text-yellow-400`,
     label: 'Stocks',
   },
   more: {
     icon: Grid2X2,
-    tint: 'bg-slate-100 text-slate-700 border-white/70',
+    tint: `${TILE_SURFACE} text-[var(--text2)]`,
     label: 'More',
   },
 }
