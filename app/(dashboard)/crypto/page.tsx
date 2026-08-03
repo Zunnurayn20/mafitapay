@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
@@ -8,7 +8,7 @@ import { Modal } from '@/components/ui/Modal'
 import { useCryptoAssets, useCryptoAssetsRefreshing } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN, formatPercentChange, formatUSDAdaptive, fmtDate } from '@/lib/utils'
-import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
+import type { CryptoAsset, CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 function formatCryptoQuantity(value: number) {
   if (!Number.isFinite(value)) return '0'
@@ -31,12 +31,47 @@ function isStablecoin(symbol: string) {
   return new Set(['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'BUSD', 'USDE']).has(symbol.toUpperCase())
 }
 
+type AssetGroup = {
+  symbol: string
+  name: string
+  icon: string
+  options: CryptoAsset[]
+  representative: CryptoAsset
+}
+
+function pickRepresentative(options: CryptoAsset[]) {
+  /** Prefer mainnet for display (e.g. ETH Ethereum over ETH Arbitrum/Base). */
+  function rank(item: CryptoAsset) {
+    const network = item.network.trim().toLowerCase()
+    const isMainnet =
+      item.id === 'ETH_ETHEREUM'
+      || network === 'ethereum'
+      || network === 'mainnet'
+    const pricing =
+      item.pricingSource === 'live' ? 3
+      : item.pricingSource === 'backup' ? 2
+      : 1
+    // Mainnet first, then live pricing, then Base before other L2s
+    const networkTier =
+      isMainnet ? 100
+      : network === 'base' ? 40
+      : network === 'bsc' ? 35
+      : network === 'solana' ? 30
+      : 10
+    return networkTier * 10 + pricing
+  }
+
+  return options.reduce((best, asset) => (rank(asset) > rank(best) ? asset : best), options[0])
+}
+
 export default function CryptoPage() {
   const { openModal, setModalData, transactions } = useAppStore()
   const assets = useCryptoAssets()
   const refreshingAssets = useCryptoAssetsRefreshing()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const [networkPickerSymbol, setNetworkPickerSymbol] = useState<string | null>(null)
+  const [networkPickerMode, setNetworkPickerMode] = useState<'buy' | 'sell'>('buy')
   const [detail, setDetail] = useState<{
     transaction: Transaction
     cryptoOrder: CryptoOrder | null
@@ -46,31 +81,53 @@ export default function CryptoPage() {
   } | null>(null)
   const cryptoTxs = transactions.filter(tx => tx.type.startsWith('crypto'))
   const shouldMaskStaleSnapshot = refreshingAssets && assets.some(asset => asset.pricingSource !== 'live')
-  const marketStripAssets = Array.from(
-    assets
-      .filter(asset => isStablecoin(asset.symbol))
-      .reduce((map, asset) => {
-      const current = map.get(asset.symbol)
-      if (!current) {
-        map.set(asset.symbol, asset)
-        return map
-      }
 
-      const currentRank =
-        current.pricingSource === 'live' ? 3
-        : current.pricingSource === 'backup' ? 2
-        : 1
-      const nextRank =
-        asset.pricingSource === 'live' ? 3
-        : asset.pricingSource === 'backup' ? 2
-        : 1
+  const assetGroups = useMemo<AssetGroup[]>(() => {
+    const groups = new Map<string, CryptoAsset[]>()
+    for (const asset of assets) {
+      const key = asset.symbol.toUpperCase()
+      const current = groups.get(key) ?? []
+      current.push(asset)
+      groups.set(key, current)
+    }
+    return Array.from(groups.entries())
+      .map(([symbol, options]) => {
+        const sorted = [...options].sort((a, b) => a.network.localeCompare(b.network))
+        const representative = pickRepresentative(sorted)
+        return {
+          symbol,
+          name: representative.name,
+          icon: representative.icon,
+          options: sorted,
+          representative,
+        }
+      })
+      .sort((a, b) => a.symbol.localeCompare(b.symbol))
+  }, [assets])
 
-      if (nextRank > currentRank) {
-        map.set(asset.symbol, asset)
-      }
-      return map
-    }, new Map<string, (typeof assets)[number]>()),
-  ).map(([, asset]) => asset)
+  const marketStripAssets = useMemo(
+    () => assetGroups
+      .filter(group => isStablecoin(group.symbol))
+      .map(group => group.representative),
+    [assetGroups],
+  )
+
+  const networkPickerGroup = assetGroups.find(group => group.symbol === networkPickerSymbol) ?? null
+
+  function openTradeForAsset(asset: CryptoAsset, mode: 'buy' | 'sell') {
+    setNetworkPickerSymbol(null)
+    setModalData({ cryptoAsset: asset, cryptoPairId: asset.id })
+    openModal(mode)
+  }
+
+  function handleAssetGroupClick(group: AssetGroup, mode: 'buy' | 'sell' = 'buy') {
+    if (group.options.length === 1) {
+      openTradeForAsset(group.options[0], mode)
+      return
+    }
+    setNetworkPickerMode(mode)
+    setNetworkPickerSymbol(group.symbol)
+  }
   const formatMarketUsd = (symbol: string, marketPriceUsd: number | undefined, pricingSource?: 'live' | 'backup' | 'safe') => {
     if (isStablecoin(symbol)) return '$1'
     if (shouldMaskStaleSnapshot && pricingSource !== 'live') return 'Refreshing…'
@@ -110,13 +167,21 @@ export default function CryptoPage() {
 
   const showMarketSkeleton = assets.length === 0 && refreshingAssets
   return (
+    <>
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 border border-[var(--border)] bg-[var(--clay)] px-4 py-4 sm:px-5 lg:px-6">
+      {/* Fixed dark strip in both themes (does not follow light-mode coal/clay tokens). */}
+      <div
+        className="flex items-start justify-between gap-4 border border-[#3f3428] px-4 py-4 sm:px-5 lg:px-6"
+        style={{
+          background:
+            'linear-gradient(135deg, #0c0907 0%, #18130f 42%, #2a1f14 72%, #18130f 100%)',
+        }}
+      >
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center gap-2">
-            <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">Market Prices (USD)</div>
+            <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[#8d7b66]">Market Prices (USD)</div>
             {refreshingAssets && (
-              <div className="border border-[rgba(46,170,92,.2)] bg-[rgba(46,170,92,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--green2)]">
+              <div className="border border-[rgba(46,170,92,.2)] bg-[rgba(46,170,92,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[.8px] text-[#48cc78]">
                 Refreshing Market…
               </div>
             )}
@@ -135,22 +200,22 @@ export default function CryptoPage() {
                     src={a.icon}
                     alt={`${a.symbol} logo`}
                     fallback={a.symbol.slice(0, 1)}
-                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(255,255,255,.03)]"
+                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#3f3428] bg-[rgba(255,255,255,.03)]"
                     imgClassName="h-4 w-4 object-contain"
-                    textClassName="font-display text-[10px] font-bold text-[var(--gold2)]"
+                    textClassName="font-display text-[10px] font-bold text-[#e0c48a]"
                   />
-                  <div className="truncate text-[11px] font-bold text-[var(--gold2)]">{a.symbol}</div>
+                  <div className="truncate text-[11px] font-bold text-[#e0c48a]">{a.symbol}</div>
                 </div>
-                <div className="mt-1 truncate text-[12px] font-bold font-mono text-[var(--text)]">
+                <div className="mt-1 truncate font-mono text-[12px] font-bold text-[#f0e8dd]">
                   {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
                   {' = '}
-                  <span className="text-[var(--green2)]">{formatNGN(a.marketRate || a.buyRate)}</span>
+                  <span className="text-[#48cc78]">{formatNGN(a.marketRate || a.buyRate)}</span>
                 </div>
                 <div className="mt-1 flex items-center gap-1">
-                  <div className={`truncate text-[8px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
+                  <div className={`truncate text-[8px] ${a.change24h >= 0 ? 'text-[#48cc78]' : 'text-[#e05030]'}`}>
                     {a.change24h >= 0 ? '▲' : '▼'} {formatPercentChange(a.change24h)}
                   </div>
-                  <div className={`text-[7px] ${a.refreshDirection === 'up' ? 'text-[var(--green2)]' : a.refreshDirection === 'down' ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
+                  <div className={`text-[7px] ${a.refreshDirection === 'up' ? 'text-[#48cc78]' : a.refreshDirection === 'down' ? 'text-[#e05030]' : 'text-[#8d7b66]'}`}>
                     {a.refreshDirection === 'up' ? '↗' : a.refreshDirection === 'down' ? '↘' : '•'}
                   </div>
                 </div>
@@ -182,42 +247,50 @@ export default function CryptoPage() {
               </div>
               <Skeleton className="h-8 w-16" />
             </div>
-          )) : assets.map(a => (
-            <div
-              key={a.id}
-              className="flex items-center gap-2.5 border-b border-[var(--border)] px-3 py-3 last:border-0 transition-colors hover:bg-[var(--clay)] sm:gap-3 sm:px-5 sm:py-4 cursor-pointer"
-              onClick={() => { setModalData({ cryptoAsset: a, cryptoPairId: a.id }); openModal('buy') }}
-            >
-              <AssetLogo
-                src={a.icon}
-                alt={`${a.symbol} logo`}
-                fallback={a.symbol.slice(0, 1)}
-                className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden sm:h-14 sm:w-14"
-                imgClassName="h-9 w-9 object-contain sm:h-12 sm:w-12"
-                textClassName="font-display text-xl font-bold text-[var(--gold2)] sm:text-2xl"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12px] font-bold text-[var(--gold2)] sm:text-[14px]">{a.name} ({a.symbol})</div>
-                <div className="mt-0.5 truncate text-[8px] font-medium text-[var(--text2)] sm:mt-1 sm:text-[9px]">{a.network}</div>
+          )) : assetGroups.map(group => {
+            const a = group.representative
+            const multiNetwork = group.options.length > 1
+            return (
+              <div
+                key={group.symbol}
+                className="flex cursor-pointer items-center gap-2.5 border-b border-[var(--border)] px-3 py-3 transition-colors last:border-0 hover:bg-[var(--clay)] sm:gap-3 sm:px-5 sm:py-4"
+                onClick={() => handleAssetGroupClick(group, 'buy')}
+              >
+                <AssetLogo
+                  src={a.icon}
+                  alt={`${a.symbol} logo`}
+                  fallback={a.symbol.slice(0, 1)}
+                  className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden sm:h-14 sm:w-14"
+                  imgClassName="h-9 w-9 object-contain sm:h-12 sm:w-12"
+                  textClassName="font-display text-xl font-bold text-[var(--gold2)] sm:text-2xl"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] font-bold text-[var(--gold2)] sm:text-[14px]">
+                    {group.name} ({group.symbol})
+                  </div>
+                  <div className="mt-0.5 truncate text-[8px] font-medium text-[var(--text2)] sm:mt-1 sm:text-[9px]">
+                    {multiNetwork ? `${group.options.length} networks` : a.network}
+                  </div>
+                </div>
+                <div className="min-w-0 text-right">
+                  <div className="truncate font-mono text-[11px] font-bold text-[var(--text)] sm:text-[13px]">
+                    {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[8px] text-[var(--muted)] sm:mt-1">
+                    {formatNGN(a.buyRate)}
+                  </div>
+                </div>
+                <div className="w-[3.2rem] flex-shrink-0 text-right sm:w-[3.75rem]">
+                  <div className={`text-[8px] sm:text-[9px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
+                    {a.change24h >= 0 ? '▲' : '▼'} {formatPercentChange(a.change24h)}
+                  </div>
+                  <div className={`mt-0.5 text-[7px] sm:mt-1 sm:text-[8px] ${a.refreshDirection === 'up' ? 'text-[var(--green2)]' : a.refreshDirection === 'down' ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
+                    {a.refreshDirection === 'up' ? '↗' : a.refreshDirection === 'down' ? '↘' : '•'}
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0 text-right">
-                <div className="truncate text-[11px] font-bold font-mono text-[var(--text)] sm:text-[13px]">
-                  {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
-                </div>
-                <div className="mt-0.5 text-[8px] font-mono text-[var(--muted)] sm:mt-1">
-                  {formatNGN(a.buyRate)}
-                </div>
-              </div>
-              <div className="w-[3.2rem] flex-shrink-0 text-right sm:w-[3.75rem]">
-                <div className={`text-[8px] sm:text-[9px] ${a.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
-                  {a.change24h >= 0 ? '▲' : '▼'} {formatPercentChange(a.change24h)}
-                </div>
-                <div className={`mt-0.5 text-[7px] sm:mt-1 sm:text-[8px] ${a.refreshDirection === 'up' ? 'text-[var(--green2)]' : a.refreshDirection === 'down' ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
-                  {a.refreshDirection === 'up' ? '↗' : a.refreshDirection === 'down' ? '↘' : '•'}
-                </div>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </Card>
 
         <Card>
@@ -348,5 +421,47 @@ export default function CryptoPage() {
         )}
       </Modal>
     </div>
+
+    <Modal
+      open={Boolean(networkPickerGroup)}
+      onClose={() => setNetworkPickerSymbol(null)}
+      title={`Select ${networkPickerGroup?.symbol ?? ''} network`}
+      subtitle={
+        networkPickerMode === 'sell'
+          ? 'Choose the network for this sell'
+          : 'Choose the network for this buy'
+      }
+      size="sm"
+    >
+      <div className="flex flex-col gap-2 p-5">
+        {networkPickerGroup?.options.map(asset => (
+          <button
+            key={asset.id}
+            type="button"
+            onClick={() => openTradeForAsset(asset, networkPickerMode)}
+            className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] px-3.5 py-3 text-left transition-colors hover:border-[var(--gold)] hover:bg-[var(--clay2)] active:scale-[0.99]"
+          >
+            <AssetLogo
+              src={asset.icon}
+              alt={`${asset.symbol} logo`}
+              fallback={asset.symbol.slice(0, 1)}
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg"
+              imgClassName="h-6 w-6 object-contain"
+              textClassName="text-sm"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-bold text-[var(--text)]">{asset.network}</div>
+              <div className="mt-0.5 truncate text-[11px] text-[var(--text2)]">
+                {asset.name} · {asset.symbol}
+              </div>
+            </div>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--gold2)]">
+              Select
+            </span>
+          </button>
+        ))}
+      </div>
+    </Modal>
+    </>
   )
 }
