@@ -9,11 +9,12 @@ import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { Ticker } from './Ticker'
 import { MobileNav } from './MobileNav'
-import { AdminShell } from './AdminShell'
+
 import { Toast } from '@/components/ui/Toast'
 import { ModalManager } from '@/components/modals/ModalManager'
 import { KycRequiredModal } from '@/components/modals/KycRequiredModal'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
+import { BrandSplash } from '@/components/auth/SplashScreen'
 import { FullScreenAppLoading } from '@/components/ui/RouteLoading'
 import { BiometricGate } from '@/components/native/BiometricGate'
 
@@ -45,6 +46,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const cryptoDepositProvisionKeyRef = useRef('')
   const isAdminRoute = pathname.startsWith('/admin')
   const isAnalyticsRoute = pathname.startsWith('/analytics')
+  /** Admin/analytics chrome comes from their server layouts — only pass children through the fixed viewport. */
+  const useBareViewport = isAdminRoute || isAnalyticsRoute
   const isAdminUser = Boolean(user?.isAdmin || isAdminEmail(user?.email))
   const requiresInitialKycSubmission = Boolean(
     isAuthenticated
@@ -257,12 +260,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }, [authResolved, isAuthenticated, isAdminUser, router])
 
   if (!authResolved) {
-    return (
-      <FullScreenAppLoading
-        title="Restoring your session"
-        detail="Loading wallet, account state, and recent activity."
-      />
-    )
+    // Keep the same brand splash as app entry — do not show a second "restoring session" logo screen.
+    return <BrandSplash />
   }
 
   if (!isAuthenticated) return null
@@ -292,28 +291,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     <ErrorBoundary>
       <BiometricGate>
         <div className="app-fixed-viewport relative z-[1]">
-          {isAdminRoute ? (
-            <AdminShell>{children}</AdminShell>
+          {useBareViewport ? (
+            children
           ) : (
-            <>
-              <div className="h-full lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
-                <div className="hidden lg:block lg:h-full">
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[16rem_minmax(0,1fr)]">
+                <div className="hidden min-h-0 lg:block">
                   <Sidebar />
                 </div>
 
-                <div className="h-full min-w-0">
+                <div className="flex min-h-0 min-w-0 flex-col">
                   <Topbar title={title} />
                   <div className="fixed left-0 right-0 top-[var(--app-topbar-height)] z-30 lg:left-64">
                     <Ticker />
                   </div>
-                  <main className="app-scroll h-full px-4 pb-[var(--app-mobile-nav-height)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6">
+                  <main className="app-scroll min-h-0 flex-1 px-4 pb-[var(--app-mobile-nav-height)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6">
                     <div className="mx-auto w-full max-w-7xl">{children}</div>
                   </main>
                 </div>
               </div>
 
               <MobileNav />
-            </>
+            </div>
           )}
           {requiresInitialKycSubmission ? <KycRequiredModal /> : null}
           <ModalManager />

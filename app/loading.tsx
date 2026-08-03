@@ -1,5 +1,5 @@
-import { FullScreenAppLoading } from '@/components/ui/RouteLoading'
+import { BrandSplash } from '@/components/auth/SplashScreen'
 
 export default function Loading() {
-  return <FullScreenAppLoading />
+  return <BrandSplash />
 }

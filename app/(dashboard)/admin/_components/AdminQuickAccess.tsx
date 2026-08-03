@@ -213,11 +213,11 @@ export function AdminQuickAccess() {
   }
 
   return (
-    <section className="border border-[var(--border)] bg-[var(--coal)] p-3 sm:p-4">
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--coal)] p-3 sm:p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <div className="text-[9px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">Superuser Control Center</div>
-          <div className="mt-1 truncate text-[14px] font-black text-[var(--text)]">Fast access to live operational data</div>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted)]">Live control</div>
+          <div className="mt-1 truncate text-base font-bold text-[var(--text)]">Fast access to operational data</div>
         </div>
         <div className="flex flex-wrap gap-1.5 text-[9px] font-bold uppercase tracking-[.8px]">
           <span className="border border-[var(--border)] bg-[var(--clay)] px-2 py-1 text-[var(--text2)]">{data.users.length} users</span>

@@ -8,5 +8,5 @@ const SUBMODULES = [
 ] as const
 
 export default function AdminCatalogsPage() {
-  return <AdminModuleIndex title="Catalogs" description="Choose the catalog area you want to manage. Each submodule opens as its own admin page." items={SUBMODULES} />
+  return <AdminModuleIndex title="Catalogs" description="Assets, bills, rewards, and raw catalog data." items={SUBMODULES} />
 }

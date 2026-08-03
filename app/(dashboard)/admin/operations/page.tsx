@@ -8,5 +8,5 @@ const SUBMODULES = [
 ] as const
 
 export default function AdminOperationsPage() {
-  return <AdminModuleIndex title="Operations" description="Choose the operational module you want to work in." items={SUBMODULES} />
+  return <AdminModuleIndex title="Operations" description="Settlements, crypto orders, provider events, and support tools." items={SUBMODULES} />
 }

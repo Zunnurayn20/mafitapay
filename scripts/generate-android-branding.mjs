@@ -12,6 +12,8 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const logoPath = path.join(root, 'public', 'mafitapay-logo.png')
 const resDir = path.join(root, 'android', 'app', 'src', 'main', 'res')
 const brandBackground = 0x0c0907ff
+/** Inset so the M logo stays inside the adaptive safe zone (not edge-to-edge). */
+const ICON_PAD_RATIO = 0.2
 
 const iconSizes = {
   'mipmap-mdpi': 48,
@@ -56,7 +58,11 @@ async function generateWithJimp(Jimp) {
   for (const [folder, size] of Object.entries(iconSizes)) {
     const targetDir = path.join(resDir, folder)
     await mkdir(targetDir, { recursive: true })
-    const icon = squareLogo.clone().resize({ w: size, h: size })
+    const pad = Math.round(size * ICON_PAD_RATIO)
+    const logoSize = Math.max(1, size - pad * 2)
+    const icon = new JimpClass({ width: size, height: size, color: brandBackground })
+    const scaledLogo = squareLogo.clone().resize({ w: logoSize, h: logoSize })
+    icon.composite(scaledLogo, pad, pad)
     const buffer = await icon.getBuffer(JimpMime.png)
     for (const name of ['ic_launcher.png', 'ic_launcher_round.png', 'ic_launcher_foreground.png']) {
       await writeFile(path.join(targetDir, name), buffer)
@@ -98,7 +104,7 @@ function Save-Square($size, $out) {
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.Clear([System.Drawing.Color]::FromArgb(255,12,9,7))
   $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-  $pad = [int]($size * 0.12)
+  $pad = [int]($size * 0.20)
   $g.DrawImage($src, $pad, $pad, $size - 2*$pad, $size - 2*$pad)
   $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
   $g.Dispose(); $bmp.Dispose()

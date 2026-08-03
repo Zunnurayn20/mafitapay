@@ -5964,6 +5964,45 @@ export async function getNotificationsForUser(userId: string): Promise<Notificat
   return rows.map(mapNotificationRow)
 }
 
+export async function listRecentNotifications(limit = 80): Promise<Array<NotificationRecord & {
+  userName?: string
+  userEmail?: string
+  userPhone?: string
+}>> {
+  await ensureDbReady()
+  const safeLimit = Math.max(1, Math.min(200, limit))
+  const rows = getDb()
+    .prepare(`
+      SELECT
+        n.id,
+        n.user_id,
+        n.title,
+        n.message,
+        n.type,
+        n.read,
+        n.created_at,
+        u.name AS user_name,
+        u.email AS user_email,
+        u.phone AS user_phone
+      FROM notifications n
+      LEFT JOIN users u ON u.id = n.user_id
+      ORDER BY n.created_at DESC
+      LIMIT ?
+    `)
+    .all(safeLimit) as Array<NotificationRow & {
+      user_name?: string | null
+      user_email?: string | null
+      user_phone?: string | null
+    }>
+
+  return rows.map(row => ({
+    ...mapNotificationRow(row),
+    userName: row.user_name ?? undefined,
+    userEmail: row.user_email ?? undefined,
+    userPhone: row.user_phone ?? undefined,
+  }))
+}
+
 export async function getCryptoAssets(options?: { forceRefresh?: boolean; liveOnly?: boolean }): Promise<CryptoAsset[]> {
   await ensureDbReady()
   const rows = getDb()

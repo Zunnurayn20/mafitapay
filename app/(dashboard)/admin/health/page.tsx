@@ -7,5 +7,5 @@ const SUBMODULES = [
 ] as const
 
 export default function AdminHealthPage() {
-  return <AdminModuleIndex title="Health" description="Choose the health view you want to inspect." items={SUBMODULES} />
+  return <AdminModuleIndex title="Health" description="Rails, providers, and market readiness checks." items={SUBMODULES} />
 }

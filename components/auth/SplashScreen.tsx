@@ -5,20 +5,8 @@ import { useRouter } from 'next/navigation'
 
 const SPLASH_MS = 1900
 
-/**
- * Brand splash (same pattern as online-data-sub): logo + tagline, then route on.
- * nextPath is resolved on the server from the session cookie.
- */
-export function SplashScreen({ nextPath }: { nextPath: string }) {
-  const router = useRouter()
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      router.replace(nextPath)
-    }, SPLASH_MS)
-    return () => clearTimeout(t)
-  }, [router, nextPath])
-
+/** Same brand splash UI used on entry and while auth is restoring. */
+export function BrandSplash() {
   return (
     <div className="splash-screen" data-testid="screen-splash">
       <div className="splash-logo-wrap">
@@ -36,4 +24,21 @@ export function SplashScreen({ nextPath }: { nextPath: string }) {
       <p className="splash-tagline">Wallet · Bills · Crypto · Stocks</p>
     </div>
   )
+}
+
+/**
+ * Brand splash (same pattern as online-data-sub): logo + tagline, then route on.
+ * nextPath is resolved on the server from the session cookie.
+ */
+export function SplashScreen({ nextPath }: { nextPath: string }) {
+  const router = useRouter()
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      router.replace(nextPath)
+    }, SPLASH_MS)
+    return () => clearTimeout(t)
+  }, [router, nextPath])
+
+  return <BrandSplash />
 }
