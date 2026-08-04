@@ -91,6 +91,55 @@ function getAssetScanTimeoutMs(chain: ScanChain) {
   return CHAIN_SCAN_TIMEOUT_OVERRIDES_MS[chain] ?? ASSET_SCAN_TIMEOUT_MS
 }
 
+// How often to repeat the "your primary RPC is dead" warning per chain. Loud enough to notice,
+// quiet enough not to bury the scan logs.
+const PRIMARY_RPC_WARN_INTERVAL_MS = 30 * 60_000
+const primaryRpcWarnedAt = new Map<ScanChain, number>()
+
+/**
+ * Warn when a chain's primary RPC is unhealthy and scans have quietly moved to the fallback.
+ *
+ * viem's `fallback` transport serves the request from the next URL when the first one fails, which
+ * is the behaviour we want but makes a dead paid provider indistinguishable from a healthy one: the
+ * only visible symptom is throttling errors from whatever public node is standing in for it. That
+ * is how a Base Alchemy key sitting on "Monthly capacity limit exceeded" read for hours as if the
+ * public endpoint were simply busy. The two call for completely different responses, so say which
+ * one is actually happening.
+ */
+async function warnIfPrimaryRpcUnhealthy(chain: ScanChain, rpcUrls: string[]) {
+  // With no fallback configured, failures already surface directly on the scan itself.
+  if (rpcUrls.length < 2) return
+  const lastWarnedAt = primaryRpcWarnedAt.get(chain)
+  if (lastWarnedAt && Date.now() - lastWarnedAt < PRIMARY_RPC_WARN_INTERVAL_MS) return
+
+  const primary = rpcUrls[0]
+  let problem = ''
+  try {
+    const response = await fetch(primary, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null
+    const message = readRpcErrorMessage(payload)
+    if (!response.ok || message) problem = message || `HTTP ${response.status}`
+  } catch (error) {
+    problem = error instanceof Error ? error.message : 'probe failed'
+  }
+
+  if (!problem) return
+  primaryRpcWarnedAt.set(chain, Date.now())
+  console.warn(
+    `[crypto-deposit-scanner] ${chain} primary RPC ${sanitizeUrlForLogs(primary)} is unhealthy — scans are silently running on the fallback endpoint, which is why you see throttling from it: ${sanitizeTextForLogs(problem)}`
+  )
+}
+
+function readRpcErrorMessage(payload: { error?: { message?: string } } | null) {
+  const message = payload?.error?.message
+  return typeof message === 'string' ? message.trim() : ''
+}
+
 // Circuit breaker for chains whose provider is dead rather than merely slow. Polygon on an Alchemy
 // app without MATIC_MAINNET enabled fails every asset on every cycle forever; retrying it each
 // cycle is pure waste. After this many consecutive failures a chain is parked for a cooldown, then
@@ -1475,6 +1524,12 @@ export async function syncCryptoDepositEventsOnce() {
     const nearRpcRaw = (process.env.MAFITAPAY_NEAR_RPC_URLS?.trim() || process.env.MAFITAPAY_NEAR_RPC_URL?.trim() || DEFAULT_NEAR_RPC_URLS[0])
     const sanitizedPolygon = sanitizePolygonRpcUrls(polyRpcRaw)
     console.log(`[crypto-deposit-scanner] RPCs base(${baseCfg.rpcUrls.length})=${baseCfg.rpcUrls.map(sanitizeUrlForLogs).join(' | ')} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(sanitizedPolygon[0] || polyRpcRaw.split(',')[0])} (raw had ${polyRpcRaw.split(',').length} entries) sui[0]=${sanitizeUrlForLogs(suiRpcRaw.split(',')[0])} near[0]=${sanitizeUrlForLogs(nearRpcRaw)}`)
+    // Surface a dead primary before the scan, so throttling errors from a fallback endpoint are
+    // read as the symptom they are rather than the cause.
+    await Promise.all([
+      warnIfPrimaryRpcUnhealthy('base', baseCfg.rpcUrls),
+      warnIfPrimaryRpcUnhealthy('bsc', bscCfg.rpcUrls),
+    ])
     let detected = 0
     let settled = 0
     const errors: string[] = []
