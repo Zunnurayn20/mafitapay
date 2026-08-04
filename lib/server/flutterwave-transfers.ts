@@ -61,9 +61,34 @@ function getTransferBaseUrl() {
   return 'https://developersandbox-api.flutterwave.com'
 }
 
+const DEFAULT_TOKEN_URL = 'https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token'
+
 function getTokenUrl() {
-  return readString(process.env.MAFITAPAY_FLUTTERWAVE_TOKEN_URL)
-    || 'https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token'
+  return readString(process.env.MAFITAPAY_FLUTTERWAVE_TOKEN_URL) || DEFAULT_TOKEN_URL
+}
+
+/**
+ * Guard against pointing the OAuth token URL at the v3 REST API.
+ *
+ * `client_credentials` posted to `api.flutterwave.com/v3/...` does not fail as a bad credential —
+ * the API gateway answers 401 `{"status":"error","message":"Authorization required"}`, which this
+ * module surfaces as the payout's failure reason. Users then see an opaque "Authorization required"
+ * on a receipt while the credentials themselves are perfectly valid, and the real fault (an env var
+ * carrying a v3 URL) is invisible. Fail with a message that names the fix instead.
+ */
+function assertTokenUrlIsIdentityProvider(url: string) {
+  let pathname: string
+  try {
+    pathname = new URL(url).pathname
+  } catch {
+    throw new Error(`MAFITAPAY_FLUTTERWAVE_TOKEN_URL is not a valid URL: ${url}`)
+  }
+  if (/^\/v\d+(\/|$)/.test(pathname)) {
+    throw new Error(
+      `MAFITAPAY_FLUTTERWAVE_TOKEN_URL points at the v3 REST API (${url}), not the OAuth identity provider. `
+      + `Set it to ${DEFAULT_TOKEN_URL}`
+    )
+  }
 }
 
 export function isFlutterwavePayoutEnabled() {
@@ -77,7 +102,10 @@ async function getFlutterwaveAccessToken() {
     throw new Error('Flutterwave transfer credentials are not configured.')
   }
 
-  const response = await fetch(getTokenUrl(), {
+  const tokenUrl = getTokenUrl()
+  assertTokenUrlIsIdentityProvider(tokenUrl)
+
+  const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

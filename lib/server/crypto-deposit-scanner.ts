@@ -75,6 +75,34 @@ const ASSET_SCAN_TIMEOUT_MS = Math.max(
   45_000,
   Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_ASSET_TIMEOUT_MS ?? 120_000) || 120_000
 )
+// Per-chain timeout overrides. A chain that *stalls* rather than erroring will hold the cycle for
+// the full timeout, so a 120s leash on a 120s cadence lets one chain consume the entire interval
+// and leave the HTTP server no idle time. NEAR is the observed offender: its public RPCs sit on
+// "Block either has never been observed on the node or has been garbage collected" until the
+// timeout fires, burning ~2 minutes every cycle. Keep such chains well under the cadence.
+const CHAIN_SCAN_TIMEOUT_OVERRIDES_MS: Partial<Record<ScanChain, number>> = {
+  near: Math.max(
+    10_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_NEAR_TIMEOUT_MS ?? 25_000) || 25_000
+  ),
+}
+
+function getAssetScanTimeoutMs(chain: ScanChain) {
+  return CHAIN_SCAN_TIMEOUT_OVERRIDES_MS[chain] ?? ASSET_SCAN_TIMEOUT_MS
+}
+
+// Circuit breaker for chains whose provider is dead rather than merely slow. Polygon on an Alchemy
+// app without MATIC_MAINNET enabled fails every asset on every cycle forever; retrying it each
+// cycle is pure waste. After this many consecutive failures a chain is parked for a cooldown, then
+// retried once so it self-heals when the provider comes back.
+const CHAIN_FAILURE_THRESHOLD = Math.max(
+  2,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_CHAIN_FAILURE_THRESHOLD ?? 3) || 3
+)
+const CHAIN_PARK_MS = Math.max(
+  60_000,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_CHAIN_PARK_MS ?? 1_800_000) || 1_800_000
+)
 // When the persisted cursor is far behind, scan this many recent blocks so deposits that
 // landed while the scanner was stuck are still found (without replaying the entire chain).
 const GAP_LOOKBACK_BLOCKS = BigInt(
@@ -162,6 +190,7 @@ type ScanState = {
   running: boolean
   interval?: NodeJS.Timeout
   lastSyncAt?: number
+  chainFailures?: Partial<Record<ScanChain, { count: number; parkedUntil?: number }>>
 }
 type SupportedDepositAsset = {
   chain: ScanChain
@@ -187,6 +216,38 @@ function getScannerState() {
     }
   }
   return globalThis.__mafitapayCryptoDepositScanner
+}
+
+// The state object is a hot-reload-surviving global, so an instance created before this field
+// existed may not have it.
+function getChainFailures(state: ScanState) {
+  state.chainFailures ??= {}
+  return state.chainFailures
+}
+
+/** True when a chain is parked after repeated failures and its cooldown has not yet elapsed. */
+function isChainParked(state: ScanState, chain: ScanChain, now: number) {
+  const entry = getChainFailures(state)[chain]
+  return Boolean(entry?.parkedUntil && now < entry.parkedUntil)
+}
+
+function recordChainSuccess(state: ScanState, chain: ScanChain) {
+  const failures = getChainFailures(state)
+  if (failures[chain]) delete failures[chain]
+}
+
+function recordChainFailure(state: ScanState, chain: ScanChain, now: number) {
+  const failures = getChainFailures(state)
+  const entry = failures[chain] ?? { count: 0 }
+  entry.count += 1
+  if (entry.count >= CHAIN_FAILURE_THRESHOLD) {
+    entry.parkedUntil = now + CHAIN_PARK_MS
+    entry.count = 0
+    console.warn(
+      `[crypto-deposit-scanner] parking ${chain} for ${Math.round(CHAIN_PARK_MS / 60_000)}m after ${CHAIN_FAILURE_THRESHOLD} consecutive failures; it will be retried once the cooldown elapses`
+    )
+  }
+  failures[chain] = entry
 }
 
 function createBaseClient() {
@@ -409,15 +470,15 @@ function getSupportedAssets(): SupportedDepositAsset[] {
   })
 }
 
-async function withAssetScanTimeout<T>(label: string, fn: () => Promise<T>) {
+async function withAssetScanTimeout<T>(label: string, timeoutMs: number, fn: () => Promise<T>) {
   let timer: NodeJS.Timeout | undefined
   try {
     return await Promise.race([
       fn(),
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new Error(`${label} timed out after ${ASSET_SCAN_TIMEOUT_MS}ms`))
-        }, ASSET_SCAN_TIMEOUT_MS)
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
       }),
     ])
   } finally {
@@ -1382,6 +1443,7 @@ export async function syncCryptoDepositEventsOnce() {
   }
   state.lastSyncAt = now
   state.running = true
+  const startedAt = now
   console.log('[crypto-deposit-scanner] syncCryptoDepositEventsOnce starting...')
 
   try {
@@ -1420,14 +1482,19 @@ export async function syncCryptoDepositEventsOnce() {
     // Scan assets sequentially. Public RPCs throttle hard when every chain is scanned in parallel.
     const assetResults: Array<{ detected: number; settled: number; error: string | null }> = []
     const skippedChains = new Set<ScanChain>()
+    const parkedChains = new Set<ScanChain>()
     for (const asset of getSupportedAssets()) {
       if (!isChainEnabled(asset.chain)) {
         skippedChains.add(asset.chain)
         continue
       }
+      if (isChainParked(state, asset.chain, Date.now())) {
+        parkedChains.add(asset.chain)
+        continue
+      }
       try {
         console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
-        const result = await withAssetScanTimeout(asset.pairId, async () => {
+        const result = await withAssetScanTimeout(asset.pairId, getAssetScanTimeoutMs(asset.chain), async () => {
           const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
           if (isEvm) {
             const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
@@ -1451,10 +1518,12 @@ export async function syncCryptoDepositEventsOnce() {
           return { detected: 0, settled: 0 }
         })
         console.log(`[crypto-deposit-scanner] ${asset.pairId} result: detected=${result.detected} settled=${result.settled}`)
+        recordChainSuccess(state, asset.chain)
         assetResults.push({ detected: result.detected, settled: result.settled, error: null })
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'scan failed'
         console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, sanitizeErrorForLogs(error))
+        recordChainFailure(state, asset.chain, Date.now())
         if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
           warnedOnce.add('polygon-rpc')
           console.warn(`[crypto-deposit-scanner] Polygon RPC failed. We now aggressively drop dead endpoints (especially the permanently dead public.blastapi.io / Blast API). Check the "polygon RPCs configured (after removing dead endpoints incl. Blast)" line. Prefer MAFITAPAY_POLYGON_RPC_URLS with your Alchemy key. Falling back to Ankr if needed.`)
@@ -1469,10 +1538,16 @@ export async function syncCryptoDepositEventsOnce() {
       if (r.error) errors.push(r.error)
     }
 
-    console.log(`[crypto-deposit-scanner] sync complete: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}`)
+    const durationMs = Date.now() - startedAt
+    console.log(`[crypto-deposit-scanner] sync complete in ${Math.round(durationMs / 1000)}s: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}${parkedChains.size > 0 ? ` parkedChains=${[...parkedChains].join(',')}` : ''}`)
     return { skipped: false, detected, settled, errors }
   } finally {
     state.running = false
+    // Stamp the cooldown from when the cycle *finished*, not when it started. Stamping at the
+    // start makes MIN_SYNC_INTERVAL_MS a deadline rather than a gap: a cycle that overruns the
+    // interval becomes eligible to run again the moment it ends, so cycles chain back-to-back and
+    // starve the HTTP server. Measuring from the end guarantees a real idle window between cycles.
+    state.lastSyncAt = Date.now()
   }
 }
 
