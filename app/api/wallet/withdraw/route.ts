@@ -3,11 +3,13 @@ import { appendNotification, createNotification, requireUser, unauthorized } fro
 import { applyWalletMutation, createPayoutRequest, getWalletByUserId, upsertBeneficiary, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
+import { ensureFlutterwavePayoutSyncScheduler } from '@/lib/server/payout-sync-batch'
 import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function POST(req: Request) {
   const user = await requireUser()
   if (!user) return unauthorized()
+  ensureFlutterwavePayoutSyncScheduler()
 
   let body: Record<string, unknown>
   try {

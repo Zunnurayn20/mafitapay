@@ -10,6 +10,7 @@ import {
 } from '@/lib/server/data'
 import { deliverEmailVerification } from '@/lib/server/auth-delivery'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
+import { ensureFlutterwavePayoutSyncScheduler } from '@/lib/server/payout-sync-batch'
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
 
 function normalizeEmail(value: unknown) {
@@ -58,6 +59,7 @@ export async function GET() {
   ensureCryptoMarketAutoRefreshScheduler()
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
+  ensureFlutterwavePayoutSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   ensureCryptoDepositScannerWatchdog()
   const user = await getCurrentUser()
@@ -73,6 +75,7 @@ export async function POST(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
+  ensureFlutterwavePayoutSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   ensureCryptoDepositScannerWatchdog()
   const body = await req.json()
@@ -130,6 +133,7 @@ export async function PUT(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
+  ensureFlutterwavePayoutSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   ensureCryptoDepositScannerWatchdog()
   const body = await req.json()
