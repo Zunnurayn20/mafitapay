@@ -142,12 +142,10 @@ export async function initiateFlutterwaveBankTransfer(input: FlutterwaveTransfer
             applies_to: 'destination_currency',
           },
           recipient: {
-            type: 'bank',
             bank: {
               account_number: input.accountNumber,
               code: input.bankCode,
             },
-            name: input.accountName,
           },
         },
       }),

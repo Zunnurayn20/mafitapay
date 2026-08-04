@@ -7,6 +7,7 @@ import { PinPad } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
+import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/http'
 import { useAppStore } from '@/store'
 import { formatNGN } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
@@ -40,7 +41,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     if (!open) return
 
     void fetch('/api/beneficiaries', { credentials: 'include', cache: 'no-store' })
-      .then(response => response.json())
+      .then(parseJsonBody)
       .then(payload => {
         if (!Array.isArray(payload.data)) return
         setBeneficiaries(payload.data)
@@ -92,13 +93,10 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           credentials: 'include',
           body: JSON.stringify({ kind: 'internal', recipient }),
         })
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) {
-          throw new Error(payload.error || 'Recipient verification failed.')
-        }
-        setResolvedRecipient(payload.data.recipient)
+        const data = await readJsonResponse<{ recipient: { name: string; handle: string } }>(response)
+        setResolvedRecipient(data.recipient)
       } catch (error) {
-        showToast(error instanceof Error ? error.message : 'Recipient verification failed.', 'error')
+        showToast(toUserMessage(error, 'Recipient verification failed.'), 'error')
         return
       }
     } else {
@@ -110,16 +108,20 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           credentials: 'include',
           body: JSON.stringify({ kind: 'bank', bankCode, bankName, accountNumber, accountName }),
         })
-        const payload = await response.json()
-        if (!response.ok || payload.success === false) {
-          throw new Error(payload.error || 'Beneficiary verification failed.')
-        }
-        setBankCode(payload.data.verification.bankCode)
-        setBankName(payload.data.verification.bankName)
-        setAccountNumber(payload.data.verification.accountNumber)
-        setAccountName(payload.data.verification.accountName)
+        const data = await readJsonResponse<{
+          verification: {
+            bankCode: string
+            bankName: string
+            accountNumber: string
+            accountName: string
+          }
+        }>(response)
+        setBankCode(data.verification.bankCode)
+        setBankName(data.verification.bankName)
+        setAccountNumber(data.verification.accountNumber)
+        setAccountName(data.verification.accountName)
       } catch (error) {
-        showToast(error instanceof Error ? error.message : 'Beneficiary verification failed.', 'error')
+        showToast(toUserMessage(error, 'Beneficiary verification failed.'), 'error')
         return
       }
     }
@@ -144,18 +146,14 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           ? { mode, recipient, amount: amt, narration, ...input }
           : { mode, bankCode, bankName, accountNumber, accountName, amount: amt, narration, ...input }),
       })
-      const payload = await response.json()
-
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || 'Transfer failed.')
-      }
+      const transfer = await readJsonResponse<{ transaction: { reference: string } }>(response)
 
       setProcStep(3)
-      setRef(payload.data.transaction.reference)
+      setRef(transfer.transaction.reference)
       await refreshSession()
       setStep('success')
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Transfer failed.', 'error')
+      showToast(toUserMessage(error, 'Transfer failed.'), 'error')
       setPinVersion(current => current + 1)
       setStep('pin')
     }
@@ -170,7 +168,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       const approval = await createBiometricApproval()
       await submitTransfer({ biometricApprovalToken: approval.token })
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
+      showToast(toUserMessage(error, 'Biometric approval failed.'), 'error')
       setPinVersion(current => current + 1)
     }
   }

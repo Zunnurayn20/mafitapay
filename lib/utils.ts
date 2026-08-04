@@ -91,3 +91,36 @@ export function sanitizeUrlForLogs(url: string): string {
     return url.replace(/([A-Za-z0-9_-]{20,})/g, '[REDACTED]')
   }
 }
+
+/**
+ * Redact secrets from arbitrary log text. Provider SDK errors (viem in particular) embed the
+ * full RPC URL — key included — in `message`, `metaMessages`, `url` and the stack, so logging
+ * the raw error object leaks credentials. Apply this before printing provider errors.
+ */
+export function sanitizeTextForLogs(text: string): string {
+  if (!text) return text
+  return text
+    // Keys carried in a URL path segment, e.g. https://host/v2/KEY or https://host/KEY
+    .replace(/(https?:\/\/[^\s'"]*?\/)(?:v[0-9]+\/)?([A-Za-z0-9_-]{16,})/g, (match, prefix: string) => {
+      const versionSegment = /\/(v[0-9]+)\//.exec(match)
+      return `${prefix}${versionSegment ? `${versionSegment[1]}/` : ''}[REDACTED]`
+    })
+    // Keys carried as a query parameter, e.g. ?apikey=... or &api_key=...
+    .replace(/([?&](?:api[-_]?key|apikey|access[-_]?token|token|key)=)[^&\s'"]+/gi, '$1[REDACTED]')
+}
+
+/**
+ * Turn an error into a log-safe string with provider credentials stripped. Preserves the
+ * message and stack so the failure is still diagnosable.
+ */
+export function sanitizeErrorForLogs(error: unknown): string {
+  if (error instanceof Error) {
+    return sanitizeTextForLogs(error.stack || `${error.name}: ${error.message}`)
+  }
+  if (typeof error === 'string') return sanitizeTextForLogs(error)
+  try {
+    return sanitizeTextForLogs(JSON.stringify(error))
+  } catch {
+    return sanitizeTextForLogs(String(error))
+  }
+}

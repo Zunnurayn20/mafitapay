@@ -7,6 +7,7 @@ import { PinPad } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
+import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/http'
 import { useAppStore } from '@/store'
 import { formatNGN, generateRef } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
@@ -35,7 +36,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
     if (!open) return
 
     void fetch('/api/beneficiaries?kind=bank', { credentials: 'include', cache: 'no-store' })
-      .then(response => response.json())
+      .then(parseJsonBody)
       .then(payload => {
         if (!Array.isArray(payload.data)) return
         setBeneficiaries(payload.data)
@@ -50,12 +51,18 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       .catch(() => undefined)
   }, [open])
 
-  useEffect(() => {
+  // Reset the flow whenever the modal transitions to closed. This component stays mounted
+  // (ModalManager always renders it), so without this a reopened modal would resume on the PIN
+  // step. Adjusting state during render rather than in an effect avoids the cascading re-render
+  // an effect-based reset causes.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
     if (!open) {
       setStep('form')
       setPinVersion(0)
     }
-  }, [open])
+  }
 
   async function confirm() {
     setPinVersion(current => current + 1)
@@ -77,14 +84,18 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         credentials: 'include',
         body: JSON.stringify({ kind: 'bank', bankCode, bankName, accountNumber, accountName }),
       })
-      const lookupPayload = await lookupResponse.json()
-      if (!lookupResponse.ok || lookupPayload.success === false) {
-        throw new Error(lookupPayload.error || 'Beneficiary verification failed.')
-      }
-      const resolvedBankCode = lookupPayload.data.verification.bankCode
-      const resolvedBankName = lookupPayload.data.verification.bankName
-      const resolvedAccountNumber = lookupPayload.data.verification.accountNumber
-      const resolvedAccountName = lookupPayload.data.verification.accountName
+      const lookupData = await readJsonResponse<{
+        verification: {
+          bankCode: string
+          bankName: string
+          accountNumber: string
+          accountName: string
+        }
+      }>(lookupResponse)
+      const resolvedBankCode = lookupData.verification.bankCode
+      const resolvedBankName = lookupData.verification.bankName
+      const resolvedAccountNumber = lookupData.verification.accountNumber
+      const resolvedAccountName = lookupData.verification.accountName
       setBankCode(resolvedBankCode)
       setBankName(resolvedBankName)
       setAccountNumber(resolvedAccountNumber)
@@ -103,11 +114,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           ...input,
         }),
       })
-      const payload = await response.json()
-
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || 'Withdrawal failed.')
-      }
+      const withdrawal = await readJsonResponse<{ transaction: { reference?: string } }>(response)
 
       await refreshSession()
       closeModal()
@@ -115,12 +122,12 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         setModalData({
           headline: 'Withdrawal Submitted!',
           body: `₦${amt.toLocaleString()} bank withdrawal to ${resolvedAccountName} is pending payout settlement.`,
-          ref: payload.data.transaction.reference || generateRef(),
+          ref: withdrawal.transaction.reference || generateRef(),
         })
         openModal('success')
       }, 100)
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Withdrawal failed.', 'error')
+      showToast(toUserMessage(error, 'Withdrawal failed.'), 'error')
       setPinVersion(current => current + 1)
       setStep('pin')
     }
@@ -131,7 +138,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       const approval = await createBiometricApproval()
       await submitWithdrawal({ biometricApprovalToken: approval.token })
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
+      showToast(toUserMessage(error, 'Biometric approval failed.'), 'error')
       setPinVersion(current => current + 1)
     }
   }

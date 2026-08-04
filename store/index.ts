@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { readJsonResponse } from '@/lib/client/http'
 import { CryptoDepositAddress, FundingAccountEligibility, Theme, Transaction, User, Wallet } from '@/types'
 
 interface SessionData {
@@ -109,11 +110,7 @@ interface AppStore {
 }
 
 async function readJson<T>(res: Response): Promise<T> {
-  const payload = await res.json()
-  if (!res.ok || payload.success === false) {
-    throw new Error(payload.error || 'Request failed.')
-  }
-  return payload.data as T
+  return readJsonResponse<T>(res)
 }
 
 function applySessionData(set: (partial: Partial<AppStore>) => void, data: SessionData | null) {

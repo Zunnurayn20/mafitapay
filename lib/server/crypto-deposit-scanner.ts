@@ -37,18 +37,40 @@ import {
   getLastScannedBlock,
   setLastScannedBlock as persistLastScannedBlock,
 } from '@/lib/server/data'
-import { formatCrypto, sanitizeUrlForLogs } from '@/lib/utils'
+import { formatCrypto, sanitizeErrorForLogs, sanitizeTextForLogs, sanitizeUrlForLogs } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
 const SCAN_BLOCK_WINDOW = BigInt(256) // larger window for native EVM deposits (Base ETH etc) to reduce risk of missing txs due to timing/RPC lag in small incremental scans. ERC20 still uses chunked getLogs. For prod prefer dedicated RPCs.
 const POLYGON_NATIVE_INITIAL_SCAN_WINDOW = BigInt(
   Number(process.env.MAFITAPAY_POLYGON_NATIVE_INITIAL_SCAN_BLOCKS ?? 900) || 900
 )
-const WATCHDOG_INTERVAL_MS = 15_000 // more frequent scans so on-chain deposits (especially small test ones) reflect faster in NGN balance. With persisted state + min-recent coverage we avoid excessive RPC load.
-const MIN_SYNC_INTERVAL_MS = Math.max(
-  15_000,
-  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SCAN_INTERVAL_MS ?? 15_000) || 15_000
+// Scan cadence. The previous 15s default meant each cycle (which routinely takes 30-50s on
+// rate-limited public RPCs) started again immediately on finishing, leaving the Node process
+// with no idle time and starving the HTTP server until Railway returned 502s. Default to 120s
+// and let deployments tune it down only when they have dedicated RPC capacity.
+const SCAN_INTERVAL_MS = Math.max(
+  30_000,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SCAN_INTERVAL_MS ?? 120_000) || 120_000
 )
+const WATCHDOG_INTERVAL_MS = SCAN_INTERVAL_MS
+const MIN_SYNC_INTERVAL_MS = SCAN_INTERVAL_MS
+
+// Kill switch: set MAFITAPAY_CRYPTO_DEPOSIT_SCANNER=off to stop the watchdog entirely.
+// Use this when the API needs to stay responsive and deposit detection can wait.
+const SCANNER_ENABLED = (process.env.MAFITAPAY_CRYPTO_DEPOSIT_SCANNER ?? '').trim().toLowerCase() !== 'off'
+
+// Per-chain enable/disable. Chains whose provider is dead or out of quota can be parked without
+// a code change: MAFITAPAY_CRYPTO_DEPOSIT_DISABLED_CHAINS=polygon,sui
+const DISABLED_CHAINS = new Set(
+  (process.env.MAFITAPAY_CRYPTO_DEPOSIT_DISABLED_CHAINS ?? '')
+    .split(',')
+    .map(chain => chain.trim().toLowerCase())
+    .filter(Boolean)
+)
+
+function isChainEnabled(chain: ScanChain) {
+  return !DISABLED_CHAINS.has(chain)
+}
 const ASSET_SCAN_TIMEOUT_MS = Math.max(
   45_000,
   Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_ASSET_TIMEOUT_MS ?? 120_000) || 120_000
@@ -122,7 +144,7 @@ async function getLogsChunked(
       // only advance covered for contiguous successful prefix from window start (prevents skipping holes on flaky RPCs)
     } catch (err) {
       consecutiveFailures += 1
-      console.warn(`[crypto-deposit-scanner] getLogs chunk ${current}-${end} failed (will continue):`, err instanceof Error ? err.message : err)
+      console.warn(`[crypto-deposit-scanner] getLogs chunk ${current}-${end} failed (will continue):`, sanitizeTextForLogs(err instanceof Error ? err.message : String(err)))
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         console.warn(`[crypto-deposit-scanner] getLogs aborting after ${MAX_CONSECUTIVE_FAILURES} consecutive chunk failures — check RPC URLs for this chain`)
         break
@@ -862,84 +884,134 @@ async function scanNativeDeposits(input: {
   const latestBlock = await input.client.getBlockNumber()
   const nativeKey = `${input.asset.chain}:${input.asset.pairId}:native`
   const scanWindow = input.asset.chain === 'polygon' ? POLYGON_NATIVE_INITIAL_SCAN_WINDOW : SCAN_BLOCK_WINDOW
-  let { fromBlock, toBlock } = await getScanRange(nativeKey, latestBlock, scanWindow)
-  // Always ensure we cover a decent recent window for native deposits so very recent sends
-  // are caught promptly even if incremental state is "ahead" or after restarts.
-  const MIN_RECENT_NATIVE = BigInt(256)
-  const recentFrom = latestBlock > MIN_RECENT_NATIVE ? latestBlock - MIN_RECENT_NATIVE : BigInt(0)
-  if (fromBlock > recentFrom) fromBlock = recentFrom
+  const { fromBlock, toBlock } = await getScanRange(nativeKey, latestBlock, scanWindow)
+
   let detected = 0
   let settled = 0
-  const totalBlocks = Number(toBlock) - Number(fromBlock) + 1
-  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} native: scanning ${totalBlocks} blocks newest-first (batched for speed) from ${fromBlock} to ${toBlock} (key=${nativeKey})`)
 
-  const BATCH_SIZE = totalBlocks > 512 ? 16 : 8 // wider batches when recovering a stuck cursor
-  let completedFullWindow = true
-  for (let end = toBlock; end >= fromBlock; end -= BigInt(BATCH_SIZE)) {
-    const start = end - BigInt(BATCH_SIZE) + BigInt(1) < fromBlock ? fromBlock : end - BigInt(BATCH_SIZE) + BigInt(1)
-    const promises: Promise<any>[] = []
-    for (let b = end; b >= start; b -= BigInt(1)) {
-      promises.push( input.client.getBlock({ blockNumber: b, includeTransactions: true }) )
-    }
-    const processBlock = async (blockNumber: bigint, block: { transactions: unknown[] }) => {
-      for (const tx of block.transactions) {
-        if (typeof tx === 'string') continue
-        const parsed = tx as { to?: string | null; value?: bigint; hash?: string; from?: string }
-        if (!parsed.to || !parsed.value || parsed.value <= BigInt(0)) continue
-        const address = input.lookup.get(parsed.to.toLowerCase())
-        if (!address) continue
-        if (VERBOSE_DEPOSIT_SCANNER) {
-          console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${parsed.to} value=${parsed.value.toString()} tx=${parsed.hash} block=${blockNumber}`)
-        }
-        const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${parsed.hash}:native`
-        const result = await persistAndSettleDeposit({
-          asset: input.asset,
-          address,
-          externalEventId,
-          amountUnits: parsed.value,
-          txHash: parsed.hash!,
-          blockNumber,
-          payload: {
-            type: 'native_transfer',
-            from: parsed.from,
-            to: parsed.to,
-          },
-        })
-        if (!result.duplicate) detected += 1
-        if (result.settled) settled += 1
+  const processBlock = async (blockNumber: bigint, block: { transactions: unknown[] }) => {
+    for (const tx of block.transactions) {
+      if (typeof tx === 'string') continue
+      const parsed = tx as { to?: string | null; value?: bigint; hash?: string; from?: string }
+      if (!parsed.to || !parsed.value || parsed.value <= BigInt(0)) continue
+      const address = input.lookup.get(parsed.to.toLowerCase())
+      if (!address) continue
+      if (VERBOSE_DEPOSIT_SCANNER) {
+        console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${parsed.to} value=${parsed.value.toString()} tx=${parsed.hash} block=${blockNumber}`)
       }
+      const externalEventId = `${input.asset.chain}:${input.asset.pairId}:${parsed.hash}:native`
+      const result = await persistAndSettleDeposit({
+        asset: input.asset,
+        address,
+        externalEventId,
+        amountUnits: parsed.value,
+        txHash: parsed.hash!,
+        blockNumber,
+        payload: {
+          type: 'native_transfer',
+          from: parsed.from,
+          to: parsed.to,
+        },
+      })
+      if (!result.duplicate) detected += 1
+      if (result.settled) settled += 1
     }
+  }
 
-    let batchBlocks: any[] | null = null
-    try {
-      batchBlocks = await Promise.all(promises)
-    } catch (error) {
-      console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native block batch ${start}-${end} failed; retrying block-by-block:`, error instanceof Error ? error.message : error)
-    }
+  /**
+   * Scan [from, to] oldest-first in batches, returning the highest block reached with no gap
+   * below it. Oldest-first is what makes partial progress usable: a failure part-way leaves a
+   * contiguous prefix that the caller can safely persist. (Newest-first cannot — a single failed
+   * block anywhere leaves a hole, so nothing below it is safe to record, which is exactly how
+   * the Base cursor got stuck thousands of blocks behind head and re-fetched the same 512 full
+   * blocks every cycle forever.)
+   */
+  const scanRangeContiguous = async (from: bigint, to: bigint, onProgress?: (upTo: bigint) => Promise<void>) => {
+    if (to < from) return { contiguousTo: from - BigInt(1), complete: true }
+    const span = Number(to - from) + 1
+    const batchSize = span > 512 ? 16 : 8
+    let contiguousTo = from - BigInt(1)
 
-    if (batchBlocks) {
-      for (let i = 0; i < batchBlocks.length; i++) {
-        await processBlock(end - BigInt(i), batchBlocks[i])
-      }
-      continue
-    }
+    for (let start = from; start <= to; start += BigInt(batchSize)) {
+      const end = start + BigInt(batchSize) - BigInt(1) > to ? to : start + BigInt(batchSize) - BigInt(1)
 
-    for (let b = end; b >= start; b -= BigInt(1)) {
+      let batchBlocks: Awaited<ReturnType<AnyClient['getBlock']>>[] | null = null
       try {
-        const block = await input.client.getBlock({ blockNumber: b, includeTransactions: true })
-        await processBlock(b, block)
+        const promises = []
+        for (let b = start; b <= end; b += BigInt(1)) {
+          promises.push(input.client.getBlock({ blockNumber: b, includeTransactions: true }))
+        }
+        batchBlocks = await Promise.all(promises)
       } catch (error) {
-        completedFullWindow = false
-        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native block ${b} failed; newest blocks were prioritized and this window will retry next sync:`, error instanceof Error ? error.message : error)
-        break
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native block batch ${start}-${end} failed; retrying block-by-block:`, sanitizeTextForLogs(error instanceof Error ? error.message : String(error)))
       }
+
+      if (batchBlocks) {
+        for (let i = 0; i < batchBlocks.length; i++) {
+          await processBlock(start + BigInt(i), batchBlocks[i] as unknown as { transactions: unknown[] })
+        }
+        contiguousTo = end
+        if (onProgress) await onProgress(contiguousTo)
+        continue
+      }
+
+      for (let b = start; b <= end; b += BigInt(1)) {
+        try {
+          const block = await input.client.getBlock({ blockNumber: b, includeTransactions: true })
+          await processBlock(b, block as unknown as { transactions: unknown[] })
+          contiguousTo = b
+        } catch (error) {
+          console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native block ${b} failed; stopping at ${contiguousTo}:`, sanitizeTextForLogs(error instanceof Error ? error.message : String(error)))
+          if (onProgress && contiguousTo >= from) await onProgress(contiguousTo)
+          return { contiguousTo, complete: false }
+        }
+      }
+      if (onProgress) await onProgress(contiguousTo)
     }
-    if (!completedFullWindow) break
+
+    return { contiguousTo, complete: true }
   }
 
-  if (completedFullWindow) {
-    await setLastScannedBlock(nativeKey, toBlock)
+  // Pass 1 — the tip. Always scan a small recent window first so a deposit that just landed is
+  // credited this cycle, even when the cursor is far behind and the backfill below will take
+  // several cycles to catch up. This is deliberately small: each block is a full getBlock with
+  // transaction bodies, so a wide tip window is expensive to re-fetch every cycle.
+  const TIP_BLOCKS = BigInt(
+    Math.max(8, Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_NATIVE_TIP_BLOCKS ?? 64) || 64)
+  )
+  const tipFrom = toBlock > TIP_BLOCKS ? toBlock - TIP_BLOCKS : BigInt(0)
+  const tip = await scanRangeContiguous(tipFrom, toBlock)
+
+  // Pass 2 — backfill everything between the persisted cursor and the tip window, persisting as
+  // it goes so progress survives the next rate-limit wall. Skipped once the cursor has caught up.
+  const backfillTo = tipFrom > BigInt(0) ? tipFrom - BigInt(1) : BigInt(0)
+  let cursorAdvancedTo: bigint | null = null
+
+  if (fromBlock <= backfillTo) {
+    const backfillBlocks = Number(backfillTo - fromBlock) + 1
+    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} native: tip ${tipFrom}-${toBlock} scanned; backfilling ${backfillBlocks} blocks ${fromBlock}-${backfillTo} oldest-first (key=${nativeKey})`)
+    const backfill = await scanRangeContiguous(fromBlock, backfillTo, async upTo => {
+      cursorAdvancedTo = upTo
+      await setLastScannedBlock(nativeKey, upTo)
+    })
+    // Backfill met the tip window and the tip itself scanned cleanly: the whole range is covered,
+    // so the cursor can jump to head.
+    if (backfill.complete && tip.complete) {
+      cursorAdvancedTo = toBlock
+      await setLastScannedBlock(nativeKey, toBlock)
+    }
+  } else {
+    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} native: scanned tip ${tipFrom}-${toBlock} (cursor current, no backfill needed) (key=${nativeKey})`)
+    if (tip.complete) {
+      cursorAdvancedTo = toBlock
+      await setLastScannedBlock(nativeKey, toBlock)
+    }
   }
+
+  if (cursorAdvancedTo === null) {
+    console.warn(`[crypto-deposit-scanner] ${input.asset.pairId} native: cursor did not advance this cycle (RPC failures below the tip window); will retry from ${fromBlock}`)
+  }
+
   return { detected, settled }
 }
 
@@ -1158,6 +1230,51 @@ async function scanSuiDeposits(input: {
   return { detected, settled }
 }
 
+// near-api-js renamed its provider read methods (status/block/chunk -> viewNodeStatus/viewBlock/
+// viewChunk). Calling the old names threw "n.status is not a function" and killed every NEAR scan
+// at the top-level catch. Prefer the current names, fall back to the legacy ones so a version
+// change in either direction does not silently disable NEAR deposit detection again.
+type NearStatusResponse = { sync_info?: { latest_block_height?: number } }
+type NearBlockResponse = { chunks?: Array<{ chunk_hash: string }> }
+type NearReceipt = {
+  receiver_id?: string
+  predecessor_id?: string
+  receipt_id?: string
+  transaction_hash?: string
+  receipt?: {
+    receipt_id?: string
+    Action?: { actions?: Array<{ Transfer?: { deposit?: string | number } }> }
+  }
+}
+type NearChunkResponse = { receipts?: NearReceipt[] }
+
+type NearProviderLike = {
+  viewNodeStatus?: () => Promise<NearStatusResponse>
+  status?: () => Promise<NearStatusResponse>
+  viewBlock?: (query: { blockId: number }) => Promise<NearBlockResponse>
+  block?: (query: { blockId: number }) => Promise<NearBlockResponse>
+  viewChunk?: (chunkId: string) => Promise<NearChunkResponse>
+  chunk?: (query: { chunk_id: string }) => Promise<NearChunkResponse>
+}
+
+async function nearNodeStatus(provider: NearProviderLike): Promise<NearStatusResponse> {
+  if (typeof provider?.viewNodeStatus === 'function') return provider.viewNodeStatus()
+  if (typeof provider?.status === 'function') return provider.status()
+  throw new Error('NEAR provider exposes neither viewNodeStatus() nor status()')
+}
+
+async function nearBlock(provider: NearProviderLike, blockHeight: number): Promise<NearBlockResponse> {
+  if (typeof provider?.viewBlock === 'function') return provider.viewBlock({ blockId: blockHeight })
+  if (typeof provider?.block === 'function') return provider.block({ blockId: blockHeight })
+  throw new Error('NEAR provider exposes neither viewBlock() nor block()')
+}
+
+async function nearChunk(provider: NearProviderLike, chunkHash: string): Promise<NearChunkResponse> {
+  if (typeof provider?.viewChunk === 'function') return provider.viewChunk(chunkHash)
+  if (typeof provider?.chunk === 'function') return provider.chunk({ chunk_id: chunkHash })
+  throw new Error('NEAR provider exposes neither viewChunk() nor chunk()')
+}
+
 async function scanNearDeposits(input: {
   asset: SupportedDepositAsset
   provider: any
@@ -1172,7 +1289,7 @@ async function scanNearDeposits(input: {
   const targetSet = new Set(nearAddrs.map((a) => a.address.toLowerCase()))
 
   try {
-    const status = await provider.status()
+    const status = await nearNodeStatus(provider)
     const headHeight = Number(status?.sync_info?.latest_block_height || 0)
     if (!headHeight) return { detected: 0, settled: 0 }
 
@@ -1184,7 +1301,7 @@ async function scanNearDeposits(input: {
     for (let h = headHeight; h >= fromHeight; h -= BATCH) {
       const heights: number[] = []
       for (let i = 0; i < BATCH && h - i >= fromHeight; i++) heights.push(h - i)
-      const blockPromises = heights.map((ht) => provider.block({ blockId: ht }).catch(() => null))
+      const blockPromises = heights.map((ht) => nearBlock(provider, ht).catch(() => null))
       const blocks = await Promise.all(blockPromises)
 
       for (let bi = 0; bi < blocks.length; bi++) {
@@ -1194,7 +1311,7 @@ async function scanNearDeposits(input: {
 
         for (const ch of block.chunks) {
           try {
-            const chunk = await provider.chunk({ chunk_id: ch.chunk_hash }).catch(() => null)
+            const chunk = await nearChunk(provider, ch.chunk_hash).catch(() => null)
             if (!chunk) continue
 
             const receipts = chunk.receipts || []
@@ -1246,7 +1363,7 @@ async function scanNearDeposits(input: {
       }
     }
   } catch (e) {
-    console.warn(`[crypto-deposit-scanner] NEAR scan top-level error:`, e instanceof Error ? e.message : e)
+    console.warn(`[crypto-deposit-scanner] NEAR scan top-level error:`, sanitizeTextForLogs(e instanceof Error ? e.message : String(e)))
   }
 
   return { detected, settled }
@@ -1302,7 +1419,12 @@ export async function syncCryptoDepositEventsOnce() {
 
     // Scan assets sequentially. Public RPCs throttle hard when every chain is scanned in parallel.
     const assetResults: Array<{ detected: number; settled: number; error: string | null }> = []
+    const skippedChains = new Set<ScanChain>()
     for (const asset of getSupportedAssets()) {
+      if (!isChainEnabled(asset.chain)) {
+        skippedChains.add(asset.chain)
+        continue
+      }
       try {
         console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
         const result = await withAssetScanTimeout(asset.pairId, async () => {
@@ -1332,7 +1454,7 @@ export async function syncCryptoDepositEventsOnce() {
         assetResults.push({ detected: result.detected, settled: result.settled, error: null })
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'scan failed'
-        console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, error)
+        console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, sanitizeErrorForLogs(error))
         if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
           warnedOnce.add('polygon-rpc')
           console.warn(`[crypto-deposit-scanner] Polygon RPC failed. We now aggressively drop dead endpoints (especially the permanently dead public.blastapi.io / Blast API). Check the "polygon RPCs configured (after removing dead endpoints incl. Blast)" line. Prefer MAFITAPAY_POLYGON_RPC_URLS with your Alchemy key. Falling back to Ankr if needed.`)
@@ -1347,7 +1469,7 @@ export async function syncCryptoDepositEventsOnce() {
       if (r.error) errors.push(r.error)
     }
 
-    console.log(`[crypto-deposit-scanner] sync complete: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}`)
+    console.log(`[crypto-deposit-scanner] sync complete: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}`)
     return { skipped: false, detected, settled, errors }
   } finally {
     state.running = false
@@ -1355,11 +1477,18 @@ export async function syncCryptoDepositEventsOnce() {
 }
 
 export function ensureCryptoDepositScannerWatchdog() {
+  if (!SCANNER_ENABLED) {
+    if (!warnedOnce.has('scanner-disabled')) {
+      warnedOnce.add('scanner-disabled')
+      console.warn('[crypto-deposit-scanner] disabled via MAFITAPAY_CRYPTO_DEPOSIT_SCANNER=off — no automatic deposit scanning')
+    }
+    return
+  }
   const state = getScannerState()
   if (state.interval) return
   state.interval = setInterval(() => {
     void syncCryptoDepositEventsOnce().catch(error => {
-      console.warn('[crypto-deposit-scanner] watchdog_error', error instanceof Error ? error.message : error)
+      console.warn('[crypto-deposit-scanner] watchdog_error', sanitizeErrorForLogs(error))
     })
   }, WATCHDOG_INTERVAL_MS)
 
