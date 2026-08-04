@@ -146,7 +146,7 @@ export async function handlePalmPayWebhook(rawBody: string) {
     title: 'Deposit confirmed',
     message: `${deposit.transaction.description} has been confirmed by PalmPay.`,
     type: 'success',
-  }))
+  }), { email: true })
 
   logPalmPayWebhook('credited', {
     orderNo,

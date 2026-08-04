@@ -348,7 +348,7 @@ export async function handleFlutterwaveWebhook(input: {
           title: 'Deposit confirmed',
           message: `${deposit.transaction.description} has been confirmed by Flutterwave.`,
           type: 'success',
-        }))
+        }), { email: true })
 
         logFlutterwaveWebhook('static-va.credited', {
           reference,

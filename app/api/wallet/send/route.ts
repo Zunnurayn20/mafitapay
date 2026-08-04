@@ -132,7 +132,7 @@ export async function POST(req: Request) {
       title: 'Funds received',
       message: `₦${numericAmount.toLocaleString('en-NG')} received from ${user.name}`,
       type: 'success',
-    }))
+    }), { email: true })
 
     return NextResponse.json({
       data: { transaction: result.transaction, wallet: result.wallet },

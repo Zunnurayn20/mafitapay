@@ -11,6 +11,80 @@ type EmailVerificationDeliveryInput = {
   expiresAt: string
 }
 
+type NotificationDeliveryInput = {
+  email: string
+  title: string
+  message: string
+}
+
+/**
+ * Email a notification that the user would otherwise only see by opening the app.
+ *
+ * In-app notifications are database rows rendered inside the client, and there is no push channel
+ * of any kind (no FCM, APNs or web push), so a credit could land with nothing reaching the user --
+ * they had to open the app and check their balance to find out. Reuse the Resend provider already
+ * configured for auth codes rather than standing up a second delivery path.
+ */
+export async function sendNotificationEmail(input: NotificationDeliveryInput): Promise<DeliveryAttempt> {
+  const resend = getResendConfig()
+  if (!resend.configured) {
+    return { channel: 'email', provider: 'resend', delivered: false, error: 'Email delivery provider is not configured.' }
+  }
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resend.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: `${resend.fromName} <${resend.fromEmail}>`,
+        to: [input.email],
+        subject: input.title,
+        text: `${input.title}\n\n${input.message}\n\nView your account: ${getAppUrl()}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
+            <h2>${escapeHtml(input.title)}</h2>
+            <p>${escapeHtml(input.message)}</p>
+            <p>
+              <a href="${getAppUrl()}" style="display:inline-block;padding:12px 18px;background:#caa560;color:#111827;text-decoration:none;font-weight:700;">
+                Open MafitaPay
+              </a>
+            </p>
+            <p style="color:#6b7280;font-size:12px">Sent from ${getAppUrl()}</p>
+          </div>
+        `,
+      }),
+    })
+
+    if (!response.ok) {
+      const payload = await response.text()
+      return { channel: 'email', provider: 'resend', delivered: false, error: payload || 'Email delivery failed.' }
+    }
+  } catch (error) {
+    return {
+      channel: 'email',
+      provider: 'resend',
+      delivered: false,
+      error: error instanceof Error ? error.message : 'Email delivery failed.',
+    }
+  }
+
+  return { channel: 'email', provider: 'resend', delivered: true }
+}
+
+// Notification titles and messages are built from provider descriptions and user names, so they are
+// not guaranteed to be free of markup.
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 type DeliveryAttempt = {
   channel: 'email' | 'sms'
   provider: string

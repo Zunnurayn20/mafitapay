@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import type { FundingAccountEligibility } from '@/types'
 import { isAdminEmail } from '@/lib/admin-access'
+import { sendNotificationEmail } from '@/lib/server/auth-delivery'
 import {
   NotificationRecord,
   createNotification,
@@ -240,8 +241,37 @@ export async function loginUser(email: string, password: string, metadata?: { us
   return buildSessionPayload(user)
 }
 
-export async function appendNotification(userId: string, notification: NotificationRecord) {
+/**
+ * Record a notification, and optionally email it.
+ *
+ * Pass `{ email: true }` for events the user needs to learn about without opening the app --
+ * money arriving, chiefly. Delivery is fire-and-forget: a notification is a record of something
+ * that already happened, so a failing mail provider must never fail or delay the caller that just
+ * credited a wallet.
+ */
+export async function appendNotification(
+  userId: string,
+  notification: NotificationRecord,
+  options?: { email?: boolean }
+) {
   await insertNotification(notification)
+
+  if (!options?.email) return
+
+  void (async () => {
+    const user = await getUserById(userId)
+    if (!user?.email) return
+    const attempt = await sendNotificationEmail({
+      email: user.email,
+      title: notification.title,
+      message: notification.message,
+    })
+    if (!attempt.delivered) {
+      console.warn(`[notifications] email delivery failed for user=${userId}: ${attempt.error ?? 'unknown error'}`)
+    }
+  })().catch(error => {
+    console.warn(`[notifications] email delivery threw for user=${userId}:`, error instanceof Error ? error.message : error)
+  })
 }
 
 export { createNotification }
