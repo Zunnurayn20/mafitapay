@@ -102,7 +102,13 @@ export async function handleFlutterwaveWebhook(input: {
 
   const parsed = JSON.parse(input.rawBody) as unknown
   const body = isRecord(parsed) ? parsed : {}
-  const eventType = readString(body.event)
+  // v3 puts the event name in `event`; v4 puts it in `type`. The names themselves did not change
+  // (`transfer.disburse` is still `transfer.disburse`), so reading both is all that is needed to
+  // handle either envelope. Missing this cost real money visibility: v4 transfer callbacks arrived
+  // with a valid signature, matched no branch because `event` was absent, and were answered 200 --
+  // so Flutterwave recorded a successful delivery, never retried, and the payout sat at `pending`
+  // forever even though the recipient had been paid.
+  const eventType = readString(body.event) || readString(body.type)
   const data = isRecord(body.data) ? body.data : {}
 
   let reference = ''
@@ -114,7 +120,9 @@ export async function handleFlutterwaveWebhook(input: {
 
   if (eventType === 'transfer.disburse') {
     reference = readString(data.reference)
-    externalEventId = readString(data.id) || readString(body.id) || `${eventType}:${reference}`
+    // v4 names the envelope id `webhook_id`; v3 used `id`. Prefer the transfer's own id so retries
+    // of the same transfer dedupe against each other rather than against a per-delivery id.
+    externalEventId = readString(data.id) || readString(body.id) || readString(body.webhook_id) || `${eventType}:${reference}`
     providerReference = readString(data.id) || undefined
     failureReason = readString(data.complete_message) || readString(data.narration) || undefined
     rawStatus = readString(data.status)
@@ -137,6 +145,18 @@ export async function handleFlutterwaveWebhook(input: {
     rawStatus = readString(data.status) || readString(body.status)
     status = mapFlutterwaveBillPaymentStatus(rawStatus)
   } else {
+    // An unrecognised event that still carries a reference is the signature of an envelope change,
+    // not of an irrelevant notification. Answering 200 makes the provider record a successful
+    // delivery and stop retrying, so this must be loud rather than debug-gated -- that silence is
+    // exactly what hid the v4 `type`/`event` rename until a payout stranded at `pending`.
+    const looksActionable = Boolean(readString(data.reference) || readString(data.id))
+    if (looksActionable) {
+      console.warn('[flutterwave-webhook] unrecognised event carrying a reference — envelope may have changed', JSON.stringify({
+        source: input.source ?? 'public_webhook',
+        eventType,
+        envelopeKeys: Object.keys(body),
+      }))
+    }
     logFlutterwaveWebhook('ignored', {
       source: input.source ?? 'public_webhook',
       eventType,
@@ -153,6 +173,20 @@ export async function handleFlutterwaveWebhook(input: {
     rawStatus,
     mappedStatus: status,
   })
+
+  // A recognised event whose status is simply not terminal yet (v4 documents NEW and PENDING for
+  // transfers) is a valid in-progress notification, not a malformed payload. Answering 400 would
+  // make the provider retry a delivery that can never resolve. Acknowledge it and wait for the
+  // terminal callback; the payout-sync poller settles it regardless if that callback never lands.
+  if (reference && externalEventId && !status && rawStatus) {
+    logFlutterwaveWebhook('non-terminal', {
+      source: input.source ?? 'public_webhook',
+      eventType,
+      reference,
+      rawStatus,
+    })
+    return { body: { data: { acknowledged: true, eventType, status: rawStatus }, success: true }, status: 200 as const }
+  }
 
   if (!reference || !externalEventId || !status) {
     logFlutterwaveWebhook('payload.invalid', {
