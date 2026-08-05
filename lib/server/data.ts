@@ -90,6 +90,15 @@ export interface NotificationRecord {
   createdAt: string
 }
 
+export interface PushTokenRecord {
+  id: string
+  userId: string
+  token: string
+  platform: 'android' | 'ios' | 'web'
+  createdAt: string
+  lastSeenAt: string
+}
+
 export interface SecuritySettingsRecord {
   userId: string
   transactionPinEnabled: boolean
@@ -334,6 +343,15 @@ type NotificationRow = {
   type: NotificationRecord['type']
   read: number
   created_at: string
+}
+
+type PushTokenRow = {
+  id: string
+  user_id: string
+  token: string
+  platform: PushTokenRecord['platform']
+  created_at: string
+  last_seen_at: string
 }
 
 type RewardRuleRow = {
@@ -871,6 +889,17 @@ function mapNotificationRow(row: NotificationRow): NotificationRecord {
     type: row.type,
     read: Boolean(row.read),
     createdAt: row.created_at,
+  }
+}
+
+function mapPushTokenRow(row: PushTokenRow): PushTokenRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    token: row.token,
+    platform: row.platform,
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
   }
 }
 
@@ -1694,6 +1723,19 @@ function initSchema(db: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at
       ON notifications(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      UNIQUE(user_id, token)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id
+      ON push_tokens(user_id);
 
     CREATE TABLE IF NOT EXISTS reward_rules (
       id TEXT PRIMARY KEY,
@@ -5974,6 +6016,38 @@ export async function getNotificationsForUser(userId: string): Promise<Notificat
     .prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId) as NotificationRow[]
   return rows.map(mapNotificationRow)
+}
+
+export async function upsertPushToken(input: {
+  userId: string
+  token: string
+  platform: PushTokenRecord['platform']
+}): Promise<void> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+
+  getDb()
+    .prepare(`
+      INSERT INTO push_tokens (id, user_id, token, platform, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, token) DO UPDATE SET
+        platform = excluded.platform,
+        last_seen_at = excluded.last_seen_at
+    `)
+    .run(`pt_${randomBytes(6).toString('hex')}`, input.userId, input.token, input.platform, now, now)
+}
+
+export async function getPushTokensByUserId(userId: string): Promise<PushTokenRecord[]> {
+  await ensureDbReady()
+  const rows = getDb()
+    .prepare('SELECT * FROM push_tokens WHERE user_id = ? ORDER BY last_seen_at DESC')
+    .all(userId) as PushTokenRow[]
+  return rows.map(mapPushTokenRow)
+}
+
+export async function deletePushToken(userId: string, token: string): Promise<void> {
+  await ensureDbReady()
+  getDb().prepare('DELETE FROM push_tokens WHERE user_id = ? AND token = ?').run(userId, token)
 }
 
 export async function listRecentNotifications(limit = 80): Promise<Array<NotificationRecord & {

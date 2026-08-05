@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "683737301848",
+    "project_id": "mafitapay",
+    "storage_bucket": "mafitapay.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:683737301848:android:24c8fd5618c78e3781db2d",
+        "android_client_info": {
+          "package_name": "ng.mafitapay.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZMPs5b5jvWvLUXOVOfczv3jIWUPYrj3o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
