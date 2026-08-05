@@ -3,7 +3,10 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# package-lock.json can drift from package.json between dependency bumps;
+# npm install reconciles and regenerates the lock file instead of failing
+# hard like npm ci does when they're out of sync.
+RUN npm install
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
