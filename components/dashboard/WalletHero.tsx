@@ -15,7 +15,7 @@ export function WalletHero() {
 
   return (
     <Card
-      className="overflow-hidden border-[rgba(202,165,96,0.28)] bg-[linear-gradient(180deg,rgba(66,46,28,0.96)_0%,rgba(45,31,19,0.98)_100%)] p-5 sm:p-6"
+      className="overflow-hidden border-[rgba(202,165,96,0.28)] bg-[linear-gradient(135deg,#050403_0%,#1a140c_28%,#3d2e18_50%,#1a140c_72%,#050403_100%)] p-5 sm:p-6"
       accent="repeating-linear-gradient(90deg,var(--gold) 0,var(--gold) 10px,var(--terra) 10px,var(--terra) 18px,var(--green) 18px,var(--green) 26px,var(--char) 26px,var(--char) 30px)"
       pattern="plain"
     >
