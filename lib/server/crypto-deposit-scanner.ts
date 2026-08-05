@@ -863,7 +863,7 @@ export async function settleDirectCryptoDeposit(input: {
     title: 'Crypto deposit credited',
     message: `${formatCrypto(input.event.amountCrypto, input.asset.symbol)} was received and credited to your NGN balance.`,
     type: 'success',
-  }), { email: true })
+  }), { email: true, push: true })
 
   if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
     console.log(`[crypto-deposit-scanner] direct credit successful for event=${input.event.externalEventId} tx=${transactionId} NGN=${amountNgn}`)

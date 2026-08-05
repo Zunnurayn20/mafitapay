@@ -200,6 +200,12 @@ export const useAppStore = create<AppStore>()(
         return readJson<RegisterResult>(res)
       },
       logout: async () => {
+        try {
+          const { unregisterPushNotifications } = await import('@/lib/client/native-push')
+          await unregisterPushNotifications()
+        } catch {
+          // ignore
+        }
         await fetch('/api/auth', { method: 'DELETE', credentials: 'include' })
         try {
           const { clearBiometricSession } = await import('@/lib/client/native-biometric')

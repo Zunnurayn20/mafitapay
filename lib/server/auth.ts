@@ -4,13 +4,16 @@ import { NextResponse } from 'next/server'
 import type { FundingAccountEligibility } from '@/types'
 import { isAdminEmail } from '@/lib/admin-access'
 import { sendNotificationEmail } from '@/lib/server/auth-delivery'
+import { isFcmConfigured, sendPushNotification } from '@/lib/server/push-delivery'
 import {
   NotificationRecord,
   createNotification,
+  deletePushToken,
   deleteSessionByToken,
   getNotificationsForUser,
   getLatestKycSubmissionByUserId,
   listCryptoDepositAddressesByUserId,
+  getPushTokensByUserId,
   getSessionByToken,
   getSessionsForUser,
   getSecuritySettingsByUserId,
@@ -242,36 +245,65 @@ export async function loginUser(email: string, password: string, metadata?: { us
 }
 
 /**
- * Record a notification, and optionally email it.
+ * Record a notification, and optionally email and/or push it.
  *
- * Pass `{ email: true }` for events the user needs to learn about without opening the app --
- * money arriving, chiefly. Delivery is fire-and-forget: a notification is a record of something
- * that already happened, so a failing mail provider must never fail or delay the caller that just
- * credited a wallet.
+ * Pass `{ email: true, push: true }` for events the user needs to learn about without opening the
+ * app -- money arriving, chiefly. Delivery is fire-and-forget: a notification is a record of
+ * something that already happened, so a failing mail or push provider must never fail or delay the
+ * caller that just credited a wallet.
  */
 export async function appendNotification(
   userId: string,
   notification: NotificationRecord,
-  options?: { email?: boolean }
+  options?: { email?: boolean; push?: boolean }
 ) {
   await insertNotification(notification)
 
-  if (!options?.email) return
-
-  void (async () => {
-    const user = await getUserById(userId)
-    if (!user?.email) return
-    const attempt = await sendNotificationEmail({
-      email: user.email,
-      title: notification.title,
-      message: notification.message,
+  if (options?.email) {
+    void (async () => {
+      const user = await getUserById(userId)
+      if (!user?.email) return
+      const attempt = await sendNotificationEmail({
+        email: user.email,
+        title: notification.title,
+        message: notification.message,
+      })
+      if (!attempt.delivered) {
+        console.warn(`[notifications] email delivery failed for user=${userId}: ${attempt.error ?? 'unknown error'}`)
+      }
+    })().catch(error => {
+      console.warn(`[notifications] email delivery threw for user=${userId}:`, error instanceof Error ? error.message : error)
     })
-    if (!attempt.delivered) {
-      console.warn(`[notifications] email delivery failed for user=${userId}: ${attempt.error ?? 'unknown error'}`)
-    }
-  })().catch(error => {
-    console.warn(`[notifications] email delivery threw for user=${userId}:`, error instanceof Error ? error.message : error)
-  })
+  }
+
+  if (options?.push) {
+    void (async () => {
+      if (!isFcmConfigured()) return
+
+      const tokens = await getPushTokensByUserId(userId)
+      if (tokens.length === 0) return
+
+      const attempts = await Promise.all(tokens.map(record => sendPushNotification({
+        token: record.token,
+        title: notification.title,
+        message: notification.message,
+        data: { notificationId: notification.id, type: notification.type },
+      })))
+
+      for (const attempt of attempts) {
+        if (attempt.delivered) continue
+
+        console.warn(`[notifications] push delivery failed for user=${userId}: ${attempt.error ?? 'unknown error'}`)
+
+        // Prune tokens FCM has permanently rejected so they stop being retried on every event.
+        if (attempt.tokenInvalid) {
+          await deletePushToken(userId, attempt.token).catch(() => undefined)
+        }
+      }
+    })().catch(error => {
+      console.warn(`[notifications] push delivery threw for user=${userId}:`, error instanceof Error ? error.message : error)
+    })
+  }
 }
 
 export { createNotification }
