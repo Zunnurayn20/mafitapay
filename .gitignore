@@ -41,7 +41,8 @@ yarn-error.log*
 /data/uploads/
 
 # Windows metadata artifacts
-*:Zone.Identifier
+# No leading separator: Git sees these as U+F03A, not ':', so '*:Zone.Identifier' never matched.
+*Zone.Identifier
 
 # vercel
 .vercel
@@ -52,6 +53,7 @@ next-env.d.ts
 
 # capacitor / android build artifacts
 android/.gradle/
+android/.idea/
 android/app/build/
 android/build/
 android/local.properties
