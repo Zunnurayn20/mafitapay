@@ -624,6 +624,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                           Amigo
                         </div>
                       )}
+                      {bundle.provider === 'asbdata' && (
+                        <div className="shrink-0 rounded-full border border-blue-500 bg-blue-500 px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.8px] text-white shadow-[0_6px_18px_rgba(59,130,246,.22)]">
+                          ASBData
+                        </div>
+                      )}
                     </div>
                     {subtitle && (
                       <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
