@@ -20,7 +20,7 @@ import { generateRef } from '@/lib/utils'
 interface BillsModalProps { open: boolean; onClose: () => void }
 type TouchedState = { amount: boolean; account: boolean; provider: boolean }
 type DataBundleGroupKey = 'best_offers' | 'daily' | 'weekly' | 'monthly' | 'night' | 'special'
-type Step = 'form' | 'pin'
+type Step = 'form' | 'phone' | 'pin'
 
 const INITIAL_TOUCHED: TouchedState = { amount: false, account: false, provider: false }
 
@@ -145,6 +145,32 @@ function getPriceHintVsFlutterwave(
   }
 }
 
+/**
+ * Free-text plan match. Sizes are written inconsistently across providers ("1GB", "1 GB", "1gb"),
+ * so strip whitespace on both sides before comparing -- otherwise "1 gb" finds nothing.
+ */
+function matchesPlanQuery(
+  bundle: { label: string; itemName: string; validity?: string; amount: number; provider?: string; efficiencyLabel?: string },
+  query: string,
+) {
+  const trimmed = query.trim().toLowerCase()
+  if (!trimmed) return true
+
+  const collapsed = trimmed.replace(/\s+/g, '')
+  const haystack = [
+    bundle.label,
+    bundle.itemName,
+    bundle.validity ?? '',
+    bundle.provider ?? '',
+    bundle.efficiencyLabel ?? '',
+    String(bundle.amount),
+  ]
+    .join(' ')
+    .toLowerCase()
+
+  return haystack.includes(trimmed) || haystack.replace(/\s+/g, '').includes(collapsed)
+}
+
 export function BillsModal({ open, onClose }: BillsModalProps) {
   const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions, securitySettings } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
@@ -161,6 +187,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [selectedBillerCode, setSelectedBillerCode] = useState('')
   const [selectedBundleCode, setSelectedBundleCode] = useState('')
   const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>('best_offers')
+  const [planQuery, setPlanQuery] = useState('')
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
   const [step, setStep] = useState<Step>('form')
@@ -193,6 +220,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     }))
     .filter(group => group.bundles.length > 0)
   const activeDataBundleGroup = groupedDataBundles.find(group => group.key === selectedDataBundleGroup) ?? groupedDataBundles[0]
+  // A search spans every group. Searching "1GB" from the Daily tab should surface the monthly 1GB
+  // plans too, otherwise the tabs hide most of what was asked for.
+  const planSearchActive = planQuery.trim().length > 0
+  const planSearchResults = planSearchActive
+    ? visibleDataBundles.filter(bundle => matchesPlanQuery(bundle, planQuery))
+    : []
+  const shownDataBundles = planSearchActive ? planSearchResults : (activeDataBundleGroup?.bundles ?? [])
   const selectedDataBundle = isDataService ? dataBundles.find(bundle => bundle.itemCode === selectedBundleCode) : null
   const packageBillers = isPackageBillService ? (selectedBillProvider?.billers ?? []) : []
   const selectedPackageBiller = isPackageBillService
@@ -240,6 +274,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setSelectedBillerCode('')
     setSelectedBundleCode('')
     setSelectedDataBundleGroup('best_offers')
+    setPlanQuery('')
     setTouched(INITIAL_TOUCHED)
     setShowRecentAccounts(false)
     setProvider(defaultNetworkProviderName)
@@ -269,8 +304,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
 
   useEffect(() => {
     if (!open || !needsProvider || !detectedProviderName || provider === detectedProviderName) return
+    // For data the network is chosen before the number, and switching it here would swap the whole
+    // plan list out from under a plan the user already picked. Surface the mismatch instead.
+    if (isDataService) return
     setProvider(detectedProviderName)
-  }, [detectedProviderName, needsProvider, open, provider])
+  }, [detectedProviderName, isDataService, needsProvider, open, provider])
 
   useEffect(() => {
     if (!isDataService) return
@@ -512,7 +550,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
             {touched.provider && providerError && <div className="text-[10px] text-[var(--red2)] mt-1">{providerError}</div>}
           </div>
         )}
-        {needsAccount && (
+        {needsAccount && !isDataService && (
           <div>
             <Input
               label={accountLabel}
@@ -569,27 +607,42 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         {isDataService ? (
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
-            <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
-              {groupedDataBundles.map(group => (
-                <button
-                  key={group.key}
-                  type="button"
-                  onClick={() => setSelectedDataBundleGroup(group.key)}
-                  className={`shrink-0 border px-3 py-2 text-[9px] font-bold uppercase tracking-[0.8px] transition-all ${
-                    activeDataBundleGroup?.key === group.key
-                      ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)] text-[var(--gold2)]'
-                      : 'border-[var(--border)] bg-[var(--clay2)] text-[var(--muted)]'
-                  }`}
-                >
-                  {group.label}
-                </button>
-              ))}
-            </div>
+            <Input
+              placeholder="Search plans — 1GB, weekly, 500"
+              value={planQuery}
+              onChange={e => setPlanQuery(e.target.value)}
+              className="mb-3"
+            />
+            {!planSearchActive && (
+              <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+                {groupedDataBundles.map(group => (
+                  <button
+                    key={group.key}
+                    type="button"
+                    onClick={() => setSelectedDataBundleGroup(group.key)}
+                    className={`shrink-0 border px-3 py-2 text-[9px] font-bold uppercase tracking-[0.8px] transition-all ${
+                      activeDataBundleGroup?.key === group.key
+                        ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)] text-[var(--gold2)]'
+                        : 'border-[var(--border)] bg-[var(--clay2)] text-[var(--muted)]'
+                    }`}
+                  >
+                    {group.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {planSearchActive && (
+              <div className="mb-2 text-[9px] text-[var(--muted)]">
+                {planSearchResults.length === 0
+                  ? 'No plans match that search.'
+                  : `${planSearchResults.length} plan${planSearchResults.length === 1 ? '' : 's'} across all categories`}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
-              {activeDataBundleGroup?.bundles.map(bundle => {
+              {shownDataBundles.map(bundle => {
                 const subtitle = getDataBundleSubtitle(bundle)
                 const validityDisplay = bundle.validity
-                const specialContext = activeDataBundleGroup.key === 'special' ? getSpecialBundleContext(bundle) : null
+                const specialContext = !planSearchActive && activeDataBundleGroup?.key === 'special' ? getSpecialBundleContext(bundle) : null
                 const priceHint = getPriceHintVsFlutterwave(bundle, dataBundles)
                 return (
                   <button
@@ -598,11 +651,10 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                             setAmount(String(bundle.amount))
                             setSelectedBundleCode(bundle.itemCode)
                             setTouched(current => ({ ...current, amount: true }))
-                            void confirm({
-                              amount: String(bundle.amount),
-                              selectedBundleCode: bundle.itemCode,
-                              selectedDataBundle: bundle,
-                            })
+                            // The number is collected on the next screen, so a plan tap no longer
+                            // has enough to submit -- it advances instead of confirming.
+                            setShowRecentAccounts(false)
+                            setStep('phone')
                           }}
                           className={`border p-3 text-left transition-all ${
                             selectedBundleCode === bundle.itemCode
@@ -647,7 +699,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 )
               })}
             </div>
-            {activeDataBundleGroup?.key === 'special' && (
+            {!planSearchActive && activeDataBundleGroup?.key === 'special' && (
               <div className="mt-2 text-[10px] text-[var(--muted)]">
                 Some special plans do not include an explicit expiry in the provider catalog. We only show validity when the network states it.
               </div>
@@ -768,6 +820,109 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         )}
         {!isDataService && <Button onClick={() => void confirm()} className="w-full py-3.5">Pay {serviceName} →</Button>}
       </div>
+      ) : step === 'phone' ? (
+        <div className="p-6 flex flex-col gap-4">
+          <div className="border border-[var(--border)] bg-[var(--clay2)] p-3">
+            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Selected plan</div>
+            <div className="mt-1 flex items-baseline justify-between gap-2">
+              <div className="text-[13px] font-bold text-[var(--text)]">
+                {selectedDataBundle?.label}
+                {selectedDataBundle?.validity ? ` · ${selectedDataBundle.validity}` : ''}
+              </div>
+              <div className="text-[12px] font-semibold text-[var(--gold2)]">
+                ₦{Number(selectedDataBundle?.amount ?? 0).toLocaleString('en-NG')}
+              </div>
+            </div>
+            <div className="mt-0.5 text-[9px] text-[var(--muted)]">{provider}</div>
+          </div>
+
+          <div>
+            <Input
+              label={accountLabel}
+              placeholder={accountPlaceholder}
+              value={account}
+              inputMode="tel"
+              autoFocus
+              onFocus={() => {
+                if (recentPhoneAccounts.length > 0) setShowRecentAccounts(true)
+              }}
+              onChange={e => {
+                setAccount(e.target.value)
+                setTouched(current => ({ ...current, account: true }))
+              }}
+              onBlur={() => {
+                globalThis.setTimeout(() => setShowRecentAccounts(false), 120)
+                setTouched(current => ({ ...current, account: true }))
+                setAccount(current => normalizeNigerianPhoneNumber(current))
+              }}
+              error={touched.account ? accountError ?? undefined : undefined}
+            />
+            {showRecentAccounts && recentPhoneAccounts.length > 0 && (
+              <div className="mt-2 border border-[var(--border)] bg-[var(--clay2)] p-2">
+                <div className="mb-2 text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Recent Numbers</div>
+                <div className="space-y-1.5">
+                  {recentPhoneAccounts.map(item => (
+                    <button
+                      key={`${serviceName}-phone-${item.account}`}
+                      type="button"
+                      onMouseDown={event => event.preventDefault()}
+                      onClick={() => {
+                        setAccount(item.account)
+                        setTouched(current => ({ ...current, account: true }))
+                        setShowRecentAccounts(false)
+                      }}
+                      className="flex w-full items-center justify-between gap-3 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-left transition-all hover:border-[var(--gold2)] hover:bg-[var(--clay)]"
+                    >
+                      <span className="text-[11px] font-semibold text-[var(--text)]">{item.account}</span>
+                      <span className="text-[9px] text-[var(--muted)]">{item.provider || 'Recent purchase'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* The network was chosen before the number, so a mismatch is caught here rather than
+                silently switching the plan list. Going back keeps the number already typed. */}
+            {detectedProviderName && detectedProviderName !== provider && (
+              <div className="mt-2 border border-[var(--red)] bg-[rgba(220,38,38,.08)] p-2.5">
+                <div className="text-[10px] font-semibold text-[var(--red2)]">
+                  This number looks like {detectedProviderName}, but you picked {provider}.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProvider(detectedProviderName)
+                    setSelectedBundleCode('')
+                    setAmount('')
+                    setSelectedDataBundleGroup('best_offers')
+                    setStep('form')
+                  }}
+                  className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)] underline"
+                >
+                  Switch to {detectedProviderName} plans
+                </button>
+              </div>
+            )}
+            {detectedProviderName && detectedProviderName === provider && !accountError && (
+              <div className="mt-1 text-[10px] text-[var(--muted)]">Detected network: {detectedProviderName}</div>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowRecentAccounts(false)
+                setStep('form')
+              }}
+              className="shrink-0 border border-[var(--border)] bg-[var(--clay2)] px-4 py-3.5 text-[11px] font-bold uppercase tracking-[0.8px] text-[var(--text2)] transition-all hover:border-[var(--gold2)]"
+            >
+              Back
+            </button>
+            <Button onClick={() => void confirm()} className="flex-1 py-3.5">
+              Continue →
+            </Button>
+          </div>
+        </div>
       ) : (
         <PinPad
           key={pinVersion}
