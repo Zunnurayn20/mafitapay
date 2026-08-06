@@ -110,19 +110,22 @@ function getSpecialBundleContext(bundle: { itemName: string; validity?: string }
   return bundle.validity ? null : 'Validity not provided by network'
 }
 
-function getAmigoPriceHint(
-  bundle: {
-    label: string
-    amount: number
-    provider?: 'flutterwave' | 'amigo'
-  },
-  bundles: Array<{
-    label: string
-    amount: number
-    provider?: 'flutterwave' | 'amigo'
-  }>
+type BundlePriceComparison = {
+  label: string
+  amount: number
+  provider?: 'flutterwave' | 'amigo' | 'asbdata'
+}
+
+/**
+ * Savings badge for a non-Flutterwave plan, versus the cheapest Flutterwave plan of the same size.
+ * Flutterwave is the baseline because it is the only provider always configured, so it is the
+ * price the user would otherwise have paid.
+ */
+function getPriceHintVsFlutterwave(
+  bundle: BundlePriceComparison,
+  bundles: BundlePriceComparison[],
 ) {
-  if (bundle.provider !== 'amigo') return null
+  if (!bundle.provider || bundle.provider === 'flutterwave') return null
 
   const comparableFlutterwavePlans = bundles.filter(candidate =>
     candidate.provider === 'flutterwave' && candidate.label === bundle.label
@@ -168,6 +171,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     itemCode?: string
     providerPlanId?: string
     providerNetworkId?: number
+    providerName?: 'flutterwave' | 'amigo' | 'asbdata'
   } | null>(null)
   const needsProvider = serviceConfig?.requiresNetwork ?? false
   const needsAccount = serviceConfig?.requiresAccount ?? true
@@ -381,6 +385,10 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         itemCode: nextSelectedDataBundle.itemCode,
         providerPlanId: nextSelectedDataBundle.providerPlanId,
         providerNetworkId: nextSelectedDataBundle.providerNetworkId,
+        // Amigo and ASBDATA both send a plan id and a network id, and their network ids disagree
+        // (9mobile is 9 on Amigo, 3 on ASBDATA). The server cannot tell them apart from the
+        // fields alone, so name the provider that issued this bundle.
+        providerName: nextSelectedDataBundle.provider,
       } : {}),
       ...(selectedPackageItem ? {
         billerCode: selectedPackageItem.billerCode,
@@ -412,6 +420,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           itemCode: nextRequest.itemCode,
           providerPlanId: nextRequest.providerPlanId,
           providerNetworkId: nextRequest.providerNetworkId,
+          providerName: nextRequest.providerName,
         }),
       })
       const payload = await response.json()
@@ -581,7 +590,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const subtitle = getDataBundleSubtitle(bundle)
                 const validityDisplay = bundle.validity
                 const specialContext = activeDataBundleGroup.key === 'special' ? getSpecialBundleContext(bundle) : null
-                const amigoPriceHint = getAmigoPriceHint(bundle, dataBundles)
+                const priceHint = getPriceHintVsFlutterwave(bundle, dataBundles)
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
@@ -619,10 +628,10 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     {subtitle && (
                       <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
                     )}
-                    {amigoPriceHint && (
+                    {priceHint && (
                       <div className="mt-1 text-[9px] font-semibold text-emerald-300">
-                        Save ₦{amigoPriceHint.savings.toLocaleString('en-NG')} vs Flutterwave
-                        {amigoPriceHint.savingsPercent > 0 ? ` · ${amigoPriceHint.savingsPercent}% lower` : ''}
+                        Save ₦{priceHint.savings.toLocaleString('en-NG')} vs Flutterwave
+                        {priceHint.savingsPercent > 0 ? ` · ${priceHint.savingsPercent}% lower` : ''}
                       </div>
                     )}
                     {specialContext && (
