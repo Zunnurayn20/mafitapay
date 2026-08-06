@@ -3,10 +3,25 @@ import { appendNotification, createNotification, requireUser, unauthorized } fro
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, recordProviderEvent, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { AMIGO_PLATFORM_MARKUP_NGN, createAmigoDataPayment, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
+import { ASBDATA_PLATFORM_MARKUP_NGN, createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { generateRef } from '@/lib/utils'
-import type { Transaction } from '@/types'
+import type { BillProvider, Transaction } from '@/types'
+
+/**
+ * Whether any configured provider can serve a bill type.
+ *
+ * Flutterwave covers everything it supports, but data and airtime can also be served by ASBDATA
+ * or Amigo alone -- so this must not collapse back to a Flutterwave-only check, or those two
+ * categories go dark whenever Flutterwave is unconfigured.
+ */
+function hasProviderForBillType(type: BillProvider['type']) {
+  if (isFlutterwaveBillsEnabled() && isFlutterwaveBillTypeSupported(type)) return true
+  if (type === 'data') return isAsbdataBillsEnabled() || isAmigoBillsEnabled()
+  if (type === 'airtime') return isAsbdataBillsEnabled()
+  return false
+}
 
 export async function GET(req: Request) {
   ensureFlutterwaveBillSyncScheduler()
@@ -40,14 +55,16 @@ export async function GET(req: Request) {
   if (isAmigoBillsEnabled()) {
     networkProviders = await listAmigoDataBundleNetworkProvidersSafe(networkProviders, { forceRefresh })
   }
+  if (isAsbdataBillsEnabled()) {
+    networkProviders = await listAsbdataDataBundleNetworkProvidersSafe(networkProviders, { forceRefresh })
+  }
 
   const hydratedProviders = providers
     .map(item => ({
       ...item,
       isActive:
         item.isActive !== false
-        && isFlutterwaveBillsEnabled()
-        && isFlutterwaveBillTypeSupported(item.type)
+        && hasProviderForBillType(item.type)
         && (
           (item.type !== 'cable' && item.type !== 'electric')
           || (Array.isArray(item.billers) && item.billers.length > 0)
@@ -76,6 +93,10 @@ export async function POST(req: Request) {
   const itemCode = typeof body.itemCode === 'string' ? body.itemCode.trim() : undefined
   const providerPlanId = typeof body.providerPlanId === 'string' ? body.providerPlanId.trim() : undefined
   const providerNetworkId = Number(body.providerNetworkId)
+  // Which provider issued the selected bundle. Amigo and ASBDATA both send a plan id plus a
+  // network id and their network ids disagree, so the fields alone cannot identify the provider.
+  // Older app builds omit this; fall back to the previous inference in that case.
+  const providerName = typeof body.providerName === 'string' ? body.providerName.trim() : undefined
   const rawAccount = typeof body.account === 'string' ? body.account.trim() : ''
   const providers = await getBillProviders()
   const selectedProvider = providers.find(item => item.name === service || item.id === service)
@@ -86,11 +107,8 @@ export async function POST(req: Request) {
   if (selectedProvider.isActive === false) {
     return NextResponse.json({ error: `${selectedProvider.name} is temporarily unavailable.`, success: false }, { status: 400 })
   }
-  if (!isFlutterwaveBillsEnabled()) {
-    return NextResponse.json({ error: 'Bills provider is not configured yet.', success: false }, { status: 503 })
-  }
-  if (!isFlutterwaveBillTypeSupported(selectedProvider.type)) {
-    return NextResponse.json({ error: `${selectedProvider.name} is not live yet.`, success: false }, { status: 400 })
+  if (!hasProviderForBillType(selectedProvider.type)) {
+    return NextResponse.json({ error: `${selectedProvider.name} is not live yet.`, success: false }, { status: 503 })
   }
 
   const serviceConfig = getBillServiceConfig(selectedProvider)
@@ -158,27 +176,85 @@ export async function POST(req: Request) {
   }
 
   const ref = generateRef()
-  const providerResult = selectedProvider.type === 'data' && isAmigoBillsEnabled() && providerPlanId && Number.isFinite(providerNetworkId)
-    ? await createAmigoDataPayment({
+
+  // Which provider owns this purchase. Prefer the name the client sent; fall back to the old
+  // inference (plan id + network id implied Amigo) so app builds predating providerName still work.
+  const hasPlanSelection = Boolean(providerPlanId) && Number.isFinite(providerNetworkId)
+  const resolvedDataProvider = selectedProvider.type !== 'data' || !hasPlanSelection
+    ? null
+    : providerName === 'asbdata' || providerName === 'amigo' || providerName === 'flutterwave'
+      ? providerName
+      : 'amigo'
+
+  const asbdataAirtimeNetworkId = selectedProvider.type === 'airtime' && isAsbdataBillsEnabled()
+    ? getAsbdataNetworkId(provider ?? '')
+    : undefined
+
+  const flutterwaveInput = {
+    type: selectedProvider.type,
+    networkProvider: provider,
+    account,
+    amount: numericAmount,
+    reference: ref,
+    billerCode,
+    itemCode,
+  }
+
+  let providerResult = resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
+    ? await createAsbdataDataPayment({
       networkId: providerNetworkId,
       mobileNumber: account,
       planId: providerPlanId,
       reference: ref,
     })
-    : await createFlutterwaveBillPayment({
-      type: selectedProvider.type,
-      networkProvider: provider,
-      account,
-      amount: numericAmount,
+    : resolvedDataProvider === 'amigo' && isAmigoBillsEnabled() && providerPlanId
+      ? await createAmigoDataPayment({
+        networkId: providerNetworkId,
+        mobileNumber: account,
+        planId: providerPlanId,
+        reference: ref,
+      })
+      : asbdataAirtimeNetworkId !== undefined
+        ? await createAsbdataAirtimePayment({
+          networkId: asbdataAirtimeNetworkId,
+          mobileNumber: account,
+          amount: numericAmount,
+          reference: ref,
+        })
+        : await createFlutterwaveBillPayment(flutterwaveInput)
+
+  // Airtime falls back to Flutterwave when ASBDATA rejects the request outright. Never retry an
+  // indeterminate result -- a topup that actually landed must not be sent a second time.
+  if (
+    providerResult.provider === 'asbdata'
+    && providerResult.status === 'failed'
+    && !providerResult.indeterminate
+    && selectedProvider.type === 'airtime'
+    && isFlutterwaveBillsEnabled()
+    && isFlutterwaveBillTypeSupported('airtime')
+  ) {
+    console.warn(`[asbdata] airtime failed for ref=${ref}, falling back to Flutterwave: ${providerResult.reason ?? 'unknown'}`)
+    await recordProviderEvent({
+      externalEventId: `bill:${ref}:asbdata-airtime-failed`,
+      provider: 'asbdata_airtime',
       reference: ref,
-      billerCode,
-      itemCode,
+      status: providerResult.rawStatus || 'FAILED',
+      failureReason: providerResult.reason,
+      payload: providerResult.payload,
     })
+    providerResult = await createFlutterwaveBillPayment(flutterwaveInput)
+  }
+
+  const providerEventName = providerResult.provider === 'asbdata'
+    ? (selectedProvider.type === 'airtime' ? 'asbdata_airtime' : 'asbdata_data')
+    : providerResult.provider === 'amigo'
+      ? 'amigo_data'
+      : 'flutterwave_bills'
 
   if (providerResult.status === 'failed') {
     await recordProviderEvent({
       externalEventId: providerResult.providerReference || `bill:${ref}:failed`,
-      provider: providerResult.provider === 'amigo' ? 'amigo_data' : 'flutterwave_bills',
+      provider: providerEventName,
       reference: ref,
       status: providerResult.rawStatus || 'FAILED',
       failureReason: providerResult.reason,
@@ -190,7 +266,14 @@ export async function POST(req: Request) {
 
   const transactionType = selectedProvider.type as Transaction['type']
   const transactionStatus: Transaction['status'] = providerResult.status === 'success' ? 'success' : 'pending'
-  const platformFee = providerResult.provider === 'amigo' ? AMIGO_PLATFORM_MARKUP_NGN : 0
+  // Amigo and ASBDATA prices are wholesale plus our markup, so the markup is the platform fee.
+  // Flutterwave quotes retail, so there is nothing to split out.
+  const platformFee = providerResult.provider === 'amigo'
+    ? AMIGO_PLATFORM_MARKUP_NGN
+    : providerResult.provider === 'asbdata'
+      ? ASBDATA_PLATFORM_MARKUP_NGN
+      : 0
+  const isPlanBasedProvider = providerResult.provider === 'amigo' || providerResult.provider === 'asbdata'
   const transaction = {
     id: ref,
     type: transactionType,
@@ -214,9 +297,9 @@ export async function POST(req: Request) {
       billerCode: 'billerCode' in providerResult ? providerResult.billerCode : undefined,
       itemCode: 'itemCode' in providerResult ? providerResult.itemCode : undefined,
       itemName: 'itemName' in providerResult ? providerResult.itemName : undefined,
-      providerPlanId: providerResult.provider === 'amigo' ? providerPlanId : undefined,
-      providerNetworkId: providerResult.provider === 'amigo' && Number.isFinite(providerNetworkId) ? providerNetworkId : undefined,
-      providerBaseAmount: providerResult.provider === 'amigo' ? numericAmount - platformFee : numericAmount,
+      providerPlanId: isPlanBasedProvider ? providerPlanId : undefined,
+      providerNetworkId: isPlanBasedProvider && Number.isFinite(providerNetworkId) ? providerNetworkId : undefined,
+      providerBaseAmount: isPlanBasedProvider ? numericAmount - platformFee : numericAmount,
       platformFee,
       settlementFlow: providerResult.status === 'pending' ? 'release_locked' : 'none',
       settlementKind: 'provider_bill',
@@ -233,7 +316,7 @@ export async function POST(req: Request) {
   })
   await recordProviderEvent({
     externalEventId: providerResult.providerReference || `bill:${ref}:${providerResult.rawStatus || providerResult.status}`,
-    provider: providerResult.provider === 'amigo' ? 'amigo_data' : 'flutterwave_bills',
+    provider: providerEventName,
     reference: ref,
     status: providerResult.rawStatus || providerResult.status,
     payload: providerResult.payload,

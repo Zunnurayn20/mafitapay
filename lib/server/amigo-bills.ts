@@ -194,12 +194,9 @@ function mergeProviderBundles(existingBundles: BillDataBundle[] | undefined, ami
       seen.add(key)
       return true
     })
-    .sort((a, b) => {
-      if ((a.provider === 'amigo') !== (b.provider === 'amigo')) {
-        return a.provider === 'amigo' ? -1 : 1
-      }
-      return a.amount - b.amount
-    })
+    // Cheapest first regardless of provider. This used to float Amigo above everything else, which
+    // would now bury a cheaper ASBDATA plan underneath a pricier Amigo one.
+    .sort((a, b) => a.amount - b.amount)
 }
 
 export function isAmigoBillsEnabled() {

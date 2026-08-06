@@ -401,7 +401,7 @@ export interface BillDataBundle {
   billerCode: string
   itemName: string
   validity?: string
-  provider?: 'flutterwave' | 'amigo'
+  provider?: 'flutterwave' | 'amigo' | 'asbdata'
   providerPlanId?: string
   providerNetworkId?: number
   efficiencyPercent?: number
