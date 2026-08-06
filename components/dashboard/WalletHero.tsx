@@ -15,9 +15,13 @@ export function WalletHero() {
 
   return (
     <Card
-      // Hardcoded hex, not a theme token: the balance, labels and buttons in here are all light
-      // colours, so the card has to stay dark in light mode too -- same reason GoldBanner does it.
-      className="overflow-hidden border-[rgba(202,165,96,0.28)] bg-[#18130f] p-5 sm:p-6"
+      // Set as an inline style, not a bg-* class: cn() is plain clsx with no tailwind-merge, so a
+      // background class here would sit alongside Card's own bg-[var(--coal)] and the winner would
+      // come down to CSS order. It also has to be a literal hex rather than the token -- the light
+      // theme resolves --coal to #ffffff, and every label, figure and button in this card is a
+      // hardcoded near-white.
+      style={{ backgroundColor: '#18130f' }}
+      className="overflow-hidden border-[rgba(202,165,96,0.28)] p-5 sm:p-6"
       accent="repeating-linear-gradient(90deg,var(--gold) 0,var(--gold) 10px,var(--terra) 10px,var(--terra) 18px,var(--green) 18px,var(--green) 26px,var(--char) 26px,var(--char) 30px)"
       pattern="plain"
     >
