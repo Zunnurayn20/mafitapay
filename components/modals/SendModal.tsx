@@ -21,7 +21,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [step, setStep] = useState<Step>('form')
-  const [mode, setMode] = useState<'internal' | 'bank'>('internal')
+  const [mode, setMode] = useState<'internal' | 'bank'>('bank')
   const [bankCode, setBankCode] = useState('')
   const [bankName, setBankName] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
@@ -48,16 +48,19 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
         const bankDefault = payload.data.find((item: Beneficiary) => item.kind === 'bank' && item.isDefault)
         const internalDefault = payload.data.find((item: Beneficiary) => item.kind === 'internal' && item.isDefault)
 
-        if (internalDefault) {
-          setMode('internal')
-          setRecipient(internalDefault.handle || internalDefault.label)
-          setResolvedRecipient(internalDefault.handle ? { name: internalDefault.label, handle: internalDefault.handle } : null)
-        } else if (bankDefault) {
+        // Bank is checked first so a saved bank beneficiary keeps the modal on its default tab.
+        // The old order preferred internal purely because that used to be the default mode, and
+        // leaving it would flip anyone with an internal default straight back off the bank tab.
+        if (bankDefault) {
           setMode('bank')
           setBankCode(bankDefault.bankCode || '')
           setBankName(bankDefault.bankName || '')
           setAccountNumber(bankDefault.accountNumber || '')
           setAccountName(bankDefault.accountName || '')
+        } else if (internalDefault) {
+          setMode('internal')
+          setRecipient(internalDefault.handle || internalDefault.label)
+          setResolvedRecipient(internalDefault.handle ? { name: internalDefault.label, handle: internalDefault.handle } : null)
         }
       })
       .catch(() => undefined)
@@ -67,7 +70,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     onClose()
     setTimeout(() => {
       setStep('form')
-      setMode('internal')
+      setMode('bank')
       setAmount('')
       setBankCode('')
       setBankName('')
@@ -197,7 +200,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       {step === 'form' && (
         <div className="p-6 flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-2">
-            {(['internal', 'bank'] as const).map(option => (
+            {(['bank', 'internal'] as const).map(option => (
               <button
                 key={option}
                 onClick={() => setMode(option)}
