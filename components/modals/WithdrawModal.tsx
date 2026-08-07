@@ -1,4 +1,5 @@
 'use client'
+import { BankAccountPicker } from '@/components/ui/BankAccountPicker'
 import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
@@ -180,45 +181,17 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         </div>
         <div className="space-y-3">
-          <div>
-            <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Bank</div>
-            <select
-              value={bankCode}
-              onChange={event => {
-                const nextCode = event.target.value
-                const bank = banks.find(item => item.code === nextCode)
-                setBankCode(nextCode)
-                setBankName(bank?.name || '')
-                setAccountName('')
-              }}
-              className="w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-3 text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold)]"
-            >
-              <option value="">Select bank</option>
-              {banks.map(item => (
-                <option key={item.code} value={item.code}>{item.name}</option>
-              ))}
-            </select>
-          </div>
-          <Input label="Account Number" value={accountNumber} onChange={e => setAccountNumber(e.target.value)} placeholder="0123456789" />
-          <Input label="Resolved Account Name" value={accountName} readOnly placeholder="Use a saved beneficiary or verify from transfer flow" />
-          {beneficiaries.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {beneficiaries.slice(0, 4).map(item => (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setBankCode(item.bankCode || '')
-                    setBankName(item.bankName || '')
-                    setAccountNumber(item.accountNumber || '')
-                    setAccountName(item.accountName || '')
-                  }}
-                  className="border border-[var(--border)] bg-[var(--clay)] px-3 py-1.5 text-[10px] text-[var(--text2)]"
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
+          <BankAccountPicker
+            banks={banks}
+            beneficiaries={beneficiaries}
+            value={{ bankCode, bankName, accountNumber, accountName }}
+            onChange={next => {
+              setBankCode(next.bankCode)
+              setBankName(next.bankName)
+              setAccountNumber(next.accountNumber)
+              setAccountName(next.accountName)
+            }}
+          />
         </div>
         <Button onClick={confirm} className="w-full py-3.5">Proceed to Withdraw →</Button>
       </div>
