@@ -8,6 +8,13 @@ interface PinPadProps {
   onComplete: (pin: string) => void
   title?: string
   subtitle?: string
+  /**
+   * Rows shown above the keypad — what is being authorised, in full. Lets a caller fold a
+   * separate review step into this screen instead of making the user confirm twice.
+   */
+  details?: Array<{ label: string; value: string; emphasis?: boolean }>
+  /** Rendered under the details, e.g. an "Edit" affordance back to the form. */
+  footer?: React.ReactNode
   secondaryActionLabel?: string
   secondaryActionIconOnly?: boolean
   onSecondaryAction?: () => void
@@ -22,6 +29,8 @@ export function PinPad({
   onComplete,
   title = 'Enter PIN',
   subtitle,
+  details,
+  footer,
   secondaryActionLabel,
   secondaryActionIconOnly = false,
   onSecondaryAction,
@@ -77,6 +86,25 @@ export function PinPad({
           </div>
         </div>
 
+        {details && details.length > 0 && (
+          <div className="border-b border-[var(--border)]">
+            {details.map(row => (
+              <div
+                key={row.label}
+                className="flex items-baseline justify-between gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[11px] last:border-0"
+              >
+                <span className="shrink-0 text-[var(--muted)]">{row.label}</span>
+                <span className={cn(
+                  'truncate text-right font-mono',
+                  row.emphasis ? 'font-bold text-[var(--gold2)]' : 'text-[var(--text)]',
+                )}>
+                  {row.value}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-3 gap-2 p-3">
           {keys.map((k, i) => {
             if (k === '') return <div key={i} className="h-14" />
@@ -128,6 +156,7 @@ export function PinPad({
       <div className="mt-3 px-1 text-center text-[10px] text-[var(--muted)]">
         Submission continues automatically after the last digit.
       </div>
+      {footer && <div className="mt-3 flex justify-center">{footer}</div>}
       {secondaryActionLabel && onSecondaryAction && (
         <div className="mt-3 flex justify-center">
           <button

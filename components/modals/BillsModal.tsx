@@ -931,7 +931,26 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
             transactionPin: pin,
           })}
           title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
-          subtitle={`Authorising ${serviceName} payment for ₦${Number(pendingRequest?.amount ?? amount ?? 0).toLocaleString('en-NG')}`}
+          subtitle="Check the details, then enter your PIN to pay."
+          details={[
+            { label: 'Service', value: serviceName },
+            ...(needsProvider ? [{ label: 'Network', value: provider }] : []),
+            ...(needsAccount && account ? [{ label: 'Recipient', value: account }] : []),
+            {
+              label: 'Amount',
+              value: `₦${Number(pendingRequest?.amount ?? amount ?? 0).toLocaleString('en-NG')}`,
+              emphasis: true,
+            },
+          ]}
+          footer={(
+            <button
+              type="button"
+              onClick={() => setStep('form')}
+              className="text-[10px] font-bold uppercase tracking-[.8px] text-[var(--gold2)] underline"
+            >
+              ← Edit payment
+            </button>
+          )}
           secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}

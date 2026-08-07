@@ -3,6 +3,7 @@ import { appendNotification, createNotification, requireUser, unauthorized } fro
 import { applyWalletMutation, createPayoutRequest, getUserByEmail, getUserByHandle, getWalletByUserId, upsertBeneficiary, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
+import { quoteTransferFee } from '@/lib/transfer-fees'
 import { generateRef } from '@/lib/utils'
 
 export async function POST(req: Request) {
@@ -163,12 +164,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid beneficiary details.', success: false }, { status: 400 })
   }
 
+  // Charged on top of the transfer: the beneficiary receives numericAmount while the wallet
+  // gives up amount + fee. Lock the total, since settlement releases the transaction amount.
+  const feeQuote = quoteTransferFee(numericAmount)
+  const totalDebit = feeQuote.total
+
   const transaction = {
     id: ref,
     type: 'transfer_out' as const,
     status: 'pending' as const,
-    amount: -numericAmount,
-    fee: 0,
+    amount: -totalDebit,
+    fee: feeQuote.fee,
     description: `Bank Transfer — ${bankName}`,
     reference: ref,
     recipient: `${accountName} · ${bankName} · ${accountNumber}`,
@@ -180,6 +186,10 @@ export async function POST(req: Request) {
       bankCode,
       accountNumber,
       accountName,
+      payoutAmount: numericAmount,
+      transferFee: feeQuote.fee,
+      providerFeeCost: feeQuote.providerCost,
+      platformFeeMargin: feeQuote.platformMargin,
       settlementFlow: 'release_locked',
       settlementKind: 'bank_transfer_out',
     },
@@ -187,9 +197,9 @@ export async function POST(req: Request) {
 
   const result = await applyWalletMutation({
     userId: user.id,
-    balanceDelta: -numericAmount,
-    lockedBalanceDelta: numericAmount,
-    minimumAvailableBalance: numericAmount,
+    balanceDelta: -totalDebit,
+    lockedBalanceDelta: totalDebit,
+    minimumAvailableBalance: totalDebit,
     transaction,
   })
   await createPayoutRequest({
@@ -241,7 +251,7 @@ export async function POST(req: Request) {
   await appendNotification(user.id, createNotification({
     userId: user.id,
     title: 'Transfer pending',
-    message: `${transaction.description} for ₦${numericAmount.toLocaleString('en-NG')} is awaiting payout settlement`,
+    message: `${transaction.description} for ₦${numericAmount.toLocaleString('en-NG')} plus a ₦${feeQuote.fee.toLocaleString('en-NG')} fee is awaiting payout settlement`,
     type: 'info',
   }))
 

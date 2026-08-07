@@ -10,6 +10,7 @@ import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiome
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/http'
 import { useAppStore } from '@/store'
+import { quoteTransferFee } from '@/lib/transfer-fees'
 import { formatNGN, generateRef } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
 
@@ -26,6 +27,9 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const banks = useBankDirectory('NG')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([])
   const [amount, setAmount] = useState('')
+  // Live quote so the fee the user sees matches what the server will charge. quoteTransferFee
+  // returns a zero quote for empty or invalid amounts, so the fee row simply stays hidden.
+  const quote = quoteTransferFee(parseFloat(amount) || 0)
   const [bankCode, setBankCode] = useState('')
   const [bankName, setBankName] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
@@ -179,6 +183,12 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
               </button>
             ))}
           </div>
+          {quote.fee > 0 && (
+            <div className="mt-2 border border-[var(--border)] bg-[var(--clay2)] p-2.5">
+              <div className="flex justify-between py-0.5 text-[10px]"><span className="text-[var(--muted)]">Transfer fee</span><span className="font-semibold text-[var(--text2)]">₦{quote.fee.toLocaleString('en-NG')}</span></div>
+              <div className="flex justify-between py-0.5 text-[10px]"><span className="text-[var(--muted)]">You&apos;ll be debited</span><span className="font-bold text-[var(--gold2)]">₦{quote.total.toLocaleString('en-NG')}</span></div>
+            </div>
+          )}
         </div>
         <div className="space-y-3">
           <BankAccountPicker
@@ -200,7 +210,23 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           key={pinVersion}
           onComplete={(pin) => void submitWithdrawal({ transactionPin: pin })}
           title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
-          subtitle={`Authorising ${formatNGN(parseFloat(amount) || 0)} to ${accountName || 'bank beneficiary'}`}
+          subtitle="Check the details, then enter your PIN. Funds stay locked until payout settles."
+          details={[
+            { label: 'To', value: accountName || 'Bank beneficiary' },
+            { label: 'Bank', value: `${bankName} · ${accountNumber}` },
+            { label: 'Amount', value: formatNGN(parseFloat(amount) || 0), emphasis: true },
+            { label: 'Fee', value: formatNGN(quote.fee) },
+            { label: 'Total debit', value: formatNGN(quote.total), emphasis: true },
+          ]}
+          footer={(
+            <button
+              type="button"
+              onClick={() => setStep('form')}
+              className="text-[10px] font-bold uppercase tracking-[.8px] text-[var(--gold2)] underline"
+            >
+              ← Edit withdrawal
+            </button>
+          )}
           secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
