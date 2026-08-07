@@ -10,10 +10,11 @@ import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiome
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/http'
 import { useAppStore } from '@/store'
+import { quoteTransferFee } from '@/lib/transfer-fees'
 import { formatNGN } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
 
-type Step = 'form' | 'review' | 'pin' | 'processing' | 'success'
+type Step = 'form' | 'pin' | 'processing' | 'success'
 
 const QUICK = [5000, 10000, 50000]
 
@@ -37,6 +38,9 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [pinVersion, setPinVersion] = useState(0)
 
   const amt = parseFloat(amount) || 0
+  // Bank transfers carry a fee; internal transfers stay free, so the quote is only surfaced in
+  // bank mode. Quoted client-side from the same module the server charges from.
+  const quote = quoteTransferFee(amt)
 
   useEffect(() => {
     if (!open) return
@@ -85,7 +89,9 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     }, 400)
   }
 
-  async function goReview() {
+  // Verifies the recipient, then goes straight to the PIN pad. The transfer summary rides along
+  // as PinPad details, so authorising and reviewing happen on one screen instead of two.
+  async function goConfirm() {
     if (!amt) { showToast('Fill in all required fields', 'error'); return }
 
     if (mode === 'internal') {
@@ -130,7 +136,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       }
     }
 
-    setStep('review')
+    setPinVersion(current => current + 1)
+    setStep('pin')
   }
 
   async function submitTransfer(input: {
@@ -192,9 +199,24 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   }
 
   const titles: Record<Step, string> = {
-    form: 'Bank Transfer', review: 'Review Transfer', pin: 'Enter PIN',
+    form: 'Bank Transfer', pin: nativeTransactionBiometricEnabled ? 'Confirm' : 'Confirm with PIN',
     processing: 'Processing…', success: 'Transfer Submitted'
   }
+
+  const transferDetails = mode === 'internal'
+    ? [
+        { label: 'To', value: resolvedRecipient?.name || recipient },
+        { label: 'Handle', value: resolvedRecipient?.handle || recipient },
+        { label: 'Amount', value: formatNGN(amt), emphasis: true },
+        { label: 'Fee', value: 'FREE' },
+      ]
+    : [
+        { label: 'To', value: accountName },
+        { label: 'Bank', value: `${bankName} · ${accountNumber}` },
+        { label: 'Amount', value: formatNGN(amt), emphasis: true },
+        { label: 'Fee', value: formatNGN(quote.fee) },
+        { label: 'Total debit', value: formatNGN(quote.total), emphasis: true },
+      ]
 
   return (
     <Modal open={open} onClose={handleClose} title={titles[step]} size="md">
@@ -265,44 +287,15 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
           <Input label="Narration (optional)" placeholder="What's this for?" value={narration} onChange={e => setNarration(e.target.value)} />
           <div className="bg-[var(--clay)] border border-[var(--border)] p-3 text-[11px]">
-            <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Transfer fee</span><span className="text-[var(--green2)] font-bold">FREE</span></div>
+            <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Transfer fee</span>{mode === 'internal'
+              ? <span className="text-[var(--green2)] font-bold">FREE</span>
+              : <span className="text-[var(--text2)] font-bold">{quote.fee > 0 ? `₦${quote.fee.toLocaleString('en-NG')}` : '—'}</span>}</div>
+            {mode !== 'internal' && quote.fee > 0 && (
+              <div className="flex justify-between py-1"><span className="text-[var(--muted)]">You&apos;ll be debited</span><span className="text-[var(--gold2)] font-bold">₦{quote.total.toLocaleString('en-NG')}</span></div>
+            )}
             <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Delivery</span><span className="text-[var(--gold2)] font-bold">{mode === 'internal' ? 'Instant' : 'Pending settlement'}</span></div>
           </div>
-          <Button onClick={() => void goReview()} className="w-full py-3.5">{mode === 'internal' ? 'Review Internal Transfer →' : 'Review Bank Transfer →'}</Button>
-        </div>
-      )}
-
-      {step === 'review' && (
-        <div className="p-6 flex flex-col gap-4">
-          <div className="bg-[var(--clay)] border border-[var(--border)] p-6 text-center">
-            <div className="text-[9px] text-[var(--muted)] uppercase tracking-[1px] mb-2">Sending to</div>
-            <div className="text-[15px] font-bold text-[var(--gold2)] font-mono mb-1">{mode === 'internal' ? (resolvedRecipient?.name || recipient) : accountName}</div>
-            <div className="text-[10px] text-[var(--muted)] mb-3">{mode === 'internal' ? (resolvedRecipient?.handle || recipient) : `${bankName} · ${accountNumber}`}</div>
-            <div className="font-display font-black text-[42px] text-[var(--text)]">₦{amt.toLocaleString()}</div>
-          </div>
-          <div className="border border-[var(--border)]">
-            {[
-              ['Amount', formatNGN(amt)],
-              ...(mode === 'internal'
-                ? [['Recipient', resolvedRecipient?.name || recipient], ['Handle', resolvedRecipient?.handle || recipient]]
-                : [['Bank', `${bankName} (${bankCode})`], ['Account Number', accountNumber], ['Account Name', accountName]]),
-              ['Narration', narration || 'None'],
-              ['Fee', 'FREE'],
-              ['Total', formatNGN(amt)],
-            ].map(([k, v]) => (
-              <div key={k} className="flex justify-between px-4 py-3 border-b border-[var(--border)] last:border-0 text-[12px]">
-                <span className="text-[var(--muted)]">{k}</span>
-                <span className={`font-mono font-bold ${k === 'Fee' ? 'text-[var(--green2)]' : 'text-[var(--text)]'}`}>{v}</span>
-              </div>
-            ))}
-          </div>
-          <div className="bg-[rgba(79,70,229,.06)] border border-[rgba(79,70,229,.2)] border-l-4 border-l-[var(--gold)] px-4 py-3 text-[11px] text-[var(--text2)]">
-            🔐 You&apos;ll enter your <strong>4-digit PIN</strong> to authorise this {mode === 'internal' ? 'internal transfer.' : 'bank transfer. Funds remain locked until payout settlement.'}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setStep('form')} className="flex-none px-5">← Edit</Button>
-            <Button onClick={() => { setPinVersion(current => current + 1); setStep('pin') }} className="flex-1">Enter PIN →</Button>
-          </div>
+          <Button onClick={() => void goConfirm()} className="w-full py-3.5">Continue to PIN →</Button>
         </div>
       )}
 
@@ -311,7 +304,19 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           key={pinVersion}
           onComplete={handlePin}
           title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
-          subtitle={`Authorising ${formatNGN(amt)} → ${mode === 'internal' ? (resolvedRecipient?.name || recipient) : accountName}`}
+          subtitle={mode === 'internal'
+            ? 'Check the details, then enter your PIN to send.'
+            : 'Check the details, then enter your PIN. Funds stay locked until payout settles.'}
+          details={transferDetails}
+          footer={(
+            <button
+              type="button"
+              onClick={() => setStep('form')}
+              className="text-[10px] font-bold uppercase tracking-[.8px] text-[var(--gold2)] underline"
+            >
+              ← Edit transfer
+            </button>
+          )}
           secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}

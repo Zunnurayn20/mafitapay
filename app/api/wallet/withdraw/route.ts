@@ -4,6 +4,7 @@ import { applyWalletMutation, createPayoutRequest, getWalletByUserId, upsertBene
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
 import { ensureFlutterwavePayoutSyncScheduler } from '@/lib/server/payout-sync-batch'
+import { quoteTransferFee } from '@/lib/transfer-fees'
 import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function POST(req: Request) {
@@ -66,8 +67,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Wallet not found', success: false }, { status: 404 })
   }
 
-  if (wallet.balance < numericAmount) {
-    return NextResponse.json({ error: 'Insufficient balance', success: false }, { status: 400 })
+  // The fee is charged on top: the recipient receives numericAmount, and the wallet gives up
+  // amount + fee. Debit and lock the total so settlement, which releases the transaction's own
+  // absolute amount, releases exactly what was reserved.
+  const feeQuote = quoteTransferFee(numericAmount)
+  const totalDebit = feeQuote.total
+
+  if (wallet.balance < totalDebit) {
+    return NextResponse.json({
+      error: `Insufficient balance. ₦${numericAmount.toLocaleString('en-NG')} plus a ₦${feeQuote.fee.toLocaleString('en-NG')} transfer fee requires ₦${totalDebit.toLocaleString('en-NG')}.`,
+      success: false,
+    }, { status: 400 })
   }
 
   const ref = generateRef()
@@ -75,8 +85,8 @@ export async function POST(req: Request) {
     id: ref,
     type: 'withdrawal' as const,
     status: 'pending' as const,
-    amount: -numericAmount,
-    fee: 0,
+    amount: -totalDebit,
+    fee: feeQuote.fee,
     description: `Bank Withdrawal — ${bankName}`,
     reference: ref,
     createdAt: new Date().toISOString(),
@@ -86,6 +96,10 @@ export async function POST(req: Request) {
       bankCode,
       accountNumber,
       accountName,
+      payoutAmount: numericAmount,
+      transferFee: feeQuote.fee,
+      providerFeeCost: feeQuote.providerCost,
+      platformFeeMargin: feeQuote.platformMargin,
       settlementFlow: 'release_locked',
       settlementKind: 'bank_payout',
     },
@@ -98,9 +112,9 @@ export async function POST(req: Request) {
   try {
     const result = await applyWalletMutation({
       userId: user.id,
-      balanceDelta: -numericAmount,
-      lockedBalanceDelta: numericAmount,
-      minimumAvailableBalance: numericAmount,
+      balanceDelta: -totalDebit,
+      lockedBalanceDelta: totalDebit,
+      minimumAvailableBalance: totalDebit,
       transaction,
     })
     await createPayoutRequest({
@@ -152,7 +166,7 @@ export async function POST(req: Request) {
     await appendNotification(user.id, createNotification({
       userId: user.id,
       title: 'Withdrawal pending',
-      message: `${transaction.description} for ₦${numericAmount.toLocaleString('en-NG')} is awaiting completion`,
+      message: `${transaction.description} for ₦${numericAmount.toLocaleString('en-NG')} plus a ₦${feeQuote.fee.toLocaleString('en-NG')} fee is awaiting completion`,
       type: 'info',
     }))
 
