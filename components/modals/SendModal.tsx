@@ -36,6 +36,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [ref, setRef]             = useState('')
   const [procStep, setProcStep]   = useState(0)
   const [pinVersion, setPinVersion] = useState(0)
+  const [verifying, setVerifying]   = useState(false)
 
   const amt = parseFloat(amount) || 0
   // Bank transfers carry a fee; internal transfers stay free, so the quote is only surfaced in
@@ -86,58 +87,72 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       setNarration('')
       setProcStep(0)
       setPinVersion(0)
+      setVerifying(false)
     }, 400)
   }
 
   // Verifies the recipient, then goes straight to the PIN pad. The transfer summary rides along
   // as PinPad details, so authorising and reviewing happen on one screen instead of two.
   async function goConfirm() {
+    if (verifying) return
     if (!amt) { showToast('Fill in all required fields', 'error'); return }
 
-    if (mode === 'internal') {
-      if (!recipient) { showToast('Recipient is required', 'error'); return }
-      try {
-        const response = await fetch('/api/beneficiaries/lookup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ kind: 'internal', recipient }),
-        })
-        const data = await readJsonResponse<{ recipient: { name: string; handle: string } }>(response)
-        setResolvedRecipient(data.recipient)
-      } catch (error) {
-        showToast(toUserMessage(error, 'Recipient verification failed.'), 'error')
-        return
-      }
-    } else {
-      if (!bankCode || !bankName || !accountNumber) { showToast('Fill in all required fields', 'error'); return }
-      try {
-        const response = await fetch('/api/beneficiaries/lookup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ kind: 'bank', bankCode, bankName, accountNumber, accountName }),
-        })
-        const data = await readJsonResponse<{
-          verification: {
-            bankCode: string
-            bankName: string
-            accountNumber: string
-            accountName: string
-          }
-        }>(response)
-        setBankCode(data.verification.bankCode)
-        setBankName(data.verification.bankName)
-        setAccountNumber(data.verification.accountNumber)
-        setAccountName(data.verification.accountName)
-      } catch (error) {
-        showToast(toUserMessage(error, 'Beneficiary verification failed.'), 'error')
-        return
-      }
+    if (mode === 'internal' && !recipient) { showToast('Recipient is required', 'error'); return }
+    if (mode === 'bank' && (!bankCode || !bankName || !accountNumber)) {
+      showToast('Fill in all required fields', 'error')
+      return
     }
 
-    setPinVersion(current => current + 1)
-    setStep('pin')
+    // The lookup is a network round-trip -- resolving an email or handle to an account, or
+    // verifying bank details. Without a pending state the button looks inert and gets tapped
+    // again, firing duplicate lookups.
+    setVerifying(true)
+    try {
+      if (mode === 'internal') {
+        try {
+          const response = await fetch('/api/beneficiaries/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ kind: 'internal', recipient }),
+          })
+          const data = await readJsonResponse<{ recipient: { name: string; handle: string } }>(response)
+          setResolvedRecipient(data.recipient)
+        } catch (error) {
+          showToast(toUserMessage(error, 'Recipient verification failed.'), 'error')
+          return
+        }
+      } else {
+        try {
+          const response = await fetch('/api/beneficiaries/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ kind: 'bank', bankCode, bankName, accountNumber, accountName }),
+          })
+          const data = await readJsonResponse<{
+            verification: {
+              bankCode: string
+              bankName: string
+              accountNumber: string
+              accountName: string
+            }
+          }>(response)
+          setBankCode(data.verification.bankCode)
+          setBankName(data.verification.bankName)
+          setAccountNumber(data.verification.accountNumber)
+          setAccountName(data.verification.accountName)
+        } catch (error) {
+          showToast(toUserMessage(error, 'Beneficiary verification failed.'), 'error')
+          return
+        }
+      }
+
+      setPinVersion(current => current + 1)
+      setStep('pin')
+    } finally {
+      setVerifying(false)
+    }
   }
 
   async function submitTransfer(input: {
@@ -295,7 +310,11 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
             )}
             <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Delivery</span><span className="text-[var(--gold2)] font-bold">{mode === 'internal' ? 'Instant' : 'Pending settlement'}</span></div>
           </div>
-          <Button onClick={() => void goConfirm()} className="w-full py-3.5">Continue to PIN →</Button>
+          <Button onClick={() => void goConfirm()} loading={verifying} className="w-full py-3.5">
+            {verifying
+              ? (mode === 'internal' ? 'Verifying recipient…' : 'Verifying account…')
+              : 'Continue to PIN →'}
+          </Button>
         </div>
       )}
 
