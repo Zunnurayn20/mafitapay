@@ -223,7 +223,10 @@ export async function getAmigoBalance(): Promise<ProviderBalance> {
     }
   }
 
-  const path = process.env.MAFITAPAY_AMIGO_BALANCE_PATH?.trim() || '/user/'
+  // Verified against the live API: GET /wallet/ answers
+  // {"success":true,"data":{"balance":1024,"display":"₦1,024.00","currency":"NGN",...}}.
+  // Overridable in case Amigo moves it.
+  const path = process.env.MAFITAPAY_AMIGO_BALANCE_PATH?.trim() || '/wallet/'
 
   try {
     const body = await amigoRequest(path)
