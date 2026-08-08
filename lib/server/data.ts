@@ -3209,6 +3209,29 @@ export async function listUsers(): Promise<User[]> {
   return rows.map(sanitizeUser)
 }
 
+/**
+ * Total NGN the platform owes its users, across every account.
+ *
+ * Summed in SQL over the whole ledger rather than by walking wallets, because the admin wallet
+ * list is capped and a liability derived from a capped list understates what is owed. A coverage
+ * figure built on a partial total would read as healthy while short.
+ *
+ * Includes locked balances: funds mid-payout are still customer money until the payout settles.
+ */
+export async function getTotalWalletLiability(): Promise<number> {
+  await ensureDbReady()
+  const row = getDb()
+    .prepare(`
+      SELECT COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS total
+      FROM ledger_entries
+      WHERE COALESCE(asset, 'NGN') = 'NGN'
+        AND account IN ('available', 'locked')
+    `)
+    .get() as { total: number } | undefined
+  // Kobo-round: ledger sums are floats, so trim the drift before it reaches a coverage figure.
+  return Math.round(Number(row?.total ?? 0) * 100) / 100
+}
+
 export async function getReferralOverviewByUserId(userId: string): Promise<ReferralOverview | null> {
   await ensureDbReady()
   const db = getDb()

@@ -77,6 +77,93 @@ export function isFlutterwaveCollectionsEnabled() {
   return Boolean(getFlutterwaveSecretKey())
 }
 
+export type FlutterwaveBalanceResult = {
+  provider: 'flutterwave'
+  configured: boolean
+  success: boolean
+  currency: string
+  balance?: number
+  message?: string
+}
+
+/**
+ * Settlement balance held with Flutterwave, in whole naira.
+ *
+ * Reports failure in the return value instead of throwing: this backs an admin display, and a
+ * provider outage should show "unavailable" beside the other figures rather than blanking the
+ * page. Callers distinguish "not configured" from "call failed" via `configured`.
+ */
+export async function getFlutterwaveBalance(currency = 'NGN'): Promise<FlutterwaveBalanceResult> {
+  const secretKey = getFlutterwaveSecretKey()
+  const normalizedCurrency = currency.trim().toUpperCase() || 'NGN'
+
+  if (!secretKey) {
+    return {
+      provider: 'flutterwave',
+      configured: false,
+      success: false,
+      currency: normalizedCurrency,
+      message: 'Flutterwave secret key is not configured.',
+    }
+  }
+
+  try {
+    const response = await fetch(`${getFlutterwaveBaseUrl()}/balances/${encodeURIComponent(normalizedCurrency)}`, {
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    })
+
+    const payload = await response.json().catch(() => null)
+    const body = isRecord(payload) ? payload : {}
+    const data = isRecord(body.data) ? body.data : {}
+
+    if (!response.ok || readString(body.status).toLowerCase() !== 'success') {
+      return {
+        provider: 'flutterwave',
+        configured: true,
+        success: false,
+        currency: normalizedCurrency,
+        message: readString(body.message) || `Flutterwave balance request failed (${response.status}).`,
+      }
+    }
+
+    // Field name has varied across responses; accept the known spellings before giving up.
+    const balance = readNumber(data.available_balance)
+      ?? readNumber(data.availableBalance)
+      ?? readNumber(data.balance)
+      ?? readNumber(data.ledger_balance)
+
+    if (balance == null) {
+      return {
+        provider: 'flutterwave',
+        configured: true,
+        success: false,
+        currency: normalizedCurrency,
+        message: 'Flutterwave balance response did not include a recognizable balance field.',
+      }
+    }
+
+    return {
+      provider: 'flutterwave',
+      configured: true,
+      success: true,
+      currency: readString(data.currency).toUpperCase() || normalizedCurrency,
+      balance,
+    }
+  } catch (error) {
+    return {
+      provider: 'flutterwave',
+      configured: true,
+      success: false,
+      currency: normalizedCurrency,
+      message: error instanceof Error ? error.message : 'Flutterwave balance request failed.',
+    }
+  }
+}
+
 export async function createFlutterwaveVirtualAccount(input: FlutterwaveVirtualAccountInput): Promise<FlutterwaveVirtualAccountResult> {
   const secretKey = getFlutterwaveSecretKey()
   if (!secretKey) {

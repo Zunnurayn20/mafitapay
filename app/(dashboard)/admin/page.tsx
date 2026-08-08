@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   Bell,
   Landmark,
+  ShieldAlert,
   Users,
   Wallet,
 } from 'lucide-react'
@@ -86,12 +87,31 @@ function MiniMetric({
 
 export default async function AdminOverviewPage() {
   await requireAdminPageUser()
-  const { users, wallets, transactions, stats } = await loadAdminOverviewData()
+  const { users, wallets, transactions, stats, liquidity } = await loadAdminOverviewData()
 
   const walletByUserId = new Map(wallets.map(row => [row.user.id, row.wallet]))
   const userById = new Map(users.map(user => [user.id, user]))
   const recentUsers = users.slice(0, 12)
   const recentTxns = transactions.slice(0, 12)
+
+  const liquidityTone: 'emerald' | 'amber' | 'red' = liquidity.gap == null
+    ? 'amber'
+    : liquidity.gap >= 0 ? 'emerald' : 'red'
+  const liquidityVerdict = liquidity.gap == null
+    ? 'Float unavailable'
+    : liquidity.gap >= 0
+      ? (liquidity.partial ? 'Covered so far' : 'Covered')
+      : (liquidity.partial ? 'Gap (incomplete)' : 'Funding gap')
+  const liquidityPill = {
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber: 'bg-amber-50 text-amber-700',
+    red: 'bg-red-50 text-red-700',
+  }[liquidityTone]
+  const liquidityValueText = {
+    emerald: 'text-emerald-700',
+    amber: 'text-amber-700',
+    red: 'text-red-700',
+  }[liquidityTone]
 
   return (
     <div className="space-y-4">
@@ -108,6 +128,83 @@ export default async function AdminOverviewPage() {
         <Metric label="Transactions" value={transactions.length} caption={`${stats.pendingTxns} pending, ${stats.failedTxns} failed`} Icon={Activity} tone="amber" />
         <Metric label="Virtual accounts" value={stats.virtualAccounts} caption={`${stats.unprocessedEvents} unprocessed provider events`} Icon={Landmark} tone="slate" />
       </section>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_10px_30px_-18px_rgba(15,23,42,0.35)]">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Landmark size={18} className="text-sky-700" />
+              <h3 className="font-bold text-slate-900">Liquidity match</h3>
+            </div>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">
+              Customer wallet liability against every place we hold float — the Flutterwave payout
+              rail plus the Amigo and ASBDATA prepaid balances that bills and airtime vend against.
+              Liability counts all accounts and includes funds locked mid-payout.
+            </p>
+          </div>
+          <div className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold ${liquidityPill}`}>
+            <ShieldAlert size={16} />
+            {liquidityVerdict}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer liability</div>
+            <div className="mt-2 font-mono text-xl font-bold text-slate-900">{formatNaira(liquidity.customerLiability)}</div>
+            <div className="mt-1 text-xs text-slate-500">Owed across all wallets</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Total float</div>
+            <div className="mt-2 font-mono text-xl font-bold text-slate-900">
+              {liquidity.providerFloat == null ? 'Unavailable' : formatNaira(liquidity.providerFloat)}
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              {liquidity.providerFloat == null
+                ? 'No provider balance could be read'
+                : liquidity.partial
+                  ? 'At least one provider did not answer'
+                  : 'All configured providers'}
+            </div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Coverage</div>
+            <div className={`mt-2 font-mono text-xl font-bold ${liquidityValueText}`}>
+              {liquidity.coverage == null ? 'Unknown' : `${liquidity.coverage}%`}
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              {liquidity.gap == null
+                ? 'Connect a provider balance to calculate the gap'
+                : `${formatNaira(Math.abs(liquidity.gap))} ${liquidity.gap >= 0 ? 'surplus' : 'short'}`}
+            </div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">By provider</div>
+            <div className="mt-2 space-y-1.5">
+              {liquidity.providers.map(entry => (
+                <div key={entry.provider} className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-xs text-slate-500">{entry.label}</span>
+                  <span
+                    className={`shrink-0 font-mono text-xs font-bold ${entry.balance == null ? 'text-slate-400' : 'text-slate-900'}`}
+                    title={entry.balance == null ? (entry.message ?? '') : undefined}
+                  >
+                    {entry.balance == null
+                      ? (entry.configured ? 'Error' : 'Off')
+                      : formatNaira(entry.balance)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {liquidity.partial && (
+          <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Float is a floor, not a total — a configured provider did not return a balance, so
+            coverage may read lower than reality. Hover a provider marked <strong>Error</strong> for the reason.
+          </div>
+        )}
+      </div>
 
       <section className="grid gap-3 md:grid-cols-3">
         <MiniMetric label="Today successful credits" value={formatNaira(stats.todayCredit)} Icon={ArrowDownRight} tone="blue" />

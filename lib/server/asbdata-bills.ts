@@ -1,4 +1,5 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
+import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
 
 /**
  * ASBDATA VTU API — data bundles and airtime.
@@ -107,6 +108,64 @@ function getAsbdataConfig() {
 
 export function isAsbdataBillsEnabled() {
   return Boolean(getAsbdataConfig().token)
+}
+
+/**
+ * Prepaid float ASBDATA holds for us — the wallet bills and airtime are vended against.
+ *
+ * The account endpoint has moved between deployments, so the path is overridable and the balance
+ * field is located by search rather than a fixed key. Fails soft: this backs an admin display, so
+ * an unreachable provider should read "unavailable" beside the other figures, not blank the page.
+ */
+export async function getAsbdataBalance(): Promise<ProviderBalance> {
+  const config = getAsbdataConfig()
+  const label = 'ASBDATA float'
+
+  if (!config.token) {
+    return {
+      provider: 'asbdata',
+      label,
+      configured: false,
+      balance: null,
+      message: 'ASBDATA token is not configured.',
+    }
+  }
+
+  const path = process.env.MAFITAPAY_ASBDATA_BALANCE_PATH?.trim() || '/api/user/'
+
+  try {
+    const { status, json } = await asbdataRequest('GET', path)
+
+    if (status >= 400) {
+      logAsbdataBills('balance.error', { status })
+      return {
+        provider: 'asbdata',
+        label,
+        configured: true,
+        balance: null,
+        message: `ASBDATA balance request failed (${status}).`,
+      }
+    }
+
+    const balance = findBalanceInPayload(json)
+    if (balance == null) {
+      logAsbdataBills('balance.unrecognized')
+      return {
+        provider: 'asbdata',
+        label,
+        configured: true,
+        balance: null,
+        message: 'ASBDATA balance response did not include a recognizable balance field.',
+      }
+    }
+
+    logAsbdataBills('balance.ok', { balance })
+    return { provider: 'asbdata', label, configured: true, balance }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'ASBDATA balance request failed.'
+    logAsbdataBills('balance.threw', { message })
+    return { provider: 'asbdata', label, configured: true, balance: null, message }
+  }
 }
 
 export function getAsbdataNetworkId(networkName: string): number | undefined {

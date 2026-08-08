@@ -1,4 +1,5 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
+import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
 
 type AmigoPlanEntry = {
   planId: number
@@ -201,6 +202,51 @@ function mergeProviderBundles(existingBundles: BillDataBundle[] | undefined, ami
 
 export function isAmigoBillsEnabled() {
   return Boolean(getAmigoApiKey())
+}
+
+/**
+ * Prepaid float Amigo holds for us.
+ *
+ * Same shape as the ASBDATA lookup: overridable path, balance located by search, failure returned
+ * rather than thrown so one dead vendor cannot take down the admin overview.
+ */
+export async function getAmigoBalance(): Promise<ProviderBalance> {
+  const label = 'Amigo float'
+
+  if (!isAmigoBillsEnabled()) {
+    return {
+      provider: 'amigo',
+      label,
+      configured: false,
+      balance: null,
+      message: 'Amigo API key is not configured.',
+    }
+  }
+
+  const path = process.env.MAFITAPAY_AMIGO_BALANCE_PATH?.trim() || '/user/'
+
+  try {
+    const body = await amigoRequest(path)
+    const balance = findBalanceInPayload(body)
+
+    if (balance == null) {
+      logAmigoBills('balance.unrecognized')
+      return {
+        provider: 'amigo',
+        label,
+        configured: true,
+        balance: null,
+        message: 'Amigo balance response did not include a recognizable balance field.',
+      }
+    }
+
+    logAmigoBills('balance.ok', { balance })
+    return { provider: 'amigo', label, configured: true, balance }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Amigo balance request failed.'
+    logAmigoBills('balance.threw', { message })
+    return { provider: 'amigo', label, configured: true, balance: null, message }
+  }
 }
 
 export async function listAmigoDataBundleNetworkProviders(

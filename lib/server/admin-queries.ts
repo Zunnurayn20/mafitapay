@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireAdminUser } from '@/lib/server/auth'
 import {
+  getTotalWalletLiability,
   getWalletByUserId,
   listAuditLogs,
   listDepositIntents,
@@ -10,7 +11,16 @@ import {
   listRecentTransactions,
   listUsers,
 } from '@/lib/server/data'
+import { getFlutterwaveBalance } from '@/lib/server/flutterwave-collections'
+import { getAmigoBalance } from '@/lib/server/amigo-bills'
+import { getAsbdataBalance } from '@/lib/server/asbdata-bills'
+import type { ProviderBalance } from '@/lib/server/provider-balance'
 import type { User, Wallet } from '@/types'
+
+/** Kobo-round. Float sums drift, and a coverage percent built on drifted money reads badly. */
+function roundNaira(value: number) {
+  return Math.round(value * 100) / 100
+}
 
 export async function requireAdminPageUser() {
   const admin = await requireAdminUser()
@@ -31,7 +41,7 @@ export async function listAdminWalletRows(limit = 100): Promise<AdminWalletRow[]
 }
 
 export async function loadAdminOverviewData() {
-  const [users, wallets, transactions, events, notifications, deposits, payouts] = await Promise.all([
+  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance] = await Promise.all([
     listUsers(),
     listAdminWalletRows(100),
     listRecentTransactions(100),
@@ -39,6 +49,10 @@ export async function loadAdminOverviewData() {
     listRecentNotifications(80),
     listDepositIntents({ limit: 50 }),
     listPayoutRequests({ limit: 50 }),
+    getTotalWalletLiability(),
+    getFlutterwaveBalance('NGN'),
+    getAmigoBalance(),
+    getAsbdataBalance(),
   ])
 
   const today = new Date()
@@ -64,11 +78,51 @@ export async function loadAdminOverviewData() {
     else todayDebit += txn.amount
   }
 
+  // Every place customer money sits: the payout rail plus the prepaid VTU floats that bills and
+  // airtime are vended against.
+  const providerBalances: ProviderBalance[] = [
+    {
+      provider: 'flutterwave',
+      label: 'Flutterwave NGN',
+      configured: flutterwaveBalance.configured,
+      balance: flutterwaveBalance.success ? (flutterwaveBalance.balance ?? 0) : null,
+      message: flutterwaveBalance.success ? undefined : flutterwaveBalance.message,
+    },
+    amigoBalance,
+    asbdataBalance,
+  ]
+
+  // Only providers we could actually read count toward the total. A configured provider that
+  // failed to answer makes the total a floor rather than a figure, so the card is told the
+  // coverage number is incomplete instead of showing a shortfall that may not exist. Providers
+  // that were never configured are simply not part of this business and are ignored.
+  const readable = providerBalances.filter(entry => entry.balance != null)
+  const unreadable = providerBalances.filter(entry => entry.configured && entry.balance == null)
+  const totalProviderFloat = readable.length > 0
+    ? roundNaira(readable.reduce((sum, entry) => sum + (entry.balance ?? 0), 0))
+    : null
+
+  const liquidityGap = totalProviderFloat == null ? null : roundNaira(totalProviderFloat - totalLiability)
+  const liquidityCoverage = totalProviderFloat == null
+    ? null
+    : totalLiability > 0
+      ? Math.round((totalProviderFloat / totalLiability) * 100)
+      : 100
+
   return {
     users,
     wallets,
     transactions,
     events,
+    liquidity: {
+      customerLiability: totalLiability,
+      providerFloat: totalProviderFloat,
+      providers: providerBalances,
+      // True when at least one configured provider did not answer, so the float is a floor.
+      partial: unreadable.length > 0,
+      gap: liquidityGap,
+      coverage: liquidityCoverage,
+    },
     stats: {
       usersToday,
       walletLiability,
