@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
+import { getNetworkFallbackLabel, getNetworkIconUrl } from '@/lib/crypto-networks'
 import type { CryptoAsset, CryptoDepositAddressFamily, Wallet } from '@/types'
 
 type FundingAccount = Wallet['virtualAccounts'][number]
@@ -385,12 +386,12 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] px-3.5 py-3 text-left transition-colors hover:border-[var(--gold)] hover:bg-[var(--clay2)] active:scale-[0.99]"
           >
             <AssetLogo
-              src={asset.icon}
-              alt={`${asset.symbol} logo`}
-              fallback={asset.symbol.slice(0, 1)}
+              src={getNetworkIconUrl(asset.network)}
+              alt={`${asset.network} network logo`}
+              fallback={getNetworkFallbackLabel(asset.network)}
               className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg"
               imgClassName="h-6 w-6 object-contain"
-              textClassName="text-sm"
+              textClassName="text-sm font-bold text-[var(--text2)]"
             />
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-bold text-[var(--text)]">{asset.network}</div>
