@@ -56,16 +56,25 @@ export function flutterwavePayoutCost(amount: number): number {
 /**
  * Full fee breakdown for a bank transfer or withdrawal.
  *
+ * Pass `marginNgn` to price against the admin-configured margin. Both the server (when charging)
+ * and the client (when quoting) supply the same value, sourced from the session payload, so the
+ * figure on the PIN screen matches the debit. Omitting it falls back to the env default, which is
+ * only correct before an admin has set one.
+ *
  * Non-finite or non-positive amounts yield a zero quote rather than NaN, so a partially
  * typed amount in the UI renders blank instead of "₦NaN".
  */
-export function quoteTransferFee(amount: number): TransferFeeQuote {
+export function quoteTransferFee(amount: number, marginNgn?: number): TransferFeeQuote {
   if (!Number.isFinite(amount) || amount <= 0) {
     return { amount: 0, providerCost: 0, platformMargin: 0, fee: 0, total: 0 }
   }
 
+  const resolvedMargin = Number.isFinite(marginNgn) && (marginNgn as number) >= 0
+    ? (marginNgn as number)
+    : readMargin()
+
   const providerCost = flutterwavePayoutCost(amount)
-  const platformMargin = roundNgn(readMargin())
+  const platformMargin = roundNgn(resolvedMargin)
   const fee = roundNgn(providerCost + platformMargin)
 
   return {

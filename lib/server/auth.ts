@@ -5,6 +5,7 @@ import type { FundingAccountEligibility } from '@/types'
 import { isAdminEmail } from '@/lib/admin-access'
 import { sendNotificationEmail } from '@/lib/server/auth-delivery'
 import { isFcmConfigured, sendPushNotification } from '@/lib/server/push-delivery'
+import { resolveMargin } from '@/lib/server/profit-margins'
 import {
   NotificationRecord,
   createNotification,
@@ -44,6 +45,14 @@ export interface SessionPayload {
   fundingAccountEligibility: FundingAccountEligibility
   cryptoDepositAddresses: Awaited<ReturnType<typeof listCryptoDepositAddressesByUserId>>
   currentSessionToken: string | null
+  /**
+   * Transfer fee margin the server will actually charge.
+   *
+   * Sent to the client so the quote in the modal is computed from the same number the server
+   * uses. Without it the client would fall back to the env default and could show a fee lower
+   * than the one debited after an admin changes the margin.
+   */
+  transferFeeMarginNgn: number
 }
 
 async function getCookieStore() {
@@ -147,7 +156,7 @@ export async function requireAdminUser() {
 
 export async function buildSessionPayload(user: StoredUser): Promise<SessionPayload> {
   const currentSessionToken = await getSessionToken()
-  const [wallet, transactions, notifications, sessions, securitySettings, kycSubmission, cryptoDepositAddresses] = await Promise.all([
+  const [wallet, transactions, notifications, sessions, securitySettings, kycSubmission, cryptoDepositAddresses, transferFeeMarginNgn] = await Promise.all([
     getWalletByUserId(user.id),
     getTransactionsByUserId(user.id),
     getNotificationsByUserId(user.id),
@@ -155,6 +164,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
     getSecuritySettingsByUserId(user.id),
     getLatestKycSubmissionByUserId(user.id),
     listCryptoDepositAddressesByUserId(user.id),
+    resolveMargin('transfer_out'),
   ])
   const safeKycSubmission = kycSubmission
     ? {
@@ -223,6 +233,7 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
     fundingAccountEligibility,
     cryptoDepositAddresses,
     currentSessionToken,
+    transferFeeMarginNgn,
   }
 }
 

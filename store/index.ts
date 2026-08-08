@@ -8,6 +8,7 @@ interface SessionData {
   wallet: Wallet | null
   transactions: Transaction[]
   currentSessionToken: string | null
+  transferFeeMarginNgn?: number
   securitySettings: {
     userId: string
     transactionPinEnabled: boolean
@@ -90,6 +91,8 @@ interface AppStore {
   kycSubmission: SessionData['kycSubmission']
   fundingAccountEligibility: FundingAccountEligibility
   cryptoDepositAddresses: CryptoDepositAddress[]
+  /** Server-resolved transfer margin, so fee quotes match what will actually be debited. */
+  transferFeeMarginNgn: number | null
   markNotificationsRead: () => Promise<void>
 
   // UI
@@ -133,6 +136,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
         message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
       },
       cryptoDepositAddresses: [],
+      transferFeeMarginNgn: null,
     })
     return
   }
@@ -150,6 +154,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
     kycSubmission: data.kycSubmission,
     fundingAccountEligibility: data.fundingAccountEligibility,
     cryptoDepositAddresses: data.cryptoDepositAddresses ?? [],
+    transferFeeMarginNgn: typeof data.transferFeeMarginNgn === 'number' ? data.transferFeeMarginNgn : null,
   })
 }
 
@@ -229,6 +234,7 @@ export const useAppStore = create<AppStore>()(
         message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
       },
       cryptoDepositAddresses: [],
+      transferFeeMarginNgn: null,
       notifications: [],
       sessions: [],
       markNotificationsRead: async () => {

@@ -1,5 +1,6 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
+import { resolveMargin } from '@/lib/server/profit-margins'
 
 /**
  * ASBDATA VTU API — data bundles and airtime.
@@ -53,8 +54,6 @@ const ASBDATA_MAX_ATTEMPTS = 3
 const ASBDATA_MIN_AIRTIME_NGN = 50
 const BILLS_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_BILLS === '1'
 
-export const ASBDATA_PLATFORM_MARKUP_NGN = Number(process.env.MAFITAPAY_ASBDATA_PLATFORM_MARKUP_NGN ?? 15)
-
 const ASBDATA_NETWORK_IDS: Record<string, number> = {
   mtn: 1,
   glo: 2,
@@ -72,6 +71,16 @@ const ASBDATA_NETWORK_FROM_ID: Record<number, string> = {
 
 let asbdataCatalogCache: AsbdataCatalogCache | null = null
 let asbdataCatalogPromise: Promise<NetworkProvider[]> | null = null
+
+/**
+ * Drop the cached catalog so the next read rebuilds it. See the Amigo equivalent -- bundle prices
+ * bake the margin in at build time, so a margin change has to invalidate this or the app keeps
+ * quoting the old price.
+ */
+export function clearAsbdataCatalogCache() {
+  asbdataCatalogCache = null
+  asbdataCatalogPromise = null
+}
 
 function logAsbdataBills(event: string, details?: Record<string, unknown>) {
   if (!BILLS_LOGGING_ENABLED) return
@@ -332,10 +341,10 @@ function parsePlanRow(row: Record<string, unknown>): AsbdataPlan | null {
   return { networkId, planId, size, validity, wholesaleNgn, planType }
 }
 
-function toAsbdataBundles(plans: AsbdataPlan[]): BillDataBundle[] {
+function toAsbdataBundles(plans: AsbdataPlan[], markupNgn: number): BillDataBundle[] {
   return plans.map(plan => ({
     label: plan.size,
-    amount: plan.wholesaleNgn + ASBDATA_PLATFORM_MARKUP_NGN,
+    amount: plan.wholesaleNgn + markupNgn,
     itemCode: `ASBDATA_PLAN_${plan.planId}`,
     billerCode: `ASBDATA_NETWORK_${plan.networkId}`,
     itemName: plan.size,
@@ -399,10 +408,10 @@ export async function listAsbdataDataBundleNetworkProviders(
   }
 
   logAsbdataBills('catalog.request')
-  asbdataCatalogPromise = loadAsbdataPlans()
-    .then(plans => {
+  asbdataCatalogPromise = Promise.all([loadAsbdataPlans(), resolveMargin('bills_asbdata')])
+    .then(([plans, markupNgn]) => {
       const bundlesByNetworkId = new Map<number, BillDataBundle[]>()
-      for (const bundle of toAsbdataBundles(plans)) {
+      for (const bundle of toAsbdataBundles(plans, markupNgn)) {
         const networkId = bundle.providerNetworkId
         if (networkId === undefined) continue
         const current = bundlesByNetworkId.get(networkId) ?? []

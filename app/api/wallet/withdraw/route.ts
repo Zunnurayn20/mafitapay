@@ -5,6 +5,7 @@ import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
 import { ensureFlutterwavePayoutSyncScheduler } from '@/lib/server/payout-sync-batch'
 import { quoteTransferFee } from '@/lib/transfer-fees'
+import { resolveMargin } from '@/lib/server/profit-margins'
 import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function POST(req: Request) {
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
   // The fee is charged on top: the recipient receives numericAmount, and the wallet gives up
   // amount + fee. Debit and lock the total so settlement, which releases the transaction's own
   // absolute amount, releases exactly what was reserved.
-  const feeQuote = quoteTransferFee(numericAmount)
+  const feeQuote = quoteTransferFee(numericAmount, await resolveMargin('transfer_out'))
   const totalDebit = feeQuote.total
 
   if (wallet.balance < totalDebit) {

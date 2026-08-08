@@ -19,7 +19,7 @@ type Step = 'form' | 'pin' | 'processing' | 'success'
 const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { refreshSession, showToast, securitySettings } = useAppStore()
+  const { refreshSession, showToast, securitySettings, transferFeeMarginNgn } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [step, setStep] = useState<Step>('form')
@@ -41,7 +41,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   const amt = parseFloat(amount) || 0
   // Bank transfers carry a fee; internal transfers stay free, so the quote is only surfaced in
   // bank mode. Quoted client-side from the same module the server charges from.
-  const quote = quoteTransferFee(amt)
+  // Priced against the server's margin so this matches the debit, not an env default.
+  const quote = quoteTransferFee(amt, transferFeeMarginNgn ?? undefined)
 
   useEffect(() => {
     if (!open) return

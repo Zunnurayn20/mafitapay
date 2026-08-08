@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, recordProviderEvent, verifySensitiveActionAuthorization } from '@/lib/server/data'
-import { AMIGO_PLATFORM_MARKUP_NGN, createAmigoDataPayment, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
-import { ASBDATA_PLATFORM_MARKUP_NGN, createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
+import { createAmigoDataPayment, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
+import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
+import { resolveMargin } from '@/lib/server/profit-margins'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { generateRef } from '@/lib/utils'
@@ -267,11 +268,12 @@ export async function POST(req: Request) {
   const transactionType = selectedProvider.type as Transaction['type']
   const transactionStatus: Transaction['status'] = providerResult.status === 'success' ? 'success' : 'pending'
   // Amigo and ASBDATA prices are wholesale plus our markup, so the markup is the platform fee.
-  // Flutterwave quotes retail, so there is nothing to split out.
+  // Flutterwave quotes retail, so there is nothing to split out. Resolved rather than imported as
+  // a constant so an admin margin change takes effect without a redeploy.
   const platformFee = providerResult.provider === 'amigo'
-    ? AMIGO_PLATFORM_MARKUP_NGN
+    ? await resolveMargin('bills_amigo')
     : providerResult.provider === 'asbdata'
-      ? ASBDATA_PLATFORM_MARKUP_NGN
+      ? await resolveMargin('bills_asbdata')
       : 0
   const isPlanBasedProvider = providerResult.provider === 'amigo' || providerResult.provider === 'asbdata'
   const transaction = {

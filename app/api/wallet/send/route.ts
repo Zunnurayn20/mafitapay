@@ -4,6 +4,7 @@ import { applyWalletMutation, createPayoutRequest, getUserByEmail, getUserByHand
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
 import { quoteTransferFee } from '@/lib/transfer-fees'
+import { resolveMargin } from '@/lib/server/profit-margins'
 import { generateRef } from '@/lib/utils'
 
 export async function POST(req: Request) {
@@ -166,7 +167,7 @@ export async function POST(req: Request) {
 
   // Charged on top of the transfer: the beneficiary receives numericAmount while the wallet
   // gives up amount + fee. Lock the total, since settlement releases the transaction amount.
-  const feeQuote = quoteTransferFee(numericAmount)
+  const feeQuote = quoteTransferFee(numericAmount, await resolveMargin('transfer_out'))
   const totalDebit = feeQuote.total
 
   const transaction = {

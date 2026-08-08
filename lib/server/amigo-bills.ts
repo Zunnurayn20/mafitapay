@@ -1,5 +1,6 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
+import { resolveMargin } from '@/lib/server/profit-margins'
 
 type AmigoPlanEntry = {
   planId: number
@@ -30,10 +31,21 @@ type AmigoCatalogCache = {
 
 const AMIGO_BASE_URL = process.env.MAFITAPAY_AMIGO_BASE_URL?.trim().replace(/\/$/, '') || 'https://amigo.ng/api'
 const AMIGO_CATALOG_TTL_MS = 5 * 60 * 1000
-export const AMIGO_PLATFORM_MARKUP_NGN = 15
 const BILLS_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_BILLS === '1'
 let amigoCatalogCache: AmigoCatalogCache | null = null
 let amigoCatalogPromise: Promise<NetworkProvider[]> | null = null
+
+/**
+ * Drop the cached catalog so the next read rebuilds it.
+ *
+ * Called when an admin changes the margin: bundle prices are baked in at catalog build time and
+ * cached for five minutes, so without this the app would keep quoting the old price while the
+ * purchase path charged the new margin.
+ */
+export function clearAmigoCatalogCache() {
+  amigoCatalogCache = null
+  amigoCatalogPromise = null
+}
 
 const AMIGO_NETWORK_IDS: Record<string, number> = {
   mtn: 1,
@@ -165,12 +177,12 @@ async function amigoRequest(path: string, init?: RequestInit) {
   return body
 }
 
-function toAmigoBundles(networkId: number, entries: AmigoPlanEntry[]): BillDataBundle[] {
+function toAmigoBundles(networkId: number, entries: AmigoPlanEntry[], markupNgn: number): BillDataBundle[] {
   return entries.map(entry => {
     const label = formatCapacityLabel(entry.dataCapacity)
     return {
       label,
-      amount: entry.price + AMIGO_PLATFORM_MARKUP_NGN,
+      amount: entry.price + markupNgn,
       itemCode: `AMIGO_PLAN_${entry.planId}`,
       billerCode: `AMIGO_NETWORK_${networkId}`,
       itemName: label,
@@ -280,11 +292,11 @@ export async function listAmigoDataBundleNetworkProviders(
   }
 
   logAmigoBills('catalog.request')
-  amigoCatalogPromise = Promise.resolve().then(() => {
+  amigoCatalogPromise = resolveMargin('bills_amigo').then(markupNgn => {
       const bundlesByNetworkId = new Map<number, BillDataBundle[]>()
-      bundlesByNetworkId.set(1, toAmigoBundles(1, AMIGO_STATIC_REGULAR_PLANS.mtn))
-      bundlesByNetworkId.set(2, toAmigoBundles(2, AMIGO_STATIC_REGULAR_PLANS.glo))
-      bundlesByNetworkId.set(4, toAmigoBundles(4, AMIGO_STATIC_REGULAR_PLANS.airtel))
+      bundlesByNetworkId.set(1, toAmigoBundles(1, AMIGO_STATIC_REGULAR_PLANS.mtn, markupNgn))
+      bundlesByNetworkId.set(2, toAmigoBundles(2, AMIGO_STATIC_REGULAR_PLANS.glo, markupNgn))
+      bundlesByNetworkId.set(4, toAmigoBundles(4, AMIGO_STATIC_REGULAR_PLANS.airtel, markupNgn))
 
       logAmigoBills('catalog.response', {
         source: 'static_verified_catalog',

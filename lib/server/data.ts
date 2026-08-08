@@ -2038,6 +2038,13 @@ function initSchema(db: DatabaseSync) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS profit_margins (
+      key TEXT PRIMARY KEY,
+      value_ngn REAL NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS network_providers (
       name TEXT PRIMARY KEY,
       icon TEXT NOT NULL,
@@ -3230,6 +3237,68 @@ export async function getTotalWalletLiability(): Promise<number> {
     .get() as { total: number } | undefined
   // Kobo-round: ledger sums are floats, so trim the drift before it reaches a coverage figure.
   return Math.round(Number(row?.total ?? 0) * 100) / 100
+}
+
+export type ProfitMarginRecord = {
+  key: string
+  valueNgn: number
+  updatedAt: string
+  updatedBy?: string
+}
+
+/**
+ * Admin-set profit margins, keyed by product.
+ *
+ * These override the env-var defaults the pricing code falls back to, so pricing can change
+ * without a redeploy. A missing row means "never configured here" and the caller keeps its env
+ * fallback -- absence is not zero, since a zero margin is a legitimate setting an admin might
+ * choose and the two must stay distinguishable.
+ */
+export async function getProfitMargins(): Promise<ProfitMarginRecord[]> {
+  await ensureDbReady()
+  const rows = getDb()
+    .prepare('SELECT key, value_ngn, updated_at, updated_by FROM profit_margins ORDER BY key ASC')
+    .all() as Array<{ key: string; value_ngn: number; updated_at: string; updated_by: string | null }>
+
+  return rows.map(row => ({
+    key: row.key,
+    valueNgn: Number(row.value_ngn),
+    updatedAt: row.updated_at,
+    updatedBy: row.updated_by ?? undefined,
+  }))
+}
+
+/** One margin by key, or null when the admin has never set it. */
+export async function getProfitMargin(key: string): Promise<number | null> {
+  await ensureDbReady()
+  const row = getDb()
+    .prepare('SELECT value_ngn FROM profit_margins WHERE key = ? LIMIT 1')
+    .get(key) as { value_ngn: number } | undefined
+
+  if (!row) return null
+  const value = Number(row.value_ngn)
+  return Number.isFinite(value) ? value : null
+}
+
+export async function upsertProfitMargin(input: {
+  key: string
+  valueNgn: number
+  updatedBy?: string
+}): Promise<ProfitMarginRecord> {
+  await ensureDbReady()
+  const updatedAt = new Date().toISOString()
+  const value = Math.round(input.valueNgn * 100) / 100
+
+  getDb().prepare(`
+    INSERT INTO profit_margins (key, value_ngn, updated_at, updated_by)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value_ngn = excluded.value_ngn,
+      updated_at = excluded.updated_at,
+      updated_by = excluded.updated_by
+  `).run(input.key, value, updatedAt, input.updatedBy ?? null)
+
+  return { key: input.key, valueNgn: value, updatedAt, updatedBy: input.updatedBy }
 }
 
 export async function getReferralOverviewByUserId(userId: string): Promise<ReferralOverview | null> {

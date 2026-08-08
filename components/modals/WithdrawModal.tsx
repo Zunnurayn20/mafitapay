@@ -29,7 +29,9 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const [amount, setAmount] = useState('')
   // Live quote so the fee the user sees matches what the server will charge. quoteTransferFee
   // returns a zero quote for empty or invalid amounts, so the fee row simply stays hidden.
-  const quote = quoteTransferFee(parseFloat(amount) || 0)
+  const transferFeeMarginNgn = useAppStore(state => state.transferFeeMarginNgn)
+  // Priced against the server's margin so this matches the debit, not an env default.
+  const quote = quoteTransferFee(parseFloat(amount) || 0, transferFeeMarginNgn ?? undefined)
   const [bankCode, setBankCode] = useState('')
   const [bankName, setBankName] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
