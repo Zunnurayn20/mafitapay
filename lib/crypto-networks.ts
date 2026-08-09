@@ -20,8 +20,7 @@ const NETWORK_ICONS: Record<string, string> = {
   near: '/crypto-assets/near.png',
   optimism: '/crypto-assets/eth-op.png',
   polygon: '/crypto-assets/pol.png',
-  // Robinhood Chain uses ETH for gas; use ETH mark until a branded robinhood.png is added.
-  robinhood: '/crypto-assets/eth.png',
+  robinhood: '/crypto-assets/robinhood.png',
   solana: '/crypto-assets/sol.png',
   sui: '/crypto-assets/sui.png',
   ton: '/crypto-assets/ton.png',
