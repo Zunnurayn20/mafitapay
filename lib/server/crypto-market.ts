@@ -499,8 +499,12 @@ export async function hydrateCryptoAssetPricing<T extends CryptoAsset>(assets: T
       marketPriceUpdatedAt,
       marketRate,
       change24h: usdEntry?.change24h ?? (options?.liveOnly ? 0 : asset.change24h),
-      buyRate: marketRate > 0 ? computeBuyRate(marketRate, asset.buySpreadBps) : 0,
-      sellRate: marketRate > 0 ? computeSellRate(marketRate, asset.sellSpreadBps) : 0,
+      buyRate: marketRate > 0
+        ? computeBuyRate(marketPriceUsd || 0, marketRate, asset.buyMarginNgnPerUsd)
+        : 0,
+      sellRate: marketRate > 0
+        ? computeSellRate(marketPriceUsd || 0, marketRate, asset.sellMarginNgnPerUsd)
+        : 0,
     }
   })
 
@@ -612,8 +616,8 @@ export async function getCryptoMarketHealth() {
       marketRate: id === 'ethereum' ? 2500000 : 1400,
       buyRate: 0,
       sellRate: 0,
-      buySpreadBps: 0,
-      sellSpreadBps: 0,
+      buyMarginNgnPerUsd: 0,
+      sellMarginNgnPerUsd: 0,
       quoteTtlSeconds: 90,
       change24h: 0,
     }))

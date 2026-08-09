@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
-import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import type { AdminSubmodule } from '../admin-config'
@@ -41,6 +41,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     applyNewAssetRoutedProfile,
     getRoutedProfileConfig,
     draftMarketRatePreview,
+    draftMarketPriceUsdPreview,
     addCryptoAssetDraft,
     uploadCryptoLogo,
     uploadingCryptoLogoId,
@@ -215,22 +216,24 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               />
             </label>
             <label className="text-[10px] text-[var(--muted)]">
-              Buy Spread (bps)
+              Buy margin (₦ per $1)
               <input
                 type="number"
                 min={0}
-                value={newCryptoAsset.buySpreadBps}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, buySpreadBps: Number(event.target.value) }))}
+                step="0.01"
+                value={newCryptoAsset.buyMarginNgnPerUsd}
+                onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
                 className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
               />
             </label>
             <label className="text-[10px] text-[var(--muted)]">
-              Sell Spread (bps)
+              Sell margin (₦ per $1)
               <input
                 type="number"
                 min={0}
-                value={newCryptoAsset.sellSpreadBps}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, sellSpreadBps: Number(event.target.value) }))}
+                step="0.01"
+                value={newCryptoAsset.sellMarginNgnPerUsd}
+                onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
                 className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
               />
             </label>
@@ -440,22 +443,24 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Buy Spread (bps)
+                  Buy margin (₦ per $1)
                   <input
                     type="number"
                     min={0}
-                    value={newCryptoAsset.buySpreadBps}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, buySpreadBps: Number(event.target.value) }))}
+                    step="0.01"
+                    value={newCryptoAsset.buyMarginNgnPerUsd}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Sell Spread (bps)
+                  Sell margin (₦ per $1)
                   <input
                     type="number"
                     min={0}
-                    value={newCryptoAsset.sellSpreadBps}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, sellSpreadBps: Number(event.target.value) }))}
+                    step="0.01"
+                    value={newCryptoAsset.sellMarginNgnPerUsd}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
@@ -517,7 +522,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   Derived Buy Rate
                   <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
                     {draftMarketRatePreview > 0
-                      ? `₦${computeBuyRate(draftMarketRatePreview, newCryptoAsset.buySpreadBps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
+                      ? `₦${computeBuyRate(draftMarketPriceUsdPreview, draftMarketRatePreview, newCryptoAsset.buyMarginNgnPerUsd).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
                       : 'Will resolve after save'}
                   </div>
                 </div>
@@ -525,7 +530,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   Derived Sell Rate
                   <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
                     {draftMarketRatePreview > 0
-                      ? `₦${computeSellRate(draftMarketRatePreview, newCryptoAsset.sellSpreadBps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
+                      ? `₦${computeSellRate(draftMarketPriceUsdPreview, draftMarketRatePreview, newCryptoAsset.sellMarginNgnPerUsd).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
                       : 'Will resolve after save'}
                   </div>
                 </div>
@@ -711,22 +716,40 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   </select>
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Buy Spread (bps)
+                  Buy margin (₦ per $1)
                   <input
                     type="number"
                     min={0}
-                    value={item.buySpreadBps}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, buySpreadBps: Number(event.target.value), buyRate: computeBuyRate(asset.marketRate, Number(event.target.value)) } : asset))}
+                    step="0.01"
+                    value={item.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
+                    onChange={event => setCryptoPricing(current => current.map(asset => {
+                      if (asset.id !== item.id) return asset
+                      const margin = Math.max(0, Number(event.target.value) || 0)
+                      return {
+                        ...asset,
+                        buyMarginNgnPerUsd: margin,
+                        buyRate: computeBuyRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
+                      }
+                    }))}
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Sell Spread (bps)
+                  Sell margin (₦ per $1)
                   <input
                     type="number"
                     min={0}
-                    value={item.sellSpreadBps}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, sellSpreadBps: Number(event.target.value), sellRate: computeSellRate(asset.marketRate, Number(event.target.value)) } : asset))}
+                    step="0.01"
+                    value={item.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
+                    onChange={event => setCryptoPricing(current => current.map(asset => {
+                      if (asset.id !== item.id) return asset
+                      const margin = Math.max(0, Number(event.target.value) || 0)
+                      return {
+                        ...asset,
+                        sellMarginNgnPerUsd: margin,
+                        sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
+                      }
+                    }))}
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
@@ -768,7 +791,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </label>
               </div>
               <p className="mt-2 text-[10px] text-[var(--muted)]">
-                Spreads (bps) = margin. Network fees (₦) = gas recovery (pair-tuned defaults: stables low, Ethereum high, sell ≥ buy). Blank uses the pair default shown as placeholder.
+                Margin is ₦ profit per $1 of asset value (e.g. mid FX 1500 + margin 50 → buy at ₦1550/$). Network fees (₦) recover gas separately.
               </p>
               {item.executionRail === 'routed_treasury' && (
                 <>

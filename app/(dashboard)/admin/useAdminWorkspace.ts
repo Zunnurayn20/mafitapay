@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
-import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import { useAppStore } from '@/store'
 import type { AuditLog, BillProvider, CryptoAsset, CryptoDepositEvent, CryptoOrder, DepositIntent, LedgerEntry, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, RewardAwardRequest, RewardRule, RewardRuleReport, Transaction, User } from '@/types'
@@ -285,8 +285,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     network: CryptoAsset['network']
     icon: string
     marketSourceId: string
-    buySpreadBps: number
-    sellSpreadBps: number
+    buyMarginNgnPerUsd: number
+    sellMarginNgnPerUsd: number
     buyNetworkFeeNgn: string
     sellNetworkFeeNgn: string
     quoteTtlSeconds: number
@@ -306,8 +306,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     network: 'Base',
     icon: '',
     marketSourceId: '',
-    buySpreadBps: 180,
-    sellSpreadBps: 180,
+    buyMarginNgnPerUsd: DEFAULT_USD_MARGIN_NGN,
+    sellMarginNgnPerUsd: DEFAULT_USD_MARGIN_NGN,
     buyNetworkFeeNgn: '',
     sellNetworkFeeNgn: '',
     quoteTtlSeconds: 90,
@@ -660,11 +660,20 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
-  function getDraftMarketRatePreview() {
+  function getDraftMarketPreview() {
     const symbol = newCryptoAsset.symbol.trim().toUpperCase()
     const marketSourceId = newCryptoAsset.marketSourceId.trim() || getDefaultCryptoMarketSourceId(symbol)
-    if (!marketSourceId) return 0
-    return cryptoPricing.find(asset => asset.marketSourceId === marketSourceId)?.marketRate ?? 0
+    if (!marketSourceId) return { marketRate: 0, marketPriceUsd: 0 }
+    const match = cryptoPricing.find(asset => asset.marketSourceId === marketSourceId)
+    return {
+      marketRate: match?.marketRate ?? 0,
+      marketPriceUsd: match?.marketPriceUsd ?? 0,
+    }
+  }
+
+  /** @deprecated use getDraftMarketPreview — kept for callers that only need mid NGN rate */
+  function getDraftMarketRatePreview() {
+    return getDraftMarketPreview().marketRate
   }
 
   function applyNewAssetRoutedProfile(profileId: string) {
@@ -692,12 +701,14 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     const name = newCryptoAsset.name.trim()
     const icon = newCryptoAsset.icon.trim() || CRYPTO_LOGO_SUGGESTIONS[symbol] || symbol.slice(0, 1) || '¤'
     const marketSourceId = newCryptoAsset.marketSourceId.trim() || getDefaultCryptoMarketSourceId(symbol)
-    const marketRatePreview = getDraftMarketRatePreview()
+    const { marketRate: marketRatePreview, marketPriceUsd: marketPriceUsdPreview } = getDraftMarketPreview()
     if (!symbol || !name) return showToast('Symbol and asset name are required.', 'error')
     if (!marketSourceId) return showToast('Live price feed ID is required for new crypto pairs.', 'error')
     const id = buildCryptoPairId(symbol, newCryptoAsset.network)
     if (cryptoPricing.some(item => item.id === id)) return showToast(`${id} already exists. Edit the existing pair instead.`, 'error')
 
+    const buyMargin = Math.max(0, Number(newCryptoAsset.buyMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN)
+    const sellMargin = Math.max(0, Number(newCryptoAsset.sellMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN)
     const asset: CryptoAsset = {
       id: id as CryptoAsset['id'],
       symbol: symbol as CryptoAsset['symbol'],
@@ -705,13 +716,14 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       network: newCryptoAsset.network,
       icon,
       marketSourceId,
+      marketPriceUsd: marketPriceUsdPreview || undefined,
       marketRate: marketRatePreview,
-      buySpreadBps: newCryptoAsset.buySpreadBps,
-      sellSpreadBps: newCryptoAsset.sellSpreadBps,
+      buyMarginNgnPerUsd: buyMargin,
+      sellMarginNgnPerUsd: sellMargin,
       buyNetworkFeeNgn: parseOptionalNumber(newCryptoAsset.buyNetworkFeeNgn),
       sellNetworkFeeNgn: parseOptionalNumber(newCryptoAsset.sellNetworkFeeNgn),
-      buyRate: marketRatePreview > 0 ? computeBuyRate(marketRatePreview, newCryptoAsset.buySpreadBps) : 0,
-      sellRate: marketRatePreview > 0 ? computeSellRate(marketRatePreview, newCryptoAsset.sellSpreadBps) : 0,
+      buyRate: marketRatePreview > 0 ? computeBuyRate(marketPriceUsdPreview, marketRatePreview, buyMargin) : 0,
+      sellRate: marketRatePreview > 0 ? computeSellRate(marketPriceUsdPreview, marketRatePreview, sellMargin) : 0,
       quoteTtlSeconds: newCryptoAsset.quoteTtlSeconds,
       isActive: newCryptoAsset.isActive,
       baseExecutionEnabled: newCryptoAsset.baseExecutionEnabled,
@@ -738,8 +750,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         network: 'Base',
         icon: '',
         marketSourceId: '',
-        buySpreadBps: 180,
-        sellSpreadBps: 180,
+        buyMarginNgnPerUsd: DEFAULT_USD_MARGIN_NGN,
+        sellMarginNgnPerUsd: DEFAULT_USD_MARGIN_NGN,
         buyNetworkFeeNgn: '',
         sellNetworkFeeNgn: '',
         quoteTtlSeconds: 90,
@@ -1361,7 +1373,9 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   }
 
   const visibleCryptoPricing = cryptoPricing.filter(item => cryptoCatalogFilter === 'active' ? item.isActive !== false : cryptoCatalogFilter === 'archived' ? item.isActive === false : true)
-  const draftMarketRatePreview = getDraftMarketRatePreview()
+  const draftMarketPreview = getDraftMarketPreview()
+  const draftMarketRatePreview = draftMarketPreview.marketRate
+  const draftMarketPriceUsdPreview = draftMarketPreview.marketPriceUsd
   const visibleBillProviders = billProviderCatalog.filter(item => billCatalogFilter === 'active' ? item.isActive !== false : billCatalogFilter === 'archived' ? item.isActive === false : true)
   const filteredKycItems = kycFundingFilter === 'funding_only' ? kycItems.filter(item => item.documentType === 'bvn' || item.documentType === 'nin') : kycItems
   const flutterwaveIssueEvents = providerEvents.filter(item => item.provider.toLowerCase().includes('flutterwave') && (item.status.toLowerCase() === 'failed' || !item.processedAt || item.externalEventId.startsWith('init:'))).slice(0, 8)
@@ -1477,6 +1491,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     addCryptoAssetDraft,
     setCryptoPairArchived,
     draftMarketRatePreview,
+    draftMarketPriceUsdPreview,
     visibleCryptoPricing,
     toggleRewardTransactionType,
     addRewardRuleDraft,

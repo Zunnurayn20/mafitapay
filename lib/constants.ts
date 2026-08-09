@@ -1,20 +1,39 @@
 import type { CryptoAsset, StockQuote, StocksMarketSummary, BillProvider, NetworkProvider } from '../types/index.ts'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN } from './crypto-market'
+
+/** Seed asset: margin is ₦ per $1 of value, not bps on the asset mid. */
+function seedCrypto(input: Omit<CryptoAsset, 'buyRate' | 'sellRate' | 'buyMarginNgnPerUsd' | 'sellMarginNgnPerUsd'> & {
+  buyMarginNgnPerUsd?: number
+  sellMarginNgnPerUsd?: number
+}): CryptoAsset {
+  const buyMargin = input.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+  const sellMargin = input.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+  const marketPriceUsd = input.marketPriceUsd ?? 0
+  return {
+    ...input,
+    buyMarginNgnPerUsd: buyMargin,
+    sellMarginNgnPerUsd: sellMargin,
+    buyRate: computeBuyRate(marketPriceUsd, input.marketRate, buyMargin),
+    sellRate: computeSellRate(marketPriceUsd, input.marketRate, sellMargin),
+  }
+}
 
 export const CRYPTO_ASSETS: CryptoAsset[] = [
-  // Network fees: stables cheap, natives higher, Ethereum mainnet highest. Sell ≥ buy (sweep cost).
-  { id: 'USDT_BSC', name: 'Tether USD', symbol: 'USDT', network: 'BSC', icon: '/crypto-assets/usdt.png', marketSourceId: 'tether', marketPriceUsd: 1, marketRate: 1600, buyRate: 1628.8, sellRate: 1571.2, buySpreadBps: 180, sellSpreadBps: 180, buyNetworkFeeNgn: 50, sellNetworkFeeNgn: 90, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.3 },
-  { id: 'USDC_BASE', name: 'USD Coin', symbol: 'USDC', network: 'Base', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyRate: 1620.52, sellRate: 1569.48, buySpreadBps: 160, sellSpreadBps: 160, buyNetworkFeeNgn: 60, sellNetworkFeeNgn: 100, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.2 },
-  { id: 'USDC_SOLANA', name: 'USD Coin', symbol: 'USDC', network: 'Solana', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyRate: 1620.52, sellRate: 1569.48, buySpreadBps: 160, sellSpreadBps: 160, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.2 },
-  { id: 'ETH_BASE', name: 'Ethereum', symbol: 'ETH', network: 'Base', icon: '/crypto-assets/eth-base.png', marketSourceId: 'ethereum', marketPriceUsd: 3200, marketRate: 5250000, buyRate: 5391750, sellRate: 5108250, buySpreadBps: 270, sellSpreadBps: 270, buyNetworkFeeNgn: 150, sellNetworkFeeNgn: 220, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.8 },
-  { id: 'ETH_ETHEREUM', name: 'Ethereum', symbol: 'ETH', network: 'Ethereum', icon: '/crypto-assets/eth.png', marketSourceId: 'ethereum', marketPriceUsd: 3200, marketRate: 5250000, buyRate: 5418000, sellRate: 5082000, buySpreadBps: 320, sellSpreadBps: 320, buyNetworkFeeNgn: 3500, sellNetworkFeeNgn: 4500, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 1.8 },
-  { id: 'SOL_SOLANA', name: 'Solana', symbol: 'SOL', network: 'Solana', icon: '/crypto-assets/sol.png', marketSourceId: 'solana', marketPriceUsd: 180, marketRate: 285000, buyRate: 293550, sellRate: 276450, buySpreadBps: 300, sellSpreadBps: 300, buyNetworkFeeNgn: 80, sellNetworkFeeNgn: 130, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 2.4 },
-  { id: 'BNB_BSC', name: 'BNB', symbol: 'BNB', network: 'BSC', icon: '/crypto-assets/bnb.png', marketSourceId: 'binancecoin', marketPriceUsd: 620, marketRate: 980000, buyRate: 1007440, sellRate: 952560, buySpreadBps: 280, sellSpreadBps: 280, buyNetworkFeeNgn: 100, sellNetworkFeeNgn: 160, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.1 },
-  { id: 'POL_POLYGON', name: 'Polygon Ecosystem Token', symbol: 'POL', network: 'Polygon', icon: '/crypto-assets/pol.png', marketSourceId: 'polygon-ecosystem-token', marketPriceUsd: 0.55, marketRate: 880, buyRate: 900, sellRate: 860, buySpreadBps: 300, sellSpreadBps: 300, buyNetworkFeeNgn: 70, sellNetworkFeeNgn: 120, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 0.5 },
-  { id: 'USDC_POLYGON', name: 'USD Coin', symbol: 'USDC', network: 'Polygon', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyRate: 1620, sellRate: 1570, buySpreadBps: 180, sellSpreadBps: 180, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 0.1 },
-  { id: 'USDT_POLYGON', name: 'Tether USD', symbol: 'USDT', network: 'Polygon', icon: '/crypto-assets/usdt.png', marketSourceId: 'tether', marketPriceUsd: 1, marketRate: 1600, buyRate: 1625, sellRate: 1575, buySpreadBps: 180, sellSpreadBps: 180, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 0.1 },
-  { id: 'TON_TON', name: 'Toncoin', symbol: 'TON', network: 'TON', icon: '/crypto-assets/ton.png', marketSourceId: 'the-open-network', marketPriceUsd: 1.32, marketRate: 1980, buyRate: 2039.4, sellRate: 1920.6, buySpreadBps: 300, sellSpreadBps: 300, buyNetworkFeeNgn: 180, sellNetworkFeeNgn: 250, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.5 },
-  { id: 'SUI_SUI', name: 'Sui', symbol: 'SUI', network: 'Sui', icon: '/crypto-assets/sui.png', marketSourceId: 'sui', marketPriceUsd: 1.02, marketRate: 1632, buyRate: 1680.96, sellRate: 1583.04, buySpreadBps: 300, sellSpreadBps: 300, buyNetworkFeeNgn: 120, sellNetworkFeeNgn: 180, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.7 },
-  { id: 'NEAR_NEAR', name: 'NEAR Protocol', symbol: 'NEAR', network: 'NEAR', icon: '/crypto-assets/near.png', marketSourceId: 'near', marketPriceUsd: 6.4, marketRate: 10240, buyRate: 10547.2, sellRate: 9932.8, buySpreadBps: 300, sellSpreadBps: 300, buyNetworkFeeNgn: 120, sellNetworkFeeNgn: 180, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.6 },
+  // Margin default ₦50 per $1 (e.g. mid FX 1500 → buy at 1550 per dollar of crypto).
+  // Network fees recover gas separately (stables cheap, Ethereum high, sell ≥ buy).
+  seedCrypto({ id: 'USDT_BSC', name: 'Tether USD', symbol: 'USDT', network: 'BSC', icon: '/crypto-assets/usdt.png', marketSourceId: 'tether', marketPriceUsd: 1, marketRate: 1600, buyNetworkFeeNgn: 50, sellNetworkFeeNgn: 90, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.3 }),
+  seedCrypto({ id: 'USDC_BASE', name: 'USD Coin', symbol: 'USDC', network: 'Base', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyNetworkFeeNgn: 60, sellNetworkFeeNgn: 100, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.2 }),
+  seedCrypto({ id: 'USDC_SOLANA', name: 'USD Coin', symbol: 'USDC', network: 'Solana', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.2 }),
+  seedCrypto({ id: 'ETH_BASE', name: 'Ethereum', symbol: 'ETH', network: 'Base', icon: '/crypto-assets/eth-base.png', marketSourceId: 'ethereum', marketPriceUsd: 3200, marketRate: 5_250_000, buyNetworkFeeNgn: 150, sellNetworkFeeNgn: 220, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.8 }),
+  seedCrypto({ id: 'ETH_ETHEREUM', name: 'Ethereum', symbol: 'ETH', network: 'Ethereum', icon: '/crypto-assets/eth.png', marketSourceId: 'ethereum', marketPriceUsd: 3200, marketRate: 5_250_000, buyNetworkFeeNgn: 3500, sellNetworkFeeNgn: 4500, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 1.8 }),
+  seedCrypto({ id: 'SOL_SOLANA', name: 'Solana', symbol: 'SOL', network: 'Solana', icon: '/crypto-assets/sol.png', marketSourceId: 'solana', marketPriceUsd: 180, marketRate: 285_000, buyNetworkFeeNgn: 80, sellNetworkFeeNgn: 130, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 2.4 }),
+  seedCrypto({ id: 'BNB_BSC', name: 'BNB', symbol: 'BNB', network: 'BSC', icon: '/crypto-assets/bnb.png', marketSourceId: 'binancecoin', marketPriceUsd: 620, marketRate: 980_000, buyNetworkFeeNgn: 100, sellNetworkFeeNgn: 160, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.1 }),
+  seedCrypto({ id: 'POL_POLYGON', name: 'Polygon Ecosystem Token', symbol: 'POL', network: 'Polygon', icon: '/crypto-assets/pol.png', marketSourceId: 'polygon-ecosystem-token', marketPriceUsd: 0.55, marketRate: 880, buyNetworkFeeNgn: 70, sellNetworkFeeNgn: 120, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 0.5 }),
+  seedCrypto({ id: 'USDC_POLYGON', name: 'USD Coin', symbol: 'USDC', network: 'Polygon', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 0.1 }),
+  seedCrypto({ id: 'USDT_POLYGON', name: 'Tether USD', symbol: 'USDT', network: 'Polygon', icon: '/crypto-assets/usdt.png', marketSourceId: 'tether', marketPriceUsd: 1, marketRate: 1600, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 0.1 }),
+  seedCrypto({ id: 'TON_TON', name: 'Toncoin', symbol: 'TON', network: 'TON', icon: '/crypto-assets/ton.png', marketSourceId: 'the-open-network', marketPriceUsd: 1.32, marketRate: 1980, buyNetworkFeeNgn: 180, sellNetworkFeeNgn: 250, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.5 }),
+  seedCrypto({ id: 'SUI_SUI', name: 'Sui', symbol: 'SUI', network: 'Sui', icon: '/crypto-assets/sui.png', marketSourceId: 'sui', marketPriceUsd: 1.02, marketRate: 1632, buyNetworkFeeNgn: 120, sellNetworkFeeNgn: 180, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.7 }),
+  seedCrypto({ id: 'NEAR_NEAR', name: 'NEAR Protocol', symbol: 'NEAR', network: 'NEAR', icon: '/crypto-assets/near.png', marketSourceId: 'near', marketPriceUsd: 6.4, marketRate: 10_240, buyNetworkFeeNgn: 120, sellNetworkFeeNgn: 180, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.6 }),
 ]
 
 export const NGX_STOCKS: StockQuote[] = [

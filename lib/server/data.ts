@@ -12,7 +12,7 @@ import {
 } from '../constants'
 import { getCryptoNetworkFeeNgn, getDefaultNetworkFeeNgn, getEffectiveQuoteTtlSeconds } from '../crypto-rules'
 import { getExecutionRailForAsset } from '../crypto-execution'
-import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '../crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '../crypto-market'
 import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../routed-assets'
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
@@ -454,6 +454,8 @@ type CryptoPairRow = {
   sell_rate: number
   buy_spread_bps: number
   sell_spread_bps: number
+  buy_margin_ngn_per_usd: number | null
+  sell_margin_ngn_per_usd: number | null
   buy_network_fee_ngn: number | null
   sell_network_fee_ngn: number | null
   quote_ttl_seconds: number
@@ -1000,8 +1002,13 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
     marketRate: Number(row.market_rate),
     buyRate: Number(row.buy_rate),
     sellRate: Number(row.sell_rate),
-    buySpreadBps: Number(row.buy_spread_bps),
-    sellSpreadBps: Number(row.sell_spread_bps),
+    // Prefer ₦-per-USD margin. Legacy bps rows without the new columns fall back to default (50).
+    buyMarginNgnPerUsd: row.buy_margin_ngn_per_usd != null && Number.isFinite(Number(row.buy_margin_ngn_per_usd))
+      ? Math.max(0, Number(row.buy_margin_ngn_per_usd))
+      : DEFAULT_USD_MARGIN_NGN,
+    sellMarginNgnPerUsd: row.sell_margin_ngn_per_usd != null && Number.isFinite(Number(row.sell_margin_ngn_per_usd))
+      ? Math.max(0, Number(row.sell_margin_ngn_per_usd))
+      : DEFAULT_USD_MARGIN_NGN,
     buyNetworkFeeNgn: row.buy_network_fee_ngn == null ? undefined : Number(row.buy_network_fee_ngn),
     sellNetworkFeeNgn: row.sell_network_fee_ngn == null ? undefined : Number(row.sell_network_fee_ngn),
     quoteTtlSeconds: Number(row.quote_ttl_seconds),
@@ -1873,8 +1880,10 @@ function initSchema(db: DatabaseSync) {
       market_rate REAL NOT NULL,
       buy_rate REAL NOT NULL,
       sell_rate REAL NOT NULL,
-      buy_spread_bps INTEGER NOT NULL,
-      sell_spread_bps INTEGER NOT NULL,
+      buy_spread_bps INTEGER NOT NULL DEFAULT 0,
+      sell_spread_bps INTEGER NOT NULL DEFAULT 0,
+      buy_margin_ngn_per_usd REAL,
+      sell_margin_ngn_per_usd REAL,
       buy_network_fee_ngn REAL,
       sell_network_fee_ngn REAL,
       quote_ttl_seconds INTEGER NOT NULL DEFAULT 90,
@@ -2405,18 +2414,25 @@ function migrateSchema(db: DatabaseSync) {
   // Null means "use pair/network default" so existing rows pick up gas recovery without a manual admin pass.
   ensureColumn(db, 'crypto_pairs', 'buy_network_fee_ngn', 'REAL')
   ensureColumn(db, 'crypto_pairs', 'sell_network_fee_ngn', 'REAL')
+  // ₦ profit per $1 of asset value (replaces bps spread as the live pricing model).
+  ensureColumn(db, 'crypto_pairs', 'buy_margin_ngn_per_usd', 'REAL')
+  ensureColumn(db, 'crypto_pairs', 'sell_margin_ngn_per_usd', 'REAL')
   ensureColumn(db, 'crypto_quotes', 'network_fee_ngn', 'REAL NOT NULL DEFAULT 0')
 
   // Seed pair-specific fees only where never configured (NULL). Explicit 0 stays free.
   for (const asset of CRYPTO_ASSETS) {
     const buyFee = getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
     const sellFee = getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id)
+    const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+    const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
     db.prepare(`
       UPDATE crypto_pairs
       SET buy_network_fee_ngn = COALESCE(buy_network_fee_ngn, ?),
-          sell_network_fee_ngn = COALESCE(sell_network_fee_ngn, ?)
+          sell_network_fee_ngn = COALESCE(sell_network_fee_ngn, ?),
+          buy_margin_ngn_per_usd = COALESCE(buy_margin_ngn_per_usd, ?),
+          sell_margin_ngn_per_usd = COALESCE(sell_margin_ngn_per_usd, ?)
       WHERE id = ?
-    `).run(buyFee, sellFee, asset.id)
+    `).run(buyFee, sellFee, buyMargin, sellMargin, asset.id)
   }
   ensureColumn(db, 'crypto_deposit_events', 'sweep_status', "TEXT NOT NULL DEFAULT 'pending'")
   ensureColumn(db, 'crypto_deposit_events', 'sweep_tx_hash', 'TEXT')
@@ -2586,10 +2602,10 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
   const now = new Date().toISOString()
   const upsertAsset = db.prepare(`
     INSERT INTO crypto_pairs (
-      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds,
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds,
       is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       symbol = excluded.symbol,
       name = excluded.name,
@@ -2599,8 +2615,10 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       market_rate = excluded.market_rate,
       buy_rate = excluded.buy_rate,
       sell_rate = excluded.sell_rate,
-      buy_spread_bps = excluded.buy_spread_bps,
-      sell_spread_bps = excluded.sell_spread_bps,
+      buy_margin_ngn_per_usd = COALESCE(crypto_pairs.buy_margin_ngn_per_usd, excluded.buy_margin_ngn_per_usd),
+      sell_margin_ngn_per_usd = COALESCE(crypto_pairs.sell_margin_ngn_per_usd, excluded.sell_margin_ngn_per_usd),
+      buy_network_fee_ngn = COALESCE(crypto_pairs.buy_network_fee_ngn, excluded.buy_network_fee_ngn),
+      sell_network_fee_ngn = COALESCE(crypto_pairs.sell_network_fee_ngn, excluded.sell_network_fee_ngn),
       quote_ttl_seconds = excluded.quote_ttl_seconds,
       is_active = excluded.is_active,
       base_execution_enabled = excluded.base_execution_enabled,
@@ -2621,6 +2639,11 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       ...asset,
       executionRail,
     }) : null
+    const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+    const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+    const marketPriceUsd = asset.marketPriceUsd ?? 0
+    const buyRate = computeBuyRate(marketPriceUsd, asset.marketRate, buyMargin)
+    const sellRate = computeSellRate(marketPriceUsd, asset.marketRate, sellMargin)
     upsertAsset.run(
       asset.id,
       asset.symbol,
@@ -2632,10 +2655,12 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       asset.marketPriceUsd ?? null,
       null,
       asset.marketRate,
-      asset.buyRate,
-      asset.sellRate,
-      asset.buySpreadBps,
-      asset.sellSpreadBps,
+      buyRate,
+      sellRate,
+      buyMargin,
+      sellMargin,
+      asset.buyNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id),
+      asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
       asset.quoteTtlSeconds,
       asset.isActive === false ? 0 : 1,
       asset.baseExecutionEnabled === true ? 1 : 0,
@@ -2841,8 +2866,8 @@ function seedCatalogTables(db: DatabaseSync) {
   if (!hasCatalogRows(db, 'crypto_pairs')) {
     const insertAsset = db.prepare(`
       INSERT INTO crypto_pairs (
-        id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (const asset of CRYPTO_ASSETS) {
@@ -2851,6 +2876,9 @@ function seedCatalogTables(db: DatabaseSync) {
         ...asset,
         executionRail,
       }) : null
+      const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+      const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+      const marketPriceUsd = asset.marketPriceUsd ?? 0
       insertAsset.run(
         asset.id,
         asset.symbol,
@@ -2862,10 +2890,12 @@ function seedCatalogTables(db: DatabaseSync) {
         asset.marketPriceUsd ?? null,
         null,
         asset.marketRate,
-        asset.buyRate,
-        asset.sellRate,
-        asset.buySpreadBps,
-        asset.sellSpreadBps,
+        computeBuyRate(marketPriceUsd, asset.marketRate, buyMargin),
+        computeSellRate(marketPriceUsd, asset.marketRate, sellMargin),
+        buyMargin,
+        sellMargin,
+        asset.buyNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id),
+        asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
         asset.quoteTtlSeconds,
         asset.isActive === false ? 0 : 1,
         asset.baseExecutionEnabled === true ? 1 : 0,
@@ -7587,8 +7617,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
   const now = new Date().toISOString()
   const statement = db.prepare(`
     INSERT INTO crypto_pairs (
-      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       symbol = excluded.symbol,
@@ -7601,8 +7631,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       market_rate = excluded.market_rate,
       buy_rate = excluded.buy_rate,
       sell_rate = excluded.sell_rate,
-      buy_spread_bps = excluded.buy_spread_bps,
-      sell_spread_bps = excluded.sell_spread_bps,
+      buy_margin_ngn_per_usd = excluded.buy_margin_ngn_per_usd,
+      sell_margin_ngn_per_usd = excluded.sell_margin_ngn_per_usd,
       buy_network_fee_ngn = excluded.buy_network_fee_ngn,
       sell_network_fee_ngn = excluded.sell_network_fee_ngn,
       quote_ttl_seconds = excluded.quote_ttl_seconds,
@@ -7624,8 +7654,17 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
     for (const asset of assets) {
       const marketSourceId = asset.marketSourceId?.trim() || getDefaultCryptoMarketSourceId(asset.symbol)
       const marketRate = Number.isFinite(asset.marketRate) && asset.marketRate > 0 ? asset.marketRate : 0
-      const buyRate = marketRate > 0 ? computeBuyRate(marketRate, asset.buySpreadBps) : 0
-      const sellRate = marketRate > 0 ? computeSellRate(marketRate, asset.sellSpreadBps) : 0
+      const marketPriceUsd = Number.isFinite(asset.marketPriceUsd) && (asset.marketPriceUsd ?? 0) > 0
+        ? Number(asset.marketPriceUsd)
+        : 0
+      const buyMargin = Number.isFinite(asset.buyMarginNgnPerUsd)
+        ? Math.max(0, asset.buyMarginNgnPerUsd)
+        : DEFAULT_USD_MARGIN_NGN
+      const sellMargin = Number.isFinite(asset.sellMarginNgnPerUsd)
+        ? Math.max(0, asset.sellMarginNgnPerUsd)
+        : DEFAULT_USD_MARGIN_NGN
+      const buyRate = marketRate > 0 ? computeBuyRate(marketPriceUsd, marketRate, buyMargin) : 0
+      const sellRate = marketRate > 0 ? computeSellRate(marketPriceUsd, marketRate, sellMargin) : 0
       const buyNetworkFeeNgn = asset.buyNetworkFeeNgn != null && Number.isFinite(asset.buyNetworkFeeNgn)
         ? Math.max(0, asset.buyNetworkFeeNgn)
         : getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
@@ -7653,8 +7692,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
         marketRate,
         buyRate,
         sellRate,
-        asset.buySpreadBps,
-        asset.sellSpreadBps,
+        buyMargin,
+        sellMargin,
         buyNetworkFeeNgn,
         sellNetworkFeeNgn,
         asset.quoteTtlSeconds,

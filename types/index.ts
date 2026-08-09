@@ -238,16 +238,25 @@ export interface CryptoAsset {
   marketRate: number
   buyRate: number
   sellRate: number
-  buySpreadBps: number
-  sellSpreadBps: number
   /**
-   * Flat ₦ network/gas recovery on buys. On top of buySpreadBps margin.
-   * When unset, server applies a network default.
+   * Profit margin in ₦ added per $1 of asset value on buys.
+   * buyRate = marketPriceUsd × (usdNgnMid + buyMarginNgnPerUsd)
+   * Example: mid FX 1500, margin 50 → user pays ₦1550 per dollar of SOL.
+   */
+  buyMarginNgnPerUsd: number
+  /**
+   * Profit margin in ₦ removed per $1 of asset value on sells.
+   * sellRate = marketPriceUsd × (usdNgnMid − sellMarginNgnPerUsd)
+   */
+  sellMarginNgnPerUsd: number
+  /**
+   * Flat ₦ network/gas recovery on buys (on top of USD-leg margin).
+   * When unset, server applies a pair/network default.
    */
   buyNetworkFeeNgn?: number
   /**
-   * Flat ₦ network/gas recovery on sells / deposit credits. On top of sellSpreadBps.
-   * When unset, server applies a network default.
+   * Flat ₦ network/gas recovery on sells / deposit credits.
+   * When unset, server applies a pair/network default.
    */
   sellNetworkFeeNgn?: number
   quoteTtlSeconds: number
