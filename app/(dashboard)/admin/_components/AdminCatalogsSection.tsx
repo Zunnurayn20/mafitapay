@@ -5,15 +5,42 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
-import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn } from '@/lib/crypto-market'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
 import { buildCryptoPairId } from '@/lib/routed-assets'
+import type { CryptoAsset } from '@/types'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
+
+function formatNgn(value: number) {
+  return `₦${value.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
+}
+
+/** Sell network fee slightly above buy when using the simple one-field control. */
+function defaultSellNetworkFromBuy(buyFee: number) {
+  return Math.round(Math.max(0, buyFee) * 1.2 * 100) / 100
+}
+
+function pricingPreview(asset: Pick<CryptoAsset, 'marketPriceUsd' | 'marketRate' | 'buyMarginNgnPerUsd' | 'sellMarginNgnPerUsd' | 'buyRate' | 'sellRate' | 'symbol'>) {
+  const usd = asset.marketPriceUsd ?? 0
+  const mid = asset.marketRate
+  const usdNgn = impliedUsdNgn(usd, mid)
+  const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+  const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+  return {
+    usdNgn,
+    buyFx: usdNgn > 0 ? usdNgn + buyMargin : 0,
+    sellFx: usdNgn > 0 ? Math.max(0, usdNgn - sellMargin) : 0,
+    buyRate: asset.buyRate || computeBuyRate(usd, mid, buyMargin),
+    sellRate: asset.sellRate || computeSellRate(usd, mid, sellMargin),
+    asymmetric: Math.abs(buyMargin - sellMargin) > 0.009,
+  }
+}
 
 export function AdminCatalogsSection({ workspace, submodule }: { workspace: AdminWorkspaceState; submodule?: AdminSubmodule }) {
   const [showNewAssetForm, setShowNewAssetForm] = useState(false)
   const [showNewAssetAdvanced, setShowNewAssetAdvanced] = useState(false)
+  const [showEditorAdvanced, setShowEditorAdvanced] = useState(false)
   const [selectedCryptoAssetId, setSelectedCryptoAssetId] = useState<string | null>(null)
   const [showNewRewardRuleForm, setShowNewRewardRuleForm] = useState(false)
   const [selectedRewardRuleId, setSelectedRewardRuleId] = useState<string | null>(null)
@@ -97,6 +124,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
       </Card>}
 
       {showAssets && <Card className="p-5">
+        <div className="mb-3 rounded-lg border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.06)] px-4 py-3 text-[11px] leading-relaxed text-[var(--text)]">
+          <strong className="text-[var(--gold2)]">How pricing works:</strong> the app loads the live dollar price of the coin,
+          then adds <strong>your profit</strong> on every dollar (e.g. live ₦1500 + profit ₦50 = customers buy at ₦1550 per $1).
+          A small <strong>network fee</strong> covers blockchain gas. Change those two numbers, then press Save.
+        </div>
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="text-[11px] font-bold text-[var(--text)]">Crypto Pricing Control</div>
@@ -147,7 +179,9 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
-              <div className="mt-1 text-[10px] text-[var(--muted)]">Fill the primary listing fields first. Advanced execution and routing settings stay collapsed until needed.</div>
+              <div className="mt-1 text-[10px] text-[var(--muted)]">
+                Set the coin, your profit per dollar, and a network fee. Technical settings stay under Advanced.
+              </div>
             </div>
             <button
               type="button"
@@ -206,100 +240,79 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               />
             </label>
             <label className="text-[10px] text-[var(--muted)]">
-              Live Price Feed ID
-              <input
-                type="text"
-                value={newCryptoAsset.marketSourceId}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, marketSourceId: event.target.value }))}
-                placeholder="tether, usd-coin, ethereum…"
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Buy margin (₦ per $1)
+              Your profit (₦ per $1)
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={newCryptoAsset.buyMarginNgnPerUsd}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
+                onChange={event => {
+                  const margin = Math.max(0, Number(event.target.value) || 0)
+                  setNewCryptoAsset(current => ({
+                    ...current,
+                    buyMarginNgnPerUsd: margin,
+                    sellMarginNgnPerUsd: margin,
+                  }))
+                }}
                 className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
               />
+              <span className="mt-1 block text-[9px] text-[var(--muted)]">
+                Example: live dollar rate 1500 + profit 50 → customer buys at ₦1550 per $1
+              </span>
             </label>
             <label className="text-[10px] text-[var(--muted)]">
-              Sell margin (₦ per $1)
+              Network fee (₦ per order)
               <input
                 type="number"
                 min={0}
-                step="0.01"
-                value={newCryptoAsset.sellMarginNgnPerUsd}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Buy network fee (₦)
-              <input
-                type="number"
-                min={0}
-                step="0.01"
+                step="1"
                 value={newCryptoAsset.buyNetworkFeeNgn}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
-                placeholder="Gas recovery (optional)"
+                onChange={event => {
+                  const raw = event.target.value
+                  const buyFee = raw.trim() === '' ? '' : String(Math.max(0, Number(raw) || 0))
+                  const sellFee = buyFee === '' ? '' : String(defaultSellNetworkFromBuy(Number(buyFee)))
+                  setNewCryptoAsset(current => ({
+                    ...current,
+                    buyNetworkFeeNgn: buyFee,
+                    sellNetworkFeeNgn: sellFee,
+                  }))
+                }}
+                placeholder="Leave blank for automatic"
                 className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
               />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Sell network fee (₦)
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={newCryptoAsset.sellNetworkFeeNgn}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, sellNetworkFeeNgn: event.target.value }))}
-                placeholder="Sweep/gas (optional)"
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Quote Validity (sec)
-              <input
-                type="number"
-                min={30}
-                value={newCryptoAsset.quoteTtlSeconds}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, quoteTtlSeconds: Number(event.target.value) }))}
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Execution Rail
-              <select
-                value={newCryptoAsset.executionRail}
-                onChange={event => setNewCryptoAsset(current => {
-                  const nextRail = event.target.value as typeof current.executionRail
-                  if (nextRail !== 'routed_treasury') {
-                    return {
-                      ...current,
-                      executionRail: nextRail,
-                      routedProfile: '',
-                      routedToChain: '',
-                      routedToToken: '',
-                      routedDecimals: '',
-                      routedAddressFamily: '',
-                      minimumBuyNgn: '',
-                      maxQuoteDriftPercent: '',
-                    }
-                  }
-                  return { ...current, executionRail: nextRail }
-                })}
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              >
-                {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
-                  <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+              <span className="mt-1 block text-[9px] text-[var(--muted)]">
+                Covers on-chain gas. Blank uses a safe default for this network.
+              </span>
             </label>
           </div>
+          {(draftMarketRatePreview > 0 || draftMarketPriceUsdPreview > 0) && (
+            <div className="mt-3 grid gap-2 border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.06)] p-3 text-[10px] text-[var(--text)] sm:grid-cols-3">
+              {(() => {
+                const margin = newCryptoAsset.buyMarginNgnPerUsd
+                const usdNgn = impliedUsdNgn(draftMarketPriceUsdPreview, draftMarketRatePreview)
+                return (
+                  <>
+                    <div>
+                      <div className="text-[var(--muted)]">Live mid (₦ / $1)</div>
+                      <div className="mt-0.5 font-mono font-bold">{usdNgn > 0 ? formatNgn(usdNgn) : '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--muted)]">Customer buys at</div>
+                      <div className="mt-0.5 font-mono font-bold text-[var(--gold2)]">
+                        {usdNgn > 0 ? `${formatNgn(usdNgn + margin)} / $1` : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--muted)]">Customer sells at</div>
+                      <div className="mt-0.5 font-mono font-bold">
+                        {usdNgn > 0 ? `${formatNgn(Math.max(0, usdNgn - margin))} / $1` : '—'}
+                      </div>
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <AssetLogo
               src={newCryptoAsset.icon}
@@ -430,8 +443,9 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </>
           )}
           {showNewAssetAdvanced && (
-            <>
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-4 space-y-3 border border-[var(--border)] bg-[var(--clay)] p-3">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">Advanced (optional)</div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <label className="text-[10px] text-[var(--muted)]">
                   Live Price Feed ID
                   <input
@@ -439,53 +453,51 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     value={newCryptoAsset.marketSourceId}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, marketSourceId: event.target.value }))}
                     placeholder="tether, usd-coin, ethereum…"
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Buy margin (₦ per $1)
+                  Buy profit only (₦ / $1)
                   <input
                     type="number"
                     min={0}
                     step="0.01"
                     value={newCryptoAsset.buyMarginNgnPerUsd}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Sell margin (₦ per $1)
+                  Sell profit only (₦ / $1)
                   <input
                     type="number"
                     min={0}
                     step="0.01"
                     value={newCryptoAsset.sellMarginNgnPerUsd}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Buy network fee (₦)
+                  Buy network fee only (₦)
                   <input
                     type="number"
                     min={0}
                     step="0.01"
                     value={newCryptoAsset.buyNetworkFeeNgn}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
-                    placeholder="Gas recovery"
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Sell network fee (₦)
+                  Sell network fee only (₦)
                   <input
                     type="number"
                     min={0}
                     step="0.01"
                     value={newCryptoAsset.sellNetworkFeeNgn}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, sellNetworkFeeNgn: event.target.value }))}
-                    placeholder="Sweep/gas"
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
@@ -495,47 +507,47 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     min={30}
                     value={newCryptoAsset.quoteTtlSeconds}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, quoteTtlSeconds: Number(event.target.value) }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
-                <label className="text-[10px] text-[var(--muted)] md:col-span-2 xl:col-span-4">
-                  Logo Path / URL
-                  <input
-                    type="text"
-                    value={newCryptoAsset.icon}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, icon: event.target.value }))}
-                    placeholder="/crypto-assets/usdt.png or https://…"
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
+                <label className="text-[10px] text-[var(--muted)]">
+                  Execution Rail
+                  <select
+                    value={newCryptoAsset.executionRail}
+                    onChange={event => setNewCryptoAsset(current => {
+                      const nextRail = event.target.value as typeof current.executionRail
+                      if (nextRail !== 'routed_treasury') {
+                        return {
+                          ...current,
+                          executionRail: nextRail,
+                          routedProfile: '',
+                          routedToChain: '',
+                          routedToToken: '',
+                          routedDecimals: '',
+                          routedAddressFamily: '',
+                          minimumBuyNgn: '',
+                          maxQuoteDriftPercent: '',
+                        }
+                      }
+                      return { ...current, executionRail: nextRail }
+                    })}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  >
+                    {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
+                      <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                 </label>
               </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <div className="text-[10px] text-[var(--muted)]">
-                  Live Market Price
-                  <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
-                    {draftMarketRatePreview > 0
-                      ? `₦${draftMarketRatePreview.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
-                      : 'Will resolve after save'}
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--muted)]">
-                  Derived Buy Rate
-                  <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
-                    {draftMarketRatePreview > 0
-                      ? `₦${computeBuyRate(draftMarketPriceUsdPreview, draftMarketRatePreview, newCryptoAsset.buyMarginNgnPerUsd).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
-                      : 'Will resolve after save'}
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--muted)]">
-                  Derived Sell Rate
-                  <div className="mt-1 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)]">
-                    {draftMarketRatePreview > 0
-                      ? `₦${computeSellRate(draftMarketPriceUsdPreview, draftMarketRatePreview, newCryptoAsset.sellMarginNgnPerUsd).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
-                      : 'Will resolve after save'}
-                  </div>
-                </div>
-              </div>
-            </>
+              <label className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={newCryptoAsset.baseExecutionEnabled}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, baseExecutionEnabled: event.target.checked }))}
+                />
+                In-app treasury trading enabled
+              </label>
+            </div>
           )}
           <div className="mt-4 flex flex-wrap gap-4 text-[10px] text-[var(--muted)]">
             <label className="flex items-center gap-2">
@@ -544,15 +556,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 checked={newCryptoAsset.isActive}
                 onChange={event => setNewCryptoAsset(current => ({ ...current, isActive: event.target.checked }))}
               />
-              Active
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={newCryptoAsset.baseExecutionEnabled}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, baseExecutionEnabled: event.target.checked }))}
-              />
-              Treasury Execution Enabled
+              Show this pair to customers
             </label>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -590,13 +594,19 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 <span className={`border px-2 py-1 text-[8px] font-bold uppercase tracking-[.8px] ${item.isActive === false ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]'}`}>
                   {item.isActive === false ? 'Archived' : 'Active'}
                 </span>
+                <span className="text-[9px] font-mono text-[var(--muted)]">
+                  +{formatNgn(item.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN)}/$
+                </span>
               </div>
             </button>
           ))}
         </div>
         <Modal
           open={Boolean(selectedCryptoAsset)}
-          onClose={() => setSelectedCryptoAssetId(null)}
+          onClose={() => {
+            setSelectedCryptoAssetId(null)
+            setShowEditorAdvanced(false)
+          }}
           title={selectedCryptoAsset ? selectedCryptoAsset.id : 'Asset Editor'}
           subtitle={selectedCryptoAsset ? `${selectedCryptoAsset.name} · ${selectedCryptoAsset.network}` : undefined}
           size="lg"
@@ -668,14 +678,119 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   {uploadingCryptoLogoId === item.id ? 'Uploading…' : 'Upload Logo'}
                 </label>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+
+              {/* Simple pricing — what operators use every day */}
+              <div className="mt-4 space-y-3 border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.06)] p-4">
+                <div className="text-[11px] font-bold text-[var(--text)]">Pricing (simple)</div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-[10px] text-[var(--muted)]">
+                    Your profit (₦ per $1)
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={item.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
+                      onChange={event => setCryptoPricing(current => current.map(asset => {
+                        if (asset.id !== item.id) return asset
+                        const margin = Math.max(0, Number(event.target.value) || 0)
+                        const usd = asset.marketPriceUsd ?? 0
+                        return {
+                          ...asset,
+                          buyMarginNgnPerUsd: margin,
+                          sellMarginNgnPerUsd: margin,
+                          buyRate: computeBuyRate(usd, asset.marketRate, margin),
+                          sellRate: computeSellRate(usd, asset.marketRate, margin),
+                        }
+                      }))}
+                      className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[13px] font-semibold text-[var(--text)] outline-none"
+                    />
+                    <span className="mt-1 block text-[9px] leading-relaxed text-[var(--muted)]">
+                      How much extra you earn on every dollar of this coin. Example: live rate 1500, profit 50 → customers buy at ₦1550 per $1.
+                    </span>
+                  </label>
+                  <label className="text-[10px] text-[var(--muted)]">
+                    Network fee (₦ per order)
+                    <input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={item.buyNetworkFeeNgn ?? ''}
+                      placeholder={String(getDefaultNetworkFeeNgn(item.network, 'buy', item.id))}
+                      onChange={event => {
+                        const raw = event.target.value
+                        setCryptoPricing(current => current.map(asset => {
+                          if (asset.id !== item.id) return asset
+                          if (raw.trim() === '') {
+                            return { ...asset, buyNetworkFeeNgn: undefined, sellNetworkFeeNgn: undefined }
+                          }
+                          const buyFee = Math.max(0, Number(raw) || 0)
+                          return {
+                            ...asset,
+                            buyNetworkFeeNgn: buyFee,
+                            sellNetworkFeeNgn: defaultSellNetworkFromBuy(buyFee),
+                          }
+                        }))
+                      }}
+                      className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[13px] font-semibold text-[var(--text)] outline-none"
+                    />
+                    <span className="mt-1 block text-[9px] leading-relaxed text-[var(--muted)]">
+                      Extra charge so the customer covers on-chain gas. Leave blank to use the automatic amount for this network.
+                    </span>
+                  </label>
+                </div>
+                {(() => {
+                  const preview = pricingPreview(item)
+                  return (
+                    <div className="grid gap-2 border border-[var(--border)] bg-[var(--coal)] p-3 text-[10px] sm:grid-cols-3">
+                      <div>
+                        <div className="text-[var(--muted)]">Live mid rate</div>
+                        <div className="mt-0.5 font-mono font-bold text-[var(--text)]">
+                          {preview.usdNgn > 0 ? `${formatNgn(preview.usdNgn)} / $1` : 'Waiting for live price…'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[var(--muted)]">Customer buys at</div>
+                        <div className="mt-0.5 font-mono font-bold text-[var(--gold2)]">
+                          {preview.buyFx > 0 ? `${formatNgn(preview.buyFx)} / $1` : '—'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[var(--muted)]">Customer sells at</div>
+                        <div className="mt-0.5 font-mono font-bold text-[var(--text)]">
+                          {preview.sellFx > 0 ? `${formatNgn(preview.sellFx)} / $1` : '—'}
+                        </div>
+                      </div>
+                      {preview.asymmetric && (
+                        <div className="sm:col-span-3 text-[9px] text-amber-600">
+                          Buy and sell profit are currently different. Open Advanced to edit them separately, or change “Your profit” above to set both equal.
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowEditorAdvanced(current => !current)}
+                  className="border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[10px] font-bold text-[var(--text)]"
+                >
+                  {showEditorAdvanced ? 'Hide Advanced' : 'Show Advanced'}
+                </button>
+              </div>
+
+              {showEditorAdvanced && (
+              <div className="mt-3 space-y-3 border border-[var(--border)] bg-[var(--coal)] p-3">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">Advanced</div>
+              <div className="grid gap-3 sm:grid-cols-2">
                 <label className="text-[10px] text-[var(--muted)]">
                   Live Price Feed ID
                   <input
                     type="text"
                     value={item.marketSourceId}
                     onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, marketSourceId: event.target.value } : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
@@ -685,7 +800,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     min={30}
                     value={item.quoteTtlSeconds}
                     onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, quoteTtlSeconds: Number(event.target.value) } : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
@@ -708,7 +823,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                       }
                       return { ...asset, executionRail: nextRail }
                     })() : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   >
                     {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
                       <option key={option.value || 'none'} value={option.value}>{option.label}</option>
@@ -716,7 +831,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   </select>
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Buy margin (₦ per $1)
+                  Buy profit only (₦ / $1)
                   <input
                     type="number"
                     min={0}
@@ -731,11 +846,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                         buyRate: computeBuyRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
                       }
                     }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Sell margin (₦ per $1)
+                  Sell profit only (₦ / $1)
                   <input
                     type="number"
                     min={0}
@@ -750,11 +865,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                         sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
                       }
                     }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Buy network fee (₦)
+                  Buy network fee only (₦)
                   <input
                     type="number"
                     min={0}
@@ -768,11 +883,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                         buyNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
                       } : asset))
                     }}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
                 <label className="text-[10px] text-[var(--muted)]">
-                  Sell network fee (₦)
+                  Sell network fee only (₦)
                   <input
                     type="number"
                     min={0}
@@ -786,13 +901,12 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                         sellNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
                       } : asset))
                     }}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
               </div>
-              <p className="mt-2 text-[10px] text-[var(--muted)]">
-                Margin is ₦ profit per $1 of asset value (e.g. mid FX 1500 + margin 50 → buy at ₦1550/$). Network fees (₦) recover gas separately.
-              </p>
+              </div>
+              )}
               {item.executionRail === 'routed_treasury' && (
                 <>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
