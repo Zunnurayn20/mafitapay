@@ -676,7 +676,9 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            {/* Wider row gap than column gap: the provider badge overhangs the card top by 8px,
+                which would otherwise sit flush against the card above. */}
+            <div className="grid grid-cols-2 gap-x-2 gap-y-4">
               {shownDataBundles.map(bundle => {
                 const subtitle = getDataBundleSubtitle(bundle)
                 const validityDisplay = bundle.validity
@@ -687,6 +689,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const categoryLabel = showPlanCategoryPicker && activePlanCategory === ALL_PLAN_CATEGORIES
                   ? formatPlanCategoryLabel(getPlanCategory(bundle))
                   : null
+                const providerBadge = bundle.provider === 'amigo'
+                  ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
+                  : bundle.provider === 'asbdata'
+                    ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
+                    : null
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
@@ -699,31 +706,20 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                             setShowRecentAccounts(false)
                             setStep('phone')
                           }}
-                          className={`border p-3 text-left transition-all ${
+                          className={`relative border px-3 pb-3 pt-4 text-left transition-all ${
                             selectedBundleCode === bundle.itemCode
                         ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)]'
                         : 'border-[var(--border)] bg-[var(--clay2)] hover:border-[var(--gold2)]'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <div className="text-[12px] font-bold text-[var(--text)]">
-                            {bundle.label}
-                            {validityDisplay ? ` - ${validityDisplay}` : ''}
-                          </div>
-                        </div>
+                    {providerBadge && (
+                      <div className={`absolute -top-2 left-1/2 z-10 -translate-x-1/2 rounded-full border px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.8px] text-white ${providerBadge.className}`}>
+                        {providerBadge.label}
                       </div>
-                      {bundle.provider === 'amigo' && (
-                        <div className="shrink-0 rounded-full border border-emerald-500 bg-emerald-500 px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.8px] text-white shadow-[0_6px_18px_rgba(34,197,94,.22)]">
-                          Amigo
-                        </div>
-                      )}
-                      {bundle.provider === 'asbdata' && (
-                        <div className="shrink-0 rounded-full border border-blue-500 bg-blue-500 px-2 py-0.5 text-[7px] font-bold uppercase tracking-[0.8px] text-white shadow-[0_6px_18px_rgba(59,130,246,.22)]">
-                          ASBData
-                        </div>
-                      )}
+                    )}
+                    <div className="text-[12px] font-bold text-[var(--text)]">
+                      {bundle.label}
+                      {validityDisplay ? ` - ${validityDisplay}` : ''}
                     </div>
                     {categoryLabel && (
                       <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">{categoryLabel}</div>
