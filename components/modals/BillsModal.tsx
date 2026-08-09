@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
@@ -15,6 +15,7 @@ import {
   normalizeNigerianPhoneNumber,
 } from '@/lib/bill-config'
 import { useAppStore } from '@/store'
+import { readClipboardText } from '@/lib/clipboard'
 import { generateRef } from '@/lib/utils'
 
 interface BillsModalProps { open: boolean; onClose: () => void }
@@ -190,6 +191,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [planQuery, setPlanQuery] = useState('')
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
+  const formAccountInputRef = useRef<HTMLInputElement>(null)
+  const phoneAccountInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
   const [pendingRequest, setPendingRequest] = useState<{
@@ -364,6 +367,24 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     }
     return null
   })()
+
+  async function pasteAccount(inputRef: React.RefObject<HTMLInputElement | null>) {
+    const result = await readClipboardText()
+    if (result.ok) {
+      // Pasted numbers often arrive as "+234 803 ..." or with separators; normalizing here
+      // means the provider detection below sees the same shape the blur handler produces.
+      setAccount(isPhoneService ? normalizeNigerianPhoneNumber(result.text) : result.text)
+      setTouched(current => ({ ...current, account: true }))
+      setShowRecentAccounts(false)
+      return
+    }
+    if (result.reason === 'empty') {
+      showToast('Clipboard is empty.', 'error')
+      return
+    }
+    inputRef.current?.focus()
+    showToast(`Press and hold the ${accountLabel.toLowerCase()} field to paste.`, 'error')
+  }
 
   async function confirm(overrides?: {
     amount?: string
@@ -563,9 +584,12 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           <div>
             <Input
               label={accountLabel}
+              ref={formAccountInputRef}
               placeholder={accountPlaceholder}
               value={account}
               inputMode={isPhoneService ? 'tel' : undefined}
+              suffix={isPhoneService ? 'PASTE' : undefined}
+              onSuffixClick={isPhoneService ? () => void pasteAccount(formAccountInputRef) : undefined}
               onFocus={() => {
                 if (isPhoneService && recentPhoneAccounts.length > 0) {
                   setShowRecentAccounts(true)
@@ -848,10 +872,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           <div>
             <Input
               label={accountLabel}
+              ref={phoneAccountInputRef}
               placeholder={accountPlaceholder}
               value={account}
               inputMode="tel"
               autoFocus
+              suffix="PASTE"
+              onSuffixClick={() => void pasteAccount(phoneAccountInputRef)}
               onFocus={() => {
                 if (recentPhoneAccounts.length > 0) setShowRecentAccounts(true)
               }}

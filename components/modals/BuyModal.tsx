@@ -8,6 +8,7 @@ import { PinPad } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
+import { readClipboardText } from '@/lib/clipboard'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { getCryptoNetworkFeeNgn, getMinimumBuyNgn } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
@@ -163,19 +164,17 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   }, [amount, address, pairId, step])
 
   async function pasteAddress() {
-    // readText is unavailable in the Android WebView and on non-HTTPS origins, and Firefox
-    // gates it behind a pref -- fall back to focusing the field so a long-press paste works.
-    try {
-      const text = await navigator.clipboard?.readText()
-      if (!text?.trim()) {
-        showToast('Clipboard is empty.', 'error')
-        return
-      }
-      setAddress(text.trim())
-    } catch {
-      addressInputRef.current?.focus()
-      showToast('Press and hold the address field to paste.', 'error')
+    const result = await readClipboardText()
+    if (result.ok) {
+      setAddress(result.text)
+      return
     }
+    if (result.reason === 'empty') {
+      showToast('Clipboard is empty.', 'error')
+      return
+    }
+    addressInputRef.current?.focus()
+    showToast('Press and hold the address field to paste.', 'error')
   }
 
   async function runBuyPreflight() {
