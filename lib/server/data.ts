@@ -2402,10 +2402,22 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'crypto_orders', 'execution_status', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'execution_reference', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'destination_tx_hash', 'TEXT')
-  // Null means "use network default" so existing rows pick up gas recovery without a manual admin pass.
+  // Null means "use pair/network default" so existing rows pick up gas recovery without a manual admin pass.
   ensureColumn(db, 'crypto_pairs', 'buy_network_fee_ngn', 'REAL')
   ensureColumn(db, 'crypto_pairs', 'sell_network_fee_ngn', 'REAL')
   ensureColumn(db, 'crypto_quotes', 'network_fee_ngn', 'REAL NOT NULL DEFAULT 0')
+
+  // Seed pair-specific fees only where never configured (NULL). Explicit 0 stays free.
+  for (const asset of CRYPTO_ASSETS) {
+    const buyFee = getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
+    const sellFee = getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id)
+    db.prepare(`
+      UPDATE crypto_pairs
+      SET buy_network_fee_ngn = COALESCE(buy_network_fee_ngn, ?),
+          sell_network_fee_ngn = COALESCE(sell_network_fee_ngn, ?)
+      WHERE id = ?
+    `).run(buyFee, sellFee, asset.id)
+  }
   ensureColumn(db, 'crypto_deposit_events', 'sweep_status', "TEXT NOT NULL DEFAULT 'pending'")
   ensureColumn(db, 'crypto_deposit_events', 'sweep_tx_hash', 'TEXT')
   ensureColumn(db, 'crypto_deposit_events', 'sweep_error', 'TEXT')
@@ -7616,10 +7628,10 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       const sellRate = marketRate > 0 ? computeSellRate(marketRate, asset.sellSpreadBps) : 0
       const buyNetworkFeeNgn = asset.buyNetworkFeeNgn != null && Number.isFinite(asset.buyNetworkFeeNgn)
         ? Math.max(0, asset.buyNetworkFeeNgn)
-        : getDefaultNetworkFeeNgn(asset.network, 'buy')
+        : getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
       const sellNetworkFeeNgn = asset.sellNetworkFeeNgn != null && Number.isFinite(asset.sellNetworkFeeNgn)
         ? Math.max(0, asset.sellNetworkFeeNgn)
-        : getDefaultNetworkFeeNgn(asset.network, 'sell')
+        : getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id)
       const executionRail = asset.executionRail ?? getConfigurableAssetExecutionRail(asset)
       assertSupportedAssetExecutionRail(asset, executionRail)
       const routedConfig = executionRail === 'routed_treasury'

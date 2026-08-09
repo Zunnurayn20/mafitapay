@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
 import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
+import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
@@ -736,7 +737,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     min={0}
                     step="0.01"
                     value={item.buyNetworkFeeNgn ?? ''}
-                    placeholder="Gas recovery"
+                    placeholder={String(getDefaultNetworkFeeNgn(item.network, 'buy', item.id))}
                     onChange={event => {
                       const raw = event.target.value
                       setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
@@ -754,7 +755,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     min={0}
                     step="0.01"
                     value={item.sellNetworkFeeNgn ?? ''}
-                    placeholder="Sweep/gas recovery"
+                    placeholder={String(getDefaultNetworkFeeNgn(item.network, 'sell', item.id))}
                     onChange={event => {
                       const raw = event.target.value
                       setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
@@ -767,7 +768,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </label>
               </div>
               <p className="mt-2 text-[10px] text-[var(--muted)]">
-                Spreads (bps) are your margin. Network fees (₦) recover on-chain gas. Leave fee blank to use the network default.
+                Spreads (bps) = margin. Network fees (₦) = gas recovery (pair-tuned defaults: stables low, Ethereum high, sell ≥ buy). Blank uses the pair default shown as placeholder.
               </p>
               {item.executionRail === 'routed_treasury' && (
                 <>

@@ -1,28 +1,57 @@
 import { getRoutedTreasuryPairConfig, getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '@/lib/routed-assets'
 import type { CryptoAsset, CryptoNetwork, CryptoPairId } from '@/types'
 
+type NetworkFeePair = { buy: number; sell: number }
+
 /**
- * Flat network/gas recovery fees (₦) when an asset has no explicit fee configured.
- *
- * These sit on top of buy/sell spread bps (margin). Gas is roughly fixed per tx,
- * so a flat NGN fee recovers executor + sweep cost better than more bps alone.
+ * Pair-specific gas recovery (₦). Tuned so:
+ * - cheap L2 / L1 sidechains + simple stable transfers → lower fees
+ * - native swaps (ETH/BNB/SOL) → higher (more gas / more hops)
+ * - Ethereum mainnet → much higher
+ * - sell ≥ buy (deposit sweep + optional gas top-up costs more than a treasury send)
+ */
+const DEFAULT_NETWORK_FEE_NGN_BY_PAIR: Partial<Record<string, NetworkFeePair>> = {
+  // Cheap stables — transfer-only, low gas
+  USDT_BSC: { buy: 50, sell: 90 },
+  USDC_BASE: { buy: 60, sell: 100 },
+  USDC_SOLANA: { buy: 40, sell: 70 },
+  USDC_POLYGON: { buy: 40, sell: 70 },
+  USDT_POLYGON: { buy: 40, sell: 70 },
+
+  // Native / swap-heavy on L2 or sidechains
+  ETH_BASE: { buy: 150, sell: 220 },
+  BNB_BSC: { buy: 100, sell: 160 },
+  SOL_SOLANA: { buy: 80, sell: 130 },
+  POL_POLYGON: { buy: 70, sell: 120 },
+
+  // Ethereum mainnet — expensive gas
+  ETH_ETHEREUM: { buy: 3_500, sell: 4_500 },
+
+  // Non-EVM rails
+  TON_TON: { buy: 180, sell: 250 },
+  SUI_SUI: { buy: 120, sell: 180 },
+  NEAR_NEAR: { buy: 120, sell: 180 },
+}
+
+/**
+ * Network-wide fallback when the pair has no entry above.
  * Sell is slightly higher than buy because deposit sweeps often cost more.
  */
-const DEFAULT_NETWORK_FEE_NGN_BY_NETWORK: Partial<Record<string, { buy: number; sell: number }>> = {
+const DEFAULT_NETWORK_FEE_NGN_BY_NETWORK: Partial<Record<string, NetworkFeePair>> = {
   Base: { buy: 100, sell: 150 },
   BSC: { buy: 80, sell: 120 },
   Solana: { buy: 50, sell: 80 },
-  Ethereum: { buy: 2_500, sell: 3_000 },
+  Ethereum: { buy: 3_000, sell: 4_000 },
   Polygon: { buy: 60, sell: 100 },
   Arbitrum: { buy: 120, sell: 180 },
   Optimism: { buy: 120, sell: 180 },
   Linea: { buy: 120, sell: 180 },
-  TON: { buy: 150, sell: 200 },
-  Sui: { buy: 100, sell: 150 },
-  NEAR: { buy: 100, sell: 150 },
+  TON: { buy: 180, sell: 250 },
+  Sui: { buy: 120, sell: 180 },
+  NEAR: { buy: 120, sell: 180 },
 }
 
-const FALLBACK_NETWORK_FEE_NGN = { buy: 150, sell: 200 }
+const FALLBACK_NETWORK_FEE_NGN: NetworkFeePair = { buy: 150, sell: 200 }
 
 const MINIMUM_BUY_NGN_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   USDC_BASE: 500,
@@ -87,27 +116,52 @@ function roundNgn(value: number) {
   return Math.round(value * 100) / 100
 }
 
-/** Default gas-recovery fee for a network when the asset has no override. */
-export function getDefaultNetworkFeeNgn(network: CryptoNetwork | string, side: 'buy' | 'sell') {
-  const entry = DEFAULT_NETWORK_FEE_NGN_BY_NETWORK[network]
+function pickFee(entry: NetworkFeePair, side: 'buy' | 'sell') {
+  return side === 'buy' ? entry.buy : entry.sell
+}
+
+/** Pair-specific default when known; otherwise network fallback. */
+export function getDefaultNetworkFeeNgn(
+  network: CryptoNetwork | string,
+  side: 'buy' | 'sell',
+  pairId?: CryptoPairId | string,
+) {
+  if (pairId) {
+    const pairEntry = DEFAULT_NETWORK_FEE_NGN_BY_PAIR[pairId]
+      ?? DEFAULT_NETWORK_FEE_NGN_BY_PAIR[String(pairId)]
+    if (pairEntry) return pickFee(pairEntry, side)
+  }
+
+  const networkEntry = DEFAULT_NETWORK_FEE_NGN_BY_NETWORK[network]
     ?? DEFAULT_NETWORK_FEE_NGN_BY_NETWORK[String(network)]
     ?? FALLBACK_NETWORK_FEE_NGN
-  return side === 'buy' ? entry.buy : entry.sell
+  return pickFee(networkEntry, side)
 }
 
 /**
  * Network/gas fee the customer pays on top of spread margin.
  *
- * Prefer the admin-configured per-asset fee when set (>= 0). Otherwise fall
- * back to the network default so we never silently absorb on-chain costs.
+ * Order: admin override on the asset → pair default → network default.
+ * Explicit 0 is allowed (admin chose free gas); null/undefined uses defaults.
  */
 export function getCryptoNetworkFeeNgn(
-  asset: Pick<CryptoAsset, 'network' | 'buyNetworkFeeNgn' | 'sellNetworkFeeNgn'>,
+  asset: Pick<CryptoAsset, 'id' | 'network' | 'buyNetworkFeeNgn' | 'sellNetworkFeeNgn'>,
   side: 'buy' | 'sell',
 ): number {
   const configured = side === 'buy' ? asset.buyNetworkFeeNgn : asset.sellNetworkFeeNgn
   if (configured != null && Number.isFinite(configured) && configured >= 0) {
     return roundNgn(configured)
   }
-  return roundNgn(getDefaultNetworkFeeNgn(asset.network, side))
+  return roundNgn(getDefaultNetworkFeeNgn(asset.network, side, asset.id))
+}
+
+/** Full default fee pair for admin previews / seeding. */
+export function getDefaultNetworkFeePair(
+  network: CryptoNetwork | string,
+  pairId?: CryptoPairId | string,
+): NetworkFeePair {
+  return {
+    buy: getDefaultNetworkFeeNgn(network, 'buy', pairId),
+    sell: getDefaultNetworkFeeNgn(network, 'sell', pairId),
+  }
 }
