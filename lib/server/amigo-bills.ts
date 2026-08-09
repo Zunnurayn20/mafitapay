@@ -1,6 +1,12 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
-import { resolveMargin } from '@/lib/server/profit-margins'
+import {
+  loadPricingRules,
+  normalizePlanType,
+  pricePlanNgn,
+  type PricingRuleRecord,
+  type PricingVendor,
+} from '@/lib/server/data-pricing'
 
 type AmigoPlanEntry = {
   planId: number
@@ -24,35 +30,49 @@ export type AmigoDataPaymentResult = {
   planId?: number
 }
 
-type AmigoCatalogCache = {
-  expiresAt: number
-  providers: NetworkProvider[]
-}
-
 const AMIGO_BASE_URL = process.env.MAFITAPAY_AMIGO_BASE_URL?.trim().replace(/\/$/, '') || 'https://amigo.ng/api'
-const AMIGO_CATALOG_TTL_MS = 5 * 60 * 1000
 const BILLS_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_BILLS === '1'
-let amigoCatalogCache: AmigoCatalogCache | null = null
-let amigoCatalogPromise: Promise<NetworkProvider[]> | null = null
+const AMIGO_VENDOR: PricingVendor = 'amigo'
 
 /**
- * Drop the cached catalog so the next read rebuilds it.
- *
- * Called when an admin changes the margin: bundle prices are baked in at catalog build time and
- * cached for five minutes, so without this the app would keep quoting the old price while the
- * purchase path charged the new margin.
+ * No-op kept for call sites that used to invalidate a price-baked catalog cache.
+ * Margins are applied per request from pricing rules, so nothing needs clearing.
  */
 export function clearAmigoCatalogCache() {
-  amigoCatalogCache = null
-  amigoCatalogPromise = null
+  // intentionally empty
 }
 
-const AMIGO_NETWORK_IDS: Record<string, number> = {
+export const AMIGO_NETWORK_IDS: Record<string, number> = {
   mtn: 1,
   glo: 2,
   airtel: 4,
   '9mobile': 9,
   etisalat: 9,
+}
+
+export const AMIGO_NETWORK_FROM_ID: Record<number, string> = {
+  1: 'MTN',
+  2: 'Glo',
+  4: 'Airtel',
+  9: '9mobile',
+}
+
+export const AMIGO_NETWORKS = ['MTN', 'Airtel', 'Glo'] as const
+
+export type PricedAmigoPlan = {
+  networkId: number
+  network: string
+  planId: number
+  planType: string
+  label: string
+  validity: string
+  wholesaleNgn: number
+  costNgn: number
+  marginNgn: number
+  retailNgn: number
+  ruleId: string | null
+  efficiencyPercent?: number
+  efficiencyLabel?: string
 }
 const AMIGO_STATIC_REGULAR_PLANS: Record<'mtn' | 'glo' | 'airtel', AmigoPlanEntry[]> = {
   mtn: [
@@ -177,23 +197,83 @@ async function amigoRequest(path: string, init?: RequestInit) {
   return body
 }
 
-function toAmigoBundles(networkId: number, entries: AmigoPlanEntry[], markupNgn: number): BillDataBundle[] {
-  return entries.map(entry => {
-    const label = formatCapacityLabel(entry.dataCapacity)
+function listAmigoWholesalePlans(): Array<{
+  networkId: number
+  network: string
+  entry: AmigoPlanEntry
+}> {
+  return [
+    ...AMIGO_STATIC_REGULAR_PLANS.mtn.map(entry => ({ networkId: 1, network: 'MTN', entry })),
+    ...AMIGO_STATIC_REGULAR_PLANS.glo.map(entry => ({ networkId: 2, network: 'Glo', entry })),
+    ...AMIGO_STATIC_REGULAR_PLANS.airtel.map(entry => ({ networkId: 4, network: 'Airtel', entry })),
+  ]
+}
+
+function applyAmigoPricing(
+  rules: PricingRuleRecord[],
+): PricedAmigoPlan[] {
+  return listAmigoWholesalePlans().map(({ networkId, network, entry }) => {
+    const planType = normalizePlanType(entry.category || entry.efficiencyLabel || 'REGULAR')
+    const priced = pricePlanNgn(
+      rules,
+      {
+        network,
+        planType,
+        variationCode: String(entry.planId),
+        vendor: AMIGO_VENDOR,
+      },
+      entry.price,
+    )
     return {
-      label,
-      amount: entry.price + markupNgn,
-      itemCode: `AMIGO_PLAN_${entry.planId}`,
-      billerCode: `AMIGO_NETWORK_${networkId}`,
-      itemName: label,
+      networkId,
+      network,
+      planId: entry.planId,
+      planType,
+      label: formatCapacityLabel(entry.dataCapacity),
       validity: formatValidity(entry.validity),
-      provider: 'amigo',
-      providerPlanId: String(entry.planId),
-      providerNetworkId: networkId,
+      wholesaleNgn: entry.price,
+      costNgn: priced.costNgn,
+      marginNgn: priced.marginNgn,
+      retailNgn: priced.retailNgn,
+      ruleId: priced.ruleId,
       efficiencyPercent: entry.efficiencyPercent,
       efficiencyLabel: entry.efficiencyLabel || entry.category,
     }
   })
+}
+
+function toAmigoBundles(plans: PricedAmigoPlan[]): BillDataBundle[] {
+  return plans.map(plan => ({
+    label: plan.label,
+    amount: plan.retailNgn,
+    itemCode: `AMIGO_PLAN_${plan.planId}`,
+    billerCode: `AMIGO_NETWORK_${plan.networkId}`,
+    itemName: plan.label,
+    validity: plan.validity,
+    provider: 'amigo',
+    providerPlanId: String(plan.planId),
+    providerNetworkId: plan.networkId,
+    efficiencyPercent: plan.efficiencyPercent,
+    efficiencyLabel: plan.efficiencyLabel,
+  }))
+}
+
+/** Static Amigo catalog with current pricing rules applied. */
+export async function getPricedAmigoPlans(): Promise<PricedAmigoPlan[]> {
+  const rules = await loadPricingRules()
+  return applyAmigoPricing(rules)
+}
+
+/**
+ * Authoritative price for one Amigo plan. The purchase path must use this rather than a price
+ * supplied by the client.
+ */
+export async function getAmigoPlanForPurchase(
+  networkId: number,
+  planId: string,
+): Promise<PricedAmigoPlan | null> {
+  const priced = await getPricedAmigoPlans()
+  return priced.find(plan => plan.networkId === networkId && String(plan.planId) === String(planId)) ?? null
 }
 
 function mergeProviderBundles(existingBundles: BillDataBundle[] | undefined, amigoBundles: BillDataBundle[]) {
@@ -266,80 +346,45 @@ export async function getAmigoBalance(): Promise<ProviderBalance> {
 
 export async function listAmigoDataBundleNetworkProviders(
   networkProviders: NetworkProvider[],
-  options?: { forceRefresh?: boolean },
+  _options?: { forceRefresh?: boolean },
 ) {
   if (!isAmigoBillsEnabled()) return networkProviders
 
-  const now = Date.now()
-  if (!options?.forceRefresh && amigoCatalogCache && amigoCatalogCache.expiresAt > now) {
-    logAmigoBills('catalog.cache-hit', {
-      expiresInMs: amigoCatalogCache.expiresAt - now,
-      providers: amigoCatalogCache.providers.map(provider => ({
-        name: provider.name,
-        bundleCount: provider.dataBundles?.length ?? 0,
+  logAmigoBills('catalog.request', { source: 'static_verified_catalog' })
+  const priced = await getPricedAmigoPlans()
+  const bundles = toAmigoBundles(priced)
+  const bundlesByNetworkId = new Map<number, BillDataBundle[]>()
+  for (const bundle of bundles) {
+    const networkId = bundle.providerNetworkId
+    if (networkId === undefined) continue
+    const current = bundlesByNetworkId.get(networkId) ?? []
+    current.push(bundle)
+    bundlesByNetworkId.set(networkId, current)
+  }
+
+  logAmigoBills('catalog.response', {
+    source: 'static_verified_catalog',
+    providers: Array.from(bundlesByNetworkId.entries()).map(([networkId, networkBundles]) => ({
+      networkId,
+      bundleCount: networkBundles.length,
+      bundles: networkBundles.map(bundle => ({
+        planId: bundle.providerPlanId,
+        label: bundle.label,
+        amount: bundle.amount,
+        validity: bundle.validity,
+        category: bundle.efficiencyLabel || null,
       })),
-    })
-    return amigoCatalogCache.providers
-  }
+    })),
+  })
 
-  if (amigoCatalogPromise) {
-    logAmigoBills('catalog.join')
-    return amigoCatalogPromise
-  }
-
-  if (options?.forceRefresh) {
-    logAmigoBills('catalog.cache-bypass', { reason: 'forceRefresh' })
-  }
-
-  logAmigoBills('catalog.request')
-  amigoCatalogPromise = resolveMargin('bills_amigo').then(markupNgn => {
-      const bundlesByNetworkId = new Map<number, BillDataBundle[]>()
-      bundlesByNetworkId.set(1, toAmigoBundles(1, AMIGO_STATIC_REGULAR_PLANS.mtn, markupNgn))
-      bundlesByNetworkId.set(2, toAmigoBundles(2, AMIGO_STATIC_REGULAR_PLANS.glo, markupNgn))
-      bundlesByNetworkId.set(4, toAmigoBundles(4, AMIGO_STATIC_REGULAR_PLANS.airtel, markupNgn))
-
-      logAmigoBills('catalog.response', {
-        source: 'static_verified_catalog',
-        providers: Array.from(bundlesByNetworkId.entries()).map(([networkId, bundles]) => ({
-          networkId,
-          bundleCount: bundles.length,
-          bundles: bundles.map(bundle => ({
-            planId: bundle.providerPlanId,
-            label: bundle.label,
-            amount: bundle.amount,
-            validity: bundle.validity,
-            category: bundle.efficiencyLabel || null,
-          })),
-        })),
-      })
-
-      const mergedProviders = networkProviders.map(provider => {
-        const networkKey = normalizeNetworkProvider(provider.name)
-        const networkId = AMIGO_NETWORK_IDS[networkKey]
-        const dataBundles = networkId ? bundlesByNetworkId.get(networkId) : undefined
-        return dataBundles && dataBundles.length > 0
-          ? { ...provider, dataBundles: mergeProviderBundles(provider.dataBundles, dataBundles) }
-          : provider
-      })
-
-      amigoCatalogCache = {
-        expiresAt: Date.now() + AMIGO_CATALOG_TTL_MS,
-        providers: mergedProviders,
-      }
-
-      return mergedProviders
-    })
-    .catch(error => {
-      logAmigoBills('catalog.error', {
-        message: error instanceof Error ? error.message : 'Unknown Amigo catalog error.',
-      })
-      throw error
-    })
-    .finally(() => {
-      amigoCatalogPromise = null
-    })
-
-  return amigoCatalogPromise
+  return networkProviders.map(provider => {
+    const networkKey = normalizeNetworkProvider(provider.name)
+    const networkId = AMIGO_NETWORK_IDS[networkKey]
+    const dataBundles = networkId ? bundlesByNetworkId.get(networkId) : undefined
+    return dataBundles && dataBundles.length > 0
+      ? { ...provider, dataBundles: mergeProviderBundles(provider.dataBundles, dataBundles) }
+      : provider
+  })
 }
 
 export async function listAmigoDataBundleNetworkProvidersSafe(
@@ -349,15 +394,10 @@ export async function listAmigoDataBundleNetworkProvidersSafe(
   try {
     return await listAmigoDataBundleNetworkProviders(networkProviders, options)
   } catch (error) {
-    const fallbackProviders = amigoCatalogCache?.providers ?? networkProviders
     logAmigoBills('catalog.fallback', {
       message: error instanceof Error ? error.message : 'Unknown Amigo catalog fallback error.',
-      fallbackProviders: fallbackProviders.map(provider => ({
-        name: provider.name,
-        bundleCount: provider.dataBundles?.length ?? 0,
-      })),
     })
-    return fallbackProviders
+    return networkProviders
   }
 }
 

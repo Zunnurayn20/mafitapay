@@ -464,6 +464,15 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
       const payload = await response.json()
 
       if (!response.ok || payload.success === false) {
+        // Server re-priced the plan; show the new figure and send the user back to review.
+        if (response.status === 409 && payload?.code === 'PRICE_CHANGED' && Number.isFinite(Number(payload.amount))) {
+          const nextAmount = Number(payload.amount)
+          setAmount(String(nextAmount))
+          showToast(payload.error || 'This plan\'s price changed. Please review and try again.', 'error')
+          setPinVersion(current => current + 1)
+          setStep('form')
+          return
+        }
         throw new Error(payload.error || 'Bill payment failed.')
       }
 

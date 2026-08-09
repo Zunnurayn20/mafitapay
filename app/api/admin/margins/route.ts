@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
 import { insertAuditLog, upsertProfitMargin } from '@/lib/server/data'
 import { MARGIN_DEFINITIONS, listResolvedMargins, type MarginKey } from '@/lib/server/profit-margins'
-import { clearAmigoCatalogCache } from '@/lib/server/amigo-bills'
-import { clearAsbdataCatalogCache } from '@/lib/server/asbdata-bills'
 
 const VALID_KEYS = new Set<string>(MARGIN_DEFINITIONS.map(entry => entry.key))
 
@@ -53,11 +51,6 @@ export async function PATCH(req: Request) {
     valueNgn: value,
     updatedBy: admin.email,
   })
-
-  // Bundle prices bake the margin in when the catalog is built and are cached, so the new margin
-  // would not reach the app for up to five minutes without this.
-  if (key === 'bills_amigo') clearAmigoCatalogCache()
-  if (key === 'bills_asbdata') clearAsbdataCatalogCache()
 
   await insertAuditLog({
     actorUserId: admin.id,

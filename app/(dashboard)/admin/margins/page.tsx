@@ -11,7 +11,7 @@ export default async function AdminMarginsPage() {
     <div className="space-y-4">
       <AdminPageCard
         title="Profit margins"
-        description="What MafitaPay adds on top of provider cost, per product. Saving takes effect immediately — no redeploy."
+        description="Flat platform add-ons for products that are not data plans. Saving takes effect immediately — no redeploy."
       >
         <div className="p-4">
           <MarginsForm margins={margins} />
@@ -24,10 +24,6 @@ export default async function AdminMarginsPage() {
       >
         <div className="space-y-3 p-4 text-sm leading-relaxed text-slate-500">
           <p>
-            Bill margins are added to the provider&apos;s wholesale price when the data catalog is
-            built, so a change re-prices every bundle the moment it is saved.
-          </p>
-          <p>
             The transfer margin sits on top of the Flutterwave payout cost, which already includes
             VAT. Customers see the combined figure as one transfer fee.
           </p>
@@ -39,6 +35,13 @@ export default async function AdminMarginsPage() {
           <p>
             Changes apply to new transactions only. Anything already pending keeps the fee the
             customer was quoted and agreed to.
+          </p>
+          <p>
+            Data &amp; airtime plan margins are not here — they use the rule engine on{' '}
+            <a href="/admin/pricing" className="font-semibold text-[#8c6b31] hover:underline">
+              Data pricing
+            </a>
+            {' '}(% + flat + floor/cap + round, per network or plan).
           </p>
           <p>
             Crypto spreads are not here — those are per-asset and live on the{' '}

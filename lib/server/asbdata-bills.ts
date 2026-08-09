@@ -1,6 +1,12 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
-import { resolveMargin } from '@/lib/server/profit-margins'
+import {
+  loadPricingRules,
+  normalizePlanType,
+  pricePlanNgn,
+  type PricingRuleRecord,
+  type PricingVendor,
+} from '@/lib/server/data-pricing'
 
 /**
  * ASBDATA VTU API — data bundles and airtime.
@@ -44,17 +50,18 @@ type AsbdataPlan = {
   planType: string
 }
 
-type AsbdataCatalogCache = {
+type AsbdataPlanCache = {
   expiresAt: number
-  providers: NetworkProvider[]
+  plans: AsbdataPlan[]
 }
 
 const ASBDATA_CATALOG_TTL_MS = 5 * 60 * 1000
 const ASBDATA_MAX_ATTEMPTS = 3
 const ASBDATA_MIN_AIRTIME_NGN = 50
 const BILLS_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_BILLS === '1'
+const ASBDATA_VENDOR: PricingVendor = 'asbdata'
 
-const ASBDATA_NETWORK_IDS: Record<string, number> = {
+export const ASBDATA_NETWORK_IDS: Record<string, number> = {
   mtn: 1,
   glo: 2,
   '9mobile': 3,
@@ -62,24 +69,37 @@ const ASBDATA_NETWORK_IDS: Record<string, number> = {
   airtel: 4,
 }
 
-const ASBDATA_NETWORK_FROM_ID: Record<number, string> = {
+export const ASBDATA_NETWORK_FROM_ID: Record<number, string> = {
   1: 'MTN',
   2: 'Glo',
   3: '9mobile',
   4: 'Airtel',
 }
 
-let asbdataCatalogCache: AsbdataCatalogCache | null = null
-let asbdataCatalogPromise: Promise<NetworkProvider[]> | null = null
+export const ASBDATA_NETWORKS = ['MTN', 'Airtel', 'Glo', '9mobile'] as const
+
+/** Vendor wholesale catalog only — operator margins are applied per request. */
+let asbdataPlanCache: AsbdataPlanCache | null = null
+let asbdataPlanPromise: Promise<AsbdataPlan[]> | null = null
+/** Last successfully priced provider list, used only as a fallback on catalog errors. */
+let asbdataLastPricedProviders: NetworkProvider[] | null = null
 
 /**
- * Drop the cached catalog so the next read rebuilds it. See the Amigo equivalent -- bundle prices
- * bake the margin in at build time, so a margin change has to invalidate this or the app keeps
- * quoting the old price.
+ * Drop the cached vendor catalog. Pricing rules are not cached with the catalog, so a margin
+ * change does not require this — call it when the wholesale plan list itself must be refreshed.
  */
 export function clearAsbdataCatalogCache() {
-  asbdataCatalogCache = null
-  asbdataCatalogPromise = null
+  asbdataPlanCache = null
+  asbdataPlanPromise = null
+}
+
+export type PricedAsbdataPlan = AsbdataPlan & {
+  network: string
+  planTypeNormalized: string
+  costNgn: number
+  marginNgn: number
+  retailNgn: number
+  ruleId: string | null
 }
 
 function logAsbdataBills(event: string, details?: Record<string, unknown>) {
@@ -341,10 +361,10 @@ function parsePlanRow(row: Record<string, unknown>): AsbdataPlan | null {
   return { networkId, planId, size, validity, wholesaleNgn, planType }
 }
 
-function toAsbdataBundles(plans: AsbdataPlan[], markupNgn: number): BillDataBundle[] {
+function toAsbdataBundles(plans: PricedAsbdataPlan[]): BillDataBundle[] {
   return plans.map(plan => ({
     label: plan.size,
-    amount: plan.wholesaleNgn + markupNgn,
+    amount: plan.retailNgn,
     itemCode: `ASBDATA_PLAN_${plan.planId}`,
     billerCode: `ASBDATA_NETWORK_${plan.networkId}`,
     itemName: plan.size,
@@ -352,8 +372,34 @@ function toAsbdataBundles(plans: AsbdataPlan[], markupNgn: number): BillDataBund
     provider: 'asbdata' as const,
     providerPlanId: String(plan.planId),
     providerNetworkId: plan.networkId,
-    efficiencyLabel: plan.planType || undefined,
+    efficiencyLabel: plan.planTypeNormalized !== 'STANDARD' ? plan.planTypeNormalized : (plan.planType || undefined),
   }))
+}
+
+function applyAsbdataPricing(plans: AsbdataPlan[], rules: PricingRuleRecord[]): PricedAsbdataPlan[] {
+  return plans.map(plan => {
+    const network = ASBDATA_NETWORK_FROM_ID[plan.networkId] || 'Unknown'
+    const planTypeNormalized = normalizePlanType(plan.planType)
+    const priced = pricePlanNgn(
+      rules,
+      {
+        network,
+        planType: planTypeNormalized,
+        variationCode: String(plan.planId),
+        vendor: ASBDATA_VENDOR,
+      },
+      plan.wholesaleNgn,
+    )
+    return {
+      ...plan,
+      network,
+      planTypeNormalized,
+      costNgn: priced.costNgn,
+      marginNgn: priced.marginNgn,
+      retailNgn: priced.retailNgn,
+      ruleId: priced.ruleId,
+    }
+  })
 }
 
 function mergeAsbdataBundles(existing: BillDataBundle[] | undefined, incoming: BillDataBundle[]) {
@@ -370,7 +416,7 @@ function mergeAsbdataBundles(existing: BillDataBundle[] | undefined, incoming: B
     .sort((a, b) => a.amount - b.amount)
 }
 
-async function loadAsbdataPlans(): Promise<AsbdataPlan[]> {
+async function fetchAsbdataPlans(): Promise<AsbdataPlan[]> {
   const { status, json } = await asbdataRequest('GET', '/api/network/')
   if (status >= 400) {
     throw new Error(`ASBDATA plan catalog failed (${status}).`)
@@ -390,50 +436,27 @@ async function loadAsbdataPlans(): Promise<AsbdataPlan[]> {
   return plans
 }
 
-export async function listAsbdataDataBundleNetworkProviders(
-  networkProviders: NetworkProvider[],
-  options?: { forceRefresh?: boolean },
-): Promise<NetworkProvider[]> {
-  if (!isAsbdataBillsEnabled()) return networkProviders
-
+/** Wholesale plans with a short TTL. Margins are never stored here. */
+export async function getCachedAsbdataPlans(options?: { forceRefresh?: boolean }): Promise<AsbdataPlan[]> {
   const now = Date.now()
-  if (!options?.forceRefresh && asbdataCatalogCache && asbdataCatalogCache.expiresAt > now) {
-    logAsbdataBills('catalog.cache-hit', { expiresInMs: asbdataCatalogCache.expiresAt - now })
-    return asbdataCatalogCache.providers
+  if (!options?.forceRefresh && asbdataPlanCache && asbdataPlanCache.expiresAt > now) {
+    logAsbdataBills('catalog.cache-hit', { expiresInMs: asbdataPlanCache.expiresAt - now, plans: asbdataPlanCache.plans.length })
+    return asbdataPlanCache.plans
   }
 
-  if (asbdataCatalogPromise) {
+  if (asbdataPlanPromise) {
     logAsbdataBills('catalog.join')
-    return asbdataCatalogPromise
+    return asbdataPlanPromise
   }
 
   logAsbdataBills('catalog.request')
-  asbdataCatalogPromise = Promise.all([loadAsbdataPlans(), resolveMargin('bills_asbdata')])
-    .then(([plans, markupNgn]) => {
-      const bundlesByNetworkId = new Map<number, BillDataBundle[]>()
-      for (const bundle of toAsbdataBundles(plans, markupNgn)) {
-        const networkId = bundle.providerNetworkId
-        if (networkId === undefined) continue
-        const current = bundlesByNetworkId.get(networkId) ?? []
-        current.push(bundle)
-        bundlesByNetworkId.set(networkId, current)
-      }
-
-      const mergedProviders = networkProviders.map(provider => {
-        const networkKey = normalizeNetworkProviderName(provider.name)
-        const networkId = ASBDATA_NETWORK_IDS[networkKey]
-        const bundles = networkId ? bundlesByNetworkId.get(networkId) : undefined
-        return bundles && bundles.length > 0
-          ? { ...provider, dataBundles: mergeAsbdataBundles(provider.dataBundles, bundles) }
-          : provider
-      })
-
-      asbdataCatalogCache = {
+  asbdataPlanPromise = fetchAsbdataPlans()
+    .then(plans => {
+      asbdataPlanCache = {
         expiresAt: Date.now() + ASBDATA_CATALOG_TTL_MS,
-        providers: mergedProviders,
+        plans,
       }
-
-      return mergedProviders
+      return plans
     })
     .catch(error => {
       logAsbdataBills('catalog.error', {
@@ -442,10 +465,60 @@ export async function listAsbdataDataBundleNetworkProviders(
       throw error
     })
     .finally(() => {
-      asbdataCatalogPromise = null
+      asbdataPlanPromise = null
     })
 
-  return asbdataCatalogPromise
+  return asbdataPlanPromise
+}
+
+/** Vendor catalog (cached) with current pricing rules (uncached) applied. */
+export async function getPricedAsbdataPlans(options?: { forceRefresh?: boolean }): Promise<PricedAsbdataPlan[]> {
+  const [plans, rules] = await Promise.all([
+    getCachedAsbdataPlans(options),
+    loadPricingRules(),
+  ])
+  return applyAsbdataPricing(plans, rules)
+}
+
+/**
+ * Authoritative price for one ASBDATA plan. The purchase path must use this rather than a price
+ * supplied by the client.
+ */
+export async function getAsbdataPlanForPurchase(
+  networkId: number,
+  planId: string,
+): Promise<PricedAsbdataPlan | null> {
+  const priced = await getPricedAsbdataPlans()
+  return priced.find(plan => plan.networkId === networkId && String(plan.planId) === String(planId)) ?? null
+}
+
+export async function listAsbdataDataBundleNetworkProviders(
+  networkProviders: NetworkProvider[],
+  options?: { forceRefresh?: boolean },
+): Promise<NetworkProvider[]> {
+  if (!isAsbdataBillsEnabled()) return networkProviders
+
+  const priced = await getPricedAsbdataPlans(options)
+  const bundlesByNetworkId = new Map<number, BillDataBundle[]>()
+  for (const bundle of toAsbdataBundles(priced)) {
+    const networkId = bundle.providerNetworkId
+    if (networkId === undefined) continue
+    const current = bundlesByNetworkId.get(networkId) ?? []
+    current.push(bundle)
+    bundlesByNetworkId.set(networkId, current)
+  }
+
+  const mergedProviders = networkProviders.map(provider => {
+    const networkKey = normalizeNetworkProviderName(provider.name)
+    const networkId = ASBDATA_NETWORK_IDS[networkKey]
+    const bundles = networkId ? bundlesByNetworkId.get(networkId) : undefined
+    return bundles && bundles.length > 0
+      ? { ...provider, dataBundles: mergeAsbdataBundles(provider.dataBundles, bundles) }
+      : provider
+  })
+
+  asbdataLastPricedProviders = mergedProviders
+  return mergedProviders
 }
 
 export async function listAsbdataDataBundleNetworkProvidersSafe(
@@ -458,7 +531,17 @@ export async function listAsbdataDataBundleNetworkProvidersSafe(
     logAsbdataBills('catalog.fallback', {
       message: error instanceof Error ? error.message : 'Unknown ASBDATA catalog fallback error.',
     })
-    return asbdataCatalogCache?.providers ?? networkProviders
+    return asbdataLastPricedProviders ?? networkProviders
+  }
+}
+
+/** Distinct plan types currently in the ASBDATA catalog (for the admin form). */
+export async function listAsbdataPlanTypes(): Promise<string[]> {
+  try {
+    const plans = await getCachedAsbdataPlans()
+    return Array.from(new Set(plans.map(plan => normalizePlanType(plan.planType)))).sort()
+  } catch {
+    return []
   }
 }
 

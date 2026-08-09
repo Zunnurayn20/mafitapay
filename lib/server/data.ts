@@ -2045,6 +2045,34 @@ function initSchema(db: DatabaseSync) {
       updated_by TEXT
     );
 
+    -- Data-plan pricing rules (online-data-sub model). Empty strings stand in for
+    -- NULL so the unique index is reliable on SQLite (NULLs are not unique there).
+    CREATE TABLE IF NOT EXISTS pricing_rules (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL,
+      vendor TEXT NOT NULL DEFAULT '',
+      network TEXT NOT NULL DEFAULT '',
+      plan_type TEXT NOT NULL DEFAULT '',
+      variation_code TEXT NOT NULL DEFAULT '',
+      margin_bps INTEGER NOT NULL DEFAULT 0,
+      margin_kobo INTEGER NOT NULL DEFAULT 0,
+      min_margin_kobo INTEGER NOT NULL DEFAULT 0,
+      max_margin_kobo INTEGER,
+      round_to_kobo INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      note TEXT,
+      created_by TEXT,
+      updated_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rules_target
+      ON pricing_rules(scope, vendor, network, plan_type, variation_code);
+
+    CREATE INDEX IF NOT EXISTS idx_pricing_rules_active_scope
+      ON pricing_rules(active, scope);
+
     CREATE TABLE IF NOT EXISTS network_providers (
       name TEXT PRIMARY KEY,
       icon TEXT NOT NULL,
@@ -3247,12 +3275,11 @@ export type ProfitMarginRecord = {
 }
 
 /**
- * Admin-set profit margins, keyed by product.
+ * Admin-set flat profit margins, keyed by product (e.g. transfer_out).
  *
- * These override the env-var defaults the pricing code falls back to, so pricing can change
- * without a redeploy. A missing row means "never configured here" and the caller keeps its env
- * fallback -- absence is not zero, since a zero margin is a legitimate setting an admin might
- * choose and the two must stay distinguishable.
+ * Data plans use pricing_rules instead. A missing row means "never configured" — resolveMargin
+ * treats that as 0. Absence is still distinguishable from an explicit zero via getProfitMargin
+ * returning null.
  */
 export async function getProfitMargins(): Promise<ProfitMarginRecord[]> {
   await ensureDbReady()
@@ -3299,6 +3326,241 @@ export async function upsertProfitMargin(input: {
   `).run(input.key, value, updatedAt, input.updatedBy ?? null)
 
   return { key: input.key, valueNgn: value, updatedAt, updatedBy: input.updatedBy }
+}
+
+export type PricingRuleRecord = {
+  id: string
+  scope: string
+  vendor: string | null
+  network: string | null
+  planType: string | null
+  variationCode: string | null
+  marginBps: number
+  marginKobo: number
+  minMarginKobo: number
+  maxMarginKobo: number | null
+  roundToKobo: number
+  active: boolean
+  note: string | null
+  createdBy?: string
+  updatedBy?: string
+  createdAt: string
+  updatedAt: string
+}
+
+type PricingRuleRow = {
+  id: string
+  scope: string
+  vendor: string
+  network: string
+  plan_type: string
+  variation_code: string
+  margin_bps: number
+  margin_kobo: number
+  min_margin_kobo: number
+  max_margin_kobo: number | null
+  round_to_kobo: number
+  active: number
+  note: string | null
+  created_by: string | null
+  updated_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+function emptyToNull(value: string | null | undefined): string | null {
+  if (value == null) return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function nullToEmpty(value: string | null | undefined): string {
+  return value?.trim() || ''
+}
+
+function mapPricingRuleRow(row: PricingRuleRow): PricingRuleRecord {
+  return {
+    id: row.id,
+    scope: row.scope,
+    vendor: emptyToNull(row.vendor),
+    network: emptyToNull(row.network),
+    planType: emptyToNull(row.plan_type),
+    variationCode: emptyToNull(row.variation_code),
+    marginBps: Number(row.margin_bps) || 0,
+    marginKobo: Number(row.margin_kobo) || 0,
+    minMarginKobo: Number(row.min_margin_kobo) || 0,
+    maxMarginKobo: row.max_margin_kobo == null ? null : Number(row.max_margin_kobo),
+    roundToKobo: Number(row.round_to_kobo) || 0,
+    active: Number(row.active) === 1,
+    note: row.note,
+    createdBy: row.created_by ?? undefined,
+    updatedBy: row.updated_by ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export async function getPricingRules(options?: { activeOnly?: boolean }): Promise<PricingRuleRecord[]> {
+  await ensureDbReady()
+  const rows = options?.activeOnly
+    ? getDb()
+      .prepare('SELECT * FROM pricing_rules WHERE active = 1 ORDER BY updated_at DESC')
+      .all() as PricingRuleRow[]
+    : getDb()
+      .prepare('SELECT * FROM pricing_rules ORDER BY scope ASC, updated_at DESC')
+      .all() as PricingRuleRow[]
+
+  return rows.map(mapPricingRuleRow)
+}
+
+export async function getPricingRuleById(id: string): Promise<PricingRuleRecord | null> {
+  await ensureDbReady()
+  const row = getDb()
+    .prepare('SELECT * FROM pricing_rules WHERE id = ? LIMIT 1')
+    .get(id) as PricingRuleRow | undefined
+  return row ? mapPricingRuleRow(row) : null
+}
+
+export async function findPricingRuleByTarget(input: {
+  scope: string
+  vendor?: string | null
+  network?: string | null
+  planType?: string | null
+  variationCode?: string | null
+}): Promise<PricingRuleRecord | null> {
+  await ensureDbReady()
+  const row = getDb()
+    .prepare(`
+      SELECT * FROM pricing_rules
+      WHERE scope = ?
+        AND vendor = ?
+        AND network = ?
+        AND plan_type = ?
+        AND variation_code = ?
+      LIMIT 1
+    `)
+    .get(
+      input.scope,
+      nullToEmpty(input.vendor),
+      nullToEmpty(input.network),
+      nullToEmpty(input.planType),
+      nullToEmpty(input.variationCode),
+    ) as PricingRuleRow | undefined
+  return row ? mapPricingRuleRow(row) : null
+}
+
+export async function createPricingRule(input: {
+  scope: string
+  vendor?: string | null
+  network?: string | null
+  planType?: string | null
+  variationCode?: string | null
+  marginBps: number
+  marginKobo: number
+  minMarginKobo: number
+  maxMarginKobo: number | null
+  roundToKobo: number
+  note?: string | null
+  createdBy?: string
+}): Promise<PricingRuleRecord> {
+  await ensureDbReady()
+  const id = `prule_${randomBytes(8).toString('hex')}`
+  const now = new Date().toISOString()
+
+  getDb().prepare(`
+    INSERT INTO pricing_rules (
+      id, scope, vendor, network, plan_type, variation_code,
+      margin_bps, margin_kobo, min_margin_kobo, max_margin_kobo, round_to_kobo,
+      active, note, created_by, updated_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.scope,
+    nullToEmpty(input.vendor),
+    nullToEmpty(input.network),
+    nullToEmpty(input.planType),
+    nullToEmpty(input.variationCode),
+    Math.round(input.marginBps),
+    Math.round(input.marginKobo),
+    Math.round(input.minMarginKobo),
+    input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo),
+    Math.round(input.roundToKobo),
+    input.note?.trim() || null,
+    input.createdBy ?? null,
+    input.createdBy ?? null,
+    now,
+    now,
+  )
+
+  const created = await getPricingRuleById(id)
+  if (!created) throw new Error('Failed to create pricing rule.')
+  return created
+}
+
+export async function updatePricingRule(
+  id: string,
+  input: {
+    marginBps: number
+    marginKobo: number
+    minMarginKobo: number
+    maxMarginKobo: number | null
+    roundToKobo: number
+    note?: string | null
+    updatedBy?: string
+  },
+): Promise<PricingRuleRecord | null> {
+  await ensureDbReady()
+  const existing = await getPricingRuleById(id)
+  if (!existing) return null
+
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE pricing_rules SET
+      margin_bps = ?,
+      margin_kobo = ?,
+      min_margin_kobo = ?,
+      max_margin_kobo = ?,
+      round_to_kobo = ?,
+      note = ?,
+      updated_by = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(
+    Math.round(input.marginBps),
+    Math.round(input.marginKobo),
+    Math.round(input.minMarginKobo),
+    input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo),
+    Math.round(input.roundToKobo),
+    input.note?.trim() || null,
+    input.updatedBy ?? null,
+    now,
+    id,
+  )
+
+  return getPricingRuleById(id)
+}
+
+export async function setPricingRuleActive(
+  id: string,
+  active: boolean,
+  updatedBy?: string,
+): Promise<PricingRuleRecord | null> {
+  await ensureDbReady()
+  const existing = await getPricingRuleById(id)
+  if (!existing) return null
+
+  const now = new Date().toISOString()
+  getDb().prepare(`
+    UPDATE pricing_rules SET active = ?, updated_by = ?, updated_at = ? WHERE id = ?
+  `).run(active ? 1 : 0, updatedBy ?? null, now, id)
+
+  return getPricingRuleById(id)
+}
+
+export async function deletePricingRule(id: string): Promise<boolean> {
+  await ensureDbReady()
+  const result = getDb().prepare('DELETE FROM pricing_rules WHERE id = ?').run(id)
+  return Number(result.changes ?? 0) > 0
 }
 
 export async function getReferralOverviewByUserId(userId: string): Promise<ReferralOverview | null> {

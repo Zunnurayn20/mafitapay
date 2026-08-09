@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, recordProviderEvent, verifySensitiveActionAuthorization } from '@/lib/server/data'
-import { createAmigoDataPayment, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
-import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
-import { resolveMargin } from '@/lib/server/profit-margins'
+import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
+import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { generateRef } from '@/lib/utils'
@@ -161,12 +160,74 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Enter a valid phone number.', success: false }, { status: 400 })
   }
 
+  // Which provider owns this purchase. Prefer the name the client sent; fall back to the old
+  // inference (plan id + network id implied Amigo) so app builds predating providerName still work.
+  const hasPlanSelection = Boolean(providerPlanId) && Number.isFinite(providerNetworkId)
+  const resolvedDataProvider = selectedProvider.type !== 'data' || !hasPlanSelection
+    ? null
+    : providerName === 'asbdata' || providerName === 'amigo' || providerName === 'flutterwave'
+      ? providerName
+      : 'amigo'
+
+  // Server-authoritative price for plan-based data. Client amount is only used to detect that
+  // the catalog moved under the user mid-checkout — never to decide what we charge.
+  let chargeAmount = numericAmount
+  let platformFee = 0
+  let providerBaseAmount = numericAmount
+  let pricingRuleId: string | null = null
+
+  if (
+    resolvedDataProvider === 'asbdata'
+    && isAsbdataBillsEnabled()
+    && providerPlanId
+    && Number.isFinite(providerNetworkId)
+  ) {
+    const plan = await getAsbdataPlanForPurchase(providerNetworkId, providerPlanId)
+    if (!plan) {
+      return NextResponse.json({ error: 'This data plan is no longer available.', success: false }, { status: 400 })
+    }
+    if (Math.abs(numericAmount - plan.retailNgn) > 0.009) {
+      return NextResponse.json({
+        error: "This plan's price changed. Please review the new price and try again.",
+        code: 'PRICE_CHANGED',
+        amount: plan.retailNgn,
+        success: false,
+      }, { status: 409 })
+    }
+    chargeAmount = plan.retailNgn
+    platformFee = plan.marginNgn
+    providerBaseAmount = plan.costNgn
+    pricingRuleId = plan.ruleId
+  } else if (
+    resolvedDataProvider === 'amigo'
+    && isAmigoBillsEnabled()
+    && providerPlanId
+    && Number.isFinite(providerNetworkId)
+  ) {
+    const plan = await getAmigoPlanForPurchase(providerNetworkId, providerPlanId)
+    if (!plan) {
+      return NextResponse.json({ error: 'This data plan is no longer available.', success: false }, { status: 400 })
+    }
+    if (Math.abs(numericAmount - plan.retailNgn) > 0.009) {
+      return NextResponse.json({
+        error: "This plan's price changed. Please review the new price and try again.",
+        code: 'PRICE_CHANGED',
+        amount: plan.retailNgn,
+        success: false,
+      }, { status: 409 })
+    }
+    chargeAmount = plan.retailNgn
+    platformFee = plan.marginNgn
+    providerBaseAmount = plan.costNgn
+    pricingRuleId = plan.ruleId
+  }
+
   const wallet = await getWalletByUserId(user.id)
   if (!wallet) {
     return NextResponse.json({ error: 'Wallet not found', success: false }, { status: 404 })
   }
 
-  if (wallet.balance < numericAmount) {
+  if (wallet.balance < chargeAmount) {
     return NextResponse.json({ error: 'Insufficient balance', success: false }, { status: 400 })
   }
 
@@ -178,15 +239,6 @@ export async function POST(req: Request) {
 
   const ref = generateRef()
 
-  // Which provider owns this purchase. Prefer the name the client sent; fall back to the old
-  // inference (plan id + network id implied Amigo) so app builds predating providerName still work.
-  const hasPlanSelection = Boolean(providerPlanId) && Number.isFinite(providerNetworkId)
-  const resolvedDataProvider = selectedProvider.type !== 'data' || !hasPlanSelection
-    ? null
-    : providerName === 'asbdata' || providerName === 'amigo' || providerName === 'flutterwave'
-      ? providerName
-      : 'amigo'
-
   const asbdataAirtimeNetworkId = selectedProvider.type === 'airtime' && isAsbdataBillsEnabled()
     ? getAsbdataNetworkId(provider ?? '')
     : undefined
@@ -195,7 +247,7 @@ export async function POST(req: Request) {
     type: selectedProvider.type,
     networkProvider: provider,
     account,
-    amount: numericAmount,
+    amount: chargeAmount,
     reference: ref,
     billerCode,
     itemCode,
@@ -219,7 +271,7 @@ export async function POST(req: Request) {
         ? await createAsbdataAirtimePayment({
           networkId: asbdataAirtimeNetworkId,
           mobileNumber: account,
-          amount: numericAmount,
+          amount: chargeAmount,
           reference: ref,
         })
         : await createFlutterwaveBillPayment(flutterwaveInput)
@@ -267,20 +319,16 @@ export async function POST(req: Request) {
 
   const transactionType = selectedProvider.type as Transaction['type']
   const transactionStatus: Transaction['status'] = providerResult.status === 'success' ? 'success' : 'pending'
-  // Amigo and ASBDATA prices are wholesale plus our markup, so the markup is the platform fee.
-  // Flutterwave quotes retail, so there is nothing to split out. Resolved rather than imported as
-  // a constant so an admin margin change takes effect without a redeploy.
-  const platformFee = providerResult.provider === 'amigo'
-    ? await resolveMargin('bills_amigo')
-    : providerResult.provider === 'asbdata'
-      ? await resolveMargin('bills_asbdata')
-      : 0
-  const isPlanBasedProvider = providerResult.provider === 'amigo' || providerResult.provider === 'asbdata'
+  // Plan-based data: platformFee is the margin from pricing rules. Flutterwave / airtime quote
+  // retail, so there is nothing to split out unless we priced a plan above.
+  const isPlanBasedProvider = providerResult.provider === 'amigo' || (
+    providerResult.provider === 'asbdata' && selectedProvider.type === 'data'
+  )
   const transaction = {
     id: ref,
     type: transactionType,
     status: transactionStatus,
-    amount: -numericAmount,
+    amount: -chargeAmount,
     fee: platformFee,
     description: `${serviceConfig.displayName} Payment`,
     reference: ref,
@@ -292,7 +340,7 @@ export async function POST(req: Request) {
       serviceName: serviceConfig.displayName,
       provider: serviceConfig.requiresNetwork ? provider : undefined,
       account,
-      amount: numericAmount,
+      amount: chargeAmount,
       providerName: providerResult.provider,
       providerReference: providerResult.providerReference,
       providerStatus: providerResult.rawStatus,
@@ -301,8 +349,9 @@ export async function POST(req: Request) {
       itemName: 'itemName' in providerResult ? providerResult.itemName : undefined,
       providerPlanId: isPlanBasedProvider ? providerPlanId : undefined,
       providerNetworkId: isPlanBasedProvider && Number.isFinite(providerNetworkId) ? providerNetworkId : undefined,
-      providerBaseAmount: isPlanBasedProvider ? numericAmount - platformFee : numericAmount,
+      providerBaseAmount: isPlanBasedProvider ? providerBaseAmount : chargeAmount,
       platformFee,
+      pricingRuleId: pricingRuleId || undefined,
       settlementFlow: providerResult.status === 'pending' ? 'release_locked' : 'none',
       settlementKind: 'provider_bill',
       walletAsset: 'NGN',
@@ -311,9 +360,9 @@ export async function POST(req: Request) {
 
   const result = await applyWalletMutation({
     userId: user.id,
-    balanceDelta: -numericAmount,
-    lockedBalanceDelta: providerResult.status === 'pending' ? numericAmount : 0,
-    minimumAvailableBalance: numericAmount,
+    balanceDelta: -chargeAmount,
+    lockedBalanceDelta: providerResult.status === 'pending' ? chargeAmount : 0,
+    minimumAvailableBalance: chargeAmount,
     transaction,
   })
   await recordProviderEvent({
