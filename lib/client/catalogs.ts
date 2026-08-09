@@ -41,6 +41,10 @@ const LEGACY_CRYPTO_ICON_REPLACEMENTS: Record<string, string> = {
   '/crypto-assets/ton.svg': '/crypto-assets/ton.png',
   '/crypto-assets/sui.svg': '/crypto-assets/sui.png',
   '/crypto-assets/near.svg': '/crypto-assets/near.png',
+  // Admin uploads that were byte-identical to the named chain marks, kept so a cached
+  // catalog still holding the uploaded path resolves after the duplicates were removed.
+  '/crypto-assets/eth-d9a54208.png': '/crypto-assets/eth-arb.png',
+  '/crypto-assets/eth-5cfef420.png': '/crypto-assets/eth-op.png',
 }
 
 function sortBillProviders(providers: BillProvider[]) {
