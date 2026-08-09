@@ -650,7 +650,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 <select
                   value={activePlanCategory}
                   onChange={event => setSelectedPlanCategory(event.target.value)}
-                  className="flex-1 min-w-0 cursor-pointer border-none bg-[var(--clay2)] py-3 text-right text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
+                  className="flex-1 min-w-0 cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
                 >
                   {[ALL_PLAN_CATEGORIES, ...planCategories].map(category => (
                     <option key={category} value={category}>
