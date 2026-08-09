@@ -3,12 +3,14 @@ import { getProfitMargin } from '@/lib/server/data'
 /**
  * Per-product profit margins.
  *
- * Each margin has an admin-set value in the database and an env-var fallback. The database wins
- * when a row exists, so pricing can be changed from the admin page without a redeploy; the env var
- * remains the value a fresh install starts from.
+ * The database is the only source. There is no env var and no hardcoded default: a margin is
+ * whatever an admin set on /admin/margins, and nothing else. Changing pricing therefore never
+ * requires a redeploy, and there is exactly one number to look at when asking what we charge.
  *
- * A missing row is not the same as zero. Zero is a legitimate margin an admin might choose, so
- * absence falls back to env while an explicit 0 is honoured.
+ * An unset margin resolves to 0 -- the product sells at provider cost. That is a deliberate
+ * choice: it keeps sales flowing rather than blocking them, but it means a missing row costs
+ * real money on every transaction. Both paths below log loudly so the condition is visible in
+ * logs instead of quietly eroding revenue.
  */
 
 export type MarginKey = 'bills_amigo' | 'bills_asbdata' | 'transfer_out'
@@ -17,8 +19,6 @@ export type MarginDefinition = {
   key: MarginKey
   label: string
   description: string
-  envVar: string
-  fallback: number
 }
 
 export const MARGIN_DEFINITIONS: readonly MarginDefinition[] = [
@@ -26,50 +26,48 @@ export const MARGIN_DEFINITIONS: readonly MarginDefinition[] = [
     key: 'bills_amigo',
     label: 'Data & airtime (Amigo)',
     description: 'Added to the Amigo wholesale price on every data bundle.',
-    envVar: 'MAFITAPAY_AMIGO_PLATFORM_MARKUP_NGN',
-    fallback: 15,
   },
   {
     key: 'bills_asbdata',
     label: 'Data & airtime (ASBDATA)',
     description: 'Added to the ASBDATA wholesale price on every data bundle.',
-    envVar: 'MAFITAPAY_ASBDATA_PLATFORM_MARKUP_NGN',
-    fallback: 15,
   },
   {
     key: 'transfer_out',
     label: 'Bank transfer & withdrawal',
     description: 'Added on top of the Flutterwave payout cost, which already includes VAT.',
-    envVar: 'MAFITAPAY_TRANSFER_FEE_MARGIN_NGN',
-    fallback: 25,
   },
 ]
 
 const DEFINITION_BY_KEY = new Map(MARGIN_DEFINITIONS.map(entry => [entry.key, entry]))
 
-function readEnvMargin(definition: MarginDefinition): number {
-  const raw = process.env[definition.envVar]
-  const parsed = Number(raw)
-  // Negative margins would mean selling below cost, which is never intended here.
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : definition.fallback
-}
-
-/** The margin actually charged for a product: admin value if set, else the env fallback. */
+/**
+ * The margin charged for a product, or 0 when none is set.
+ *
+ * Never throws: a pricing lookup must not be the thing that fails a purchase. The tradeoff is
+ * that a database problem sells at cost, so both the miss and the error are logged as warnings.
+ */
 export async function resolveMargin(key: MarginKey): Promise<number> {
-  const definition = DEFINITION_BY_KEY.get(key)
-  if (!definition) return 0
+  if (!DEFINITION_BY_KEY.has(key)) {
+    console.warn(`[margins] unknown margin key "${key}" — charging 0`)
+    return 0
+  }
 
   try {
     const stored = await getProfitMargin(key)
     if (stored != null && stored >= 0) return stored
-  } catch {
-    // A margin lookup must never take down a purchase. Fall through to the env value.
+    console.warn(`[margins] no margin set for "${key}" — selling at provider cost`)
+    return 0
+  } catch (error) {
+    console.warn(
+      `[margins] could not read margin "${key}" — selling at provider cost:`,
+      error instanceof Error ? error.message : error,
+    )
+    return 0
   }
-
-  return readEnvMargin(definition)
 }
 
-/** Every margin with both its effective value and where that value came from, for the admin page. */
+/** Every margin with its current value, for the admin page. `isSet` false means never configured. */
 export async function listResolvedMargins() {
   return Promise.all(MARGIN_DEFINITIONS.map(async definition => {
     let stored: number | null = null
@@ -79,19 +77,17 @@ export async function listResolvedMargins() {
       stored = null
     }
 
-    const envValue = readEnvMargin(definition)
-    // Checked inline rather than via a boolean flag so the null is actually narrowed away.
-    const value = stored != null && stored >= 0 ? stored : envValue
-    const source = stored != null && stored >= 0 ? ('database' as const) : ('env' as const)
+    // Checked inline rather than through the isSet flag so the null is actually narrowed away.
+    const value = stored != null && stored >= 0 ? stored : 0
+    const isSet = stored != null && stored >= 0
 
     return {
       key: definition.key,
       label: definition.label,
       description: definition.description,
-      envVar: definition.envVar,
-      envValue,
+      // What customers are actually charged right now.
       value,
-      source,
+      isSet,
     }
   }))
 }

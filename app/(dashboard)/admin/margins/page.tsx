@@ -32,6 +32,11 @@ export default async function AdminMarginsPage() {
             VAT. Customers see the combined figure as one transfer fee.
           </p>
           <p>
+            <strong className="text-amber-700">A margin that is not set earns nothing.</strong> There
+            is no default — an unset product sells at exactly what the provider charges us, so any
+            row marked &ldquo;Not set&rdquo; is worth filling in.
+          </p>
+          <p>
             Changes apply to new transactions only. Anything already pending keeps the fee the
             customer was quoted and agreed to.
           </p>

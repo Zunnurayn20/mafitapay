@@ -8,10 +8,10 @@ export type ResolvedMargin = {
   key: string
   label: string
   description: string
-  envVar: string
-  envValue: number
+  /** What customers are actually charged right now — 0 when never set. */
   value: number
-  source: 'database' | 'env'
+  /** Whether an admin has set this margin yet. */
+  isSet: boolean
 }
 
 export function MarginsForm({ margins }: { margins: ResolvedMargin[] }) {
@@ -77,24 +77,25 @@ export function MarginsForm({ margins }: { margins: ResolvedMargin[] }) {
                   <span className="font-semibold text-slate-900">{entry.label}</span>
                   <span
                     className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                      entry.source === 'database'
+                      entry.isSet
                         ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-slate-100 text-slate-600'
+                        : 'bg-amber-50 text-amber-700'
                     }`}
                     title={
-                      entry.source === 'database'
-                        ? 'Set here in the admin. This value is what customers are charged.'
-                        : `No admin value set — falling back to the ${entry.envVar} environment variable.`
+                      entry.isSet
+                        ? 'This value is what customers are charged.'
+                        : 'No margin set — this product is selling at provider cost, earning nothing.'
                     }
                   >
-                    {entry.source === 'database' ? 'Admin' : 'Env default'}
+                    {entry.isSet ? 'Set' : 'Not set'}
                   </span>
                 </div>
                 <p className="mt-1 text-sm leading-relaxed text-slate-500">{entry.description}</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  Currently charging <span className="font-mono font-semibold text-slate-600">{formatNaira(entry.value)}</span>
-                  {entry.source === 'database' && entry.envValue !== entry.value && (
-                    <> · env default is {formatNaira(entry.envValue)}</>
+                  {entry.isSet ? (
+                    <>Currently charging <span className="font-mono font-semibold text-slate-600">{formatNaira(entry.value)}</span></>
+                  ) : (
+                    <span className="font-semibold text-amber-700">Selling at provider cost — no margin earned.</span>
                   )}
                 </p>
               </div>

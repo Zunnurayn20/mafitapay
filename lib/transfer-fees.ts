@@ -19,8 +19,6 @@ const PAYOUT_FEE_TIERS: ReadonlyArray<{ upTo: number; fee: number }> = [
 /** VAT is charged on the transfer fee itself, not on the amount being transferred. */
 const VAT_RATE = 0.075
 
-const DEFAULT_PLATFORM_MARGIN = 25
-
 export interface TransferFeeQuote {
   /** Amount that reaches the recipient. */
   amount: number
@@ -32,14 +30,6 @@ export interface TransferFeeQuote {
   fee: number
   /** Amount + fee — what leaves the wallet. */
   total: number
-}
-
-function readMargin(): number {
-  // Server-side override so pricing can be tuned without a deploy. Absent in the browser
-  // bundle, which falls back to the default — the server value is what gets charged.
-  const raw = typeof process !== 'undefined' ? process.env.MAFITAPAY_TRANSFER_FEE_MARGIN_NGN : undefined
-  const parsed = Number(raw)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_PLATFORM_MARGIN
 }
 
 /** Round to kobo. Money held as a float needs this at every boundary or cents drift in. */
@@ -58,8 +48,8 @@ export function flutterwavePayoutCost(amount: number): number {
  *
  * Pass `marginNgn` to price against the admin-configured margin. Both the server (when charging)
  * and the client (when quoting) supply the same value, sourced from the session payload, so the
- * figure on the PIN screen matches the debit. Omitting it falls back to the env default, which is
- * only correct before an admin has set one.
+ * figure on the PIN screen matches the debit. Omitting it charges provider cost only — there is
+ * no default margin, so an unset margin is a zero margin.
  *
  * Non-finite or non-positive amounts yield a zero quote rather than NaN, so a partially
  * typed amount in the UI renders blank instead of "₦NaN".
@@ -71,7 +61,7 @@ export function quoteTransferFee(amount: number, marginNgn?: number): TransferFe
 
   const resolvedMargin = Number.isFinite(marginNgn) && (marginNgn as number) >= 0
     ? (marginNgn as number)
-    : readMargin()
+    : 0
 
   const providerCost = flutterwavePayoutCost(amount)
   const platformMargin = roundNgn(resolvedMargin)
