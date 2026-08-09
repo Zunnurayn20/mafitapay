@@ -36,7 +36,8 @@ const bankDirectoryInflight = new Map<string, Promise<void>>()
 const bankDirectoryListeners = new Map<string, Set<(banks: BankDirectoryEntry[]) => void>>()
 
 const LEGACY_CRYPTO_ICON_REPLACEMENTS: Record<string, string> = {
-  '/crypto-assets/eth.png': '/crypto-assets/eth-base.png',
+  // Token logos: keep eth.png as the main ETH mark (list + detail). Base chain logo is base.png.
+  '/crypto-assets/eth-base.png': '/crypto-assets/eth.png',
   '/crypto-assets/ton.svg': '/crypto-assets/ton.png',
   '/crypto-assets/sui.svg': '/crypto-assets/sui.png',
   '/crypto-assets/near.svg': '/crypto-assets/near.png',

@@ -9,14 +9,11 @@ import type { CryptoNetwork } from '@/types'
  *
  * Several files are named eth-* for historical reasons but hold the L2's own logo, not Ethereum's:
  * eth-arb.png is the Arbitrum mark, eth-op.png Optimism, eth-linea.png Linea.
- *
- * Base is deliberately absent. Its only local file, eth-base.png, is the "ETH on Base" asset icon
- * (an Ethereum diamond) and lib/server/data.ts keeps it distinct from eth.png on purpose. Callers
- * fall back to the network initial rather than show Ethereum's mark for Base. Drop a real Base
- * logo into public/crypto-assets/ and add it here to close the gap.
+ * base.png is the Base chain mark; eth.png is the Ethereum token logo (used for ETH on any chain).
  */
 const NETWORK_ICONS: Record<string, string> = {
   arbitrum: '/crypto-assets/eth-arb.png',
+  base: '/crypto-assets/base.png',
   bsc: '/crypto-assets/bnb.png',
   ethereum: '/crypto-assets/eth.png',
   linea: '/crypto-assets/eth-linea.png',

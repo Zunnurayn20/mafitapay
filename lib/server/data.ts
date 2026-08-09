@@ -1042,8 +1042,9 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
 }
 
 function resolveCryptoAssetIcon(icon: string) {
-  // Keep ETH mainnet (eth.png) and ETH Base (eth-base.png) distinct — do not remap eth.png → eth-base.
+  // ETH token uses eth.png everywhere; Base chain mark is base.png (network picker only).
   const explicitReplacements: Record<string, string> = {
+    '/crypto-assets/eth-base.png': '/crypto-assets/eth.png',
     '/crypto-assets/ton.svg': '/crypto-assets/ton.png',
     '/crypto-assets/sui.svg': '/crypto-assets/sui.png',
     '/crypto-assets/near.svg': '/crypto-assets/near.png',
@@ -2691,16 +2692,12 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
     WHERE id IN ('USDT_BSC', 'BNB_BSC', 'USDC_SOLANA', 'SOL_SOLANA', 'TON_TON', 'SUI_SUI', 'NEAR_NEAR')
   `).run(now)
 
-  // Force distinct logos: Base ETH vs Ethereum mainnet (older DBs both stored eth.png).
-  db.prepare(`
-    UPDATE crypto_pairs
-    SET icon = '/crypto-assets/eth-base.png', updated_at = ?
-    WHERE id = 'ETH_BASE'
-  `).run(now)
+  // ETH token logo is eth.png for every network. Base chain logo is base.png (see crypto-networks).
   db.prepare(`
     UPDATE crypto_pairs
     SET icon = '/crypto-assets/eth.png', updated_at = ?
-    WHERE id = 'ETH_ETHEREUM'
+    WHERE id IN ('ETH_BASE', 'ETH_ETHEREUM')
+       OR (symbol = 'ETH' AND (icon IS NULL OR icon = '' OR icon LIKE '%eth-base%' OR icon LIKE '%eth_base%'))
   `).run(now)
 }
 
