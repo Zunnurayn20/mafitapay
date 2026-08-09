@@ -159,7 +159,7 @@ function getPlanCategory(bundle: { planType?: string }) {
 
 function formatPlanCategoryLabel(category: string) {
   if (category === ALL_PLAN_CATEGORIES) return 'All'
-  // Vendor values arrive shouted (CORPORATE GIFTING); title-case so the pills match the rest of
+  // Vendor values arrive shouted (CORPORATE GIFTING); title-case so the menu matches the rest of
   // the UI, but keep SME/SME2/CG-style acronyms uppercase.
   return category
     .split(' ')
@@ -212,7 +212,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     ? dataBundles.filter(bundle => getDataBundleGroup(bundle) !== null)
     : []
   // Categories come from the bundles actually loaded, not a hardcoded list -- vendors differ on
-  // which ones they publish, and a pill that filters to nothing is worse than no pill.
+  // which ones they publish, and an option that filters to nothing is worse than no option.
   const planCategories = Array.from(new Set(visibleDataBundles.map(getPlanCategory))).sort()
   // The picker only earns its space when there is a real choice to make.
   const showPlanCategoryPicker = planCategories.length > 1
@@ -645,21 +645,19 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
             {showPlanCategoryPicker && (
-              <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
-                {[ALL_PLAN_CATEGORIES, ...planCategories].map(category => (
-                  <button
-                    key={category}
-                    type="button"
-                    onClick={() => setSelectedPlanCategory(category)}
-                    className={`shrink-0 border px-3 py-2 text-[9px] font-bold uppercase tracking-[0.8px] transition-all ${
-                      activePlanCategory === category
-                        ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)] text-[var(--gold2)]'
-                        : 'border-[var(--border)] bg-[var(--clay2)] text-[var(--muted)]'
-                    }`}
-                  >
-                    {formatPlanCategoryLabel(category)}
-                  </button>
-                ))}
+              <div className="mb-3 flex items-center gap-2 border border-[var(--border)] bg-[var(--clay2)] px-3">
+                <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Category</span>
+                <select
+                  value={activePlanCategory}
+                  onChange={event => setSelectedPlanCategory(event.target.value)}
+                  className="flex-1 min-w-0 cursor-pointer border-none bg-[var(--clay2)] py-3 text-right text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
+                >
+                  {[ALL_PLAN_CATEGORIES, ...planCategories].map(category => (
+                    <option key={category} value={category}>
+                      {formatPlanCategoryLabel(category)}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
             <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
