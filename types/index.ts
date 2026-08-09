@@ -426,6 +426,12 @@ export interface BillDataBundle {
   provider?: 'flutterwave' | 'amigo' | 'asbdata'
   providerPlanId?: string
   providerNetworkId?: number
+  /**
+   * Canonical plan category from normalizePlanType -- SME, GIFTING, CORPORATE GIFTING and so on.
+   * Set by the vendor mappers so the client can group by it; Flutterwave publishes no category,
+   * so its bundles leave this undefined and fall under Standard.
+   */
+  planType?: string
   efficiencyPercent?: number
   efficiencyLabel?: string
 }

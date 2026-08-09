@@ -147,29 +147,24 @@ function getPriceHintVsFlutterwave(
 }
 
 /**
- * Free-text plan match. Sizes are written inconsistently across providers ("1GB", "1 GB", "1gb"),
- * so strip whitespace on both sides before comparing -- otherwise "1 gb" finds nothing.
+ * Plan category shown in the picker. Vendors publish this as SME / GIFTING / CORPORATE GIFTING
+ * and friends; normalizePlanType canonicalizes it server-side. Flutterwave publishes no category
+ * at all, so those bundles land in Standard rather than a category of their own.
  */
-function matchesPlanQuery(
-  bundle: { label: string; itemName: string; validity?: string; amount: number; provider?: string; efficiencyLabel?: string },
-  query: string,
-) {
-  const trimmed = query.trim().toLowerCase()
-  if (!trimmed) return true
+const ALL_PLAN_CATEGORIES = '__all__'
 
-  const collapsed = trimmed.replace(/\s+/g, '')
-  const haystack = [
-    bundle.label,
-    bundle.itemName,
-    bundle.validity ?? '',
-    bundle.provider ?? '',
-    bundle.efficiencyLabel ?? '',
-    String(bundle.amount),
-  ]
+function getPlanCategory(bundle: { planType?: string }) {
+  return bundle.planType?.trim() || 'STANDARD'
+}
+
+function formatPlanCategoryLabel(category: string) {
+  if (category === ALL_PLAN_CATEGORIES) return 'All'
+  // Vendor values arrive shouted (CORPORATE GIFTING); title-case so the pills match the rest of
+  // the UI, but keep SME/SME2/CG-style acronyms uppercase.
+  return category
+    .split(' ')
+    .map(word => (word.length <= 3 || /\d/.test(word) ? word : `${word[0]}${word.slice(1).toLowerCase()}`))
     .join(' ')
-    .toLowerCase()
-
-  return haystack.includes(trimmed) || haystack.replace(/\s+/g, '').includes(collapsed)
 }
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
@@ -188,7 +183,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [selectedBillerCode, setSelectedBillerCode] = useState('')
   const [selectedBundleCode, setSelectedBundleCode] = useState('')
   const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>('best_offers')
-  const [planQuery, setPlanQuery] = useState('')
+  const [selectedPlanCategory, setSelectedPlanCategory] = useState<string>(ALL_PLAN_CATEGORIES)
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
   const formAccountInputRef = useRef<HTMLInputElement>(null)
@@ -216,20 +211,28 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const visibleDataBundles = isDataService
     ? dataBundles.filter(bundle => getDataBundleGroup(bundle) !== null)
     : []
+  // Categories come from the bundles actually loaded, not a hardcoded list -- vendors differ on
+  // which ones they publish, and a pill that filters to nothing is worse than no pill.
+  const planCategories = Array.from(new Set(visibleDataBundles.map(getPlanCategory))).sort()
+  // The picker only earns its space when there is a real choice to make.
+  const showPlanCategoryPicker = planCategories.length > 1
+  // Switching network can retire the picked category; fall back rather than showing an empty list.
+  const activePlanCategory = showPlanCategoryPicker && planCategories.includes(selectedPlanCategory)
+    ? selectedPlanCategory
+    : ALL_PLAN_CATEGORIES
+  const categoryFilteredBundles = activePlanCategory === ALL_PLAN_CATEGORIES
+    ? visibleDataBundles
+    : visibleDataBundles.filter(bundle => getPlanCategory(bundle) === activePlanCategory)
+  // Duration groups are built from the category-filtered set, so picking SME drops any duration tab
+  // that has no SME plans instead of leaving a tab that opens onto nothing.
   const groupedDataBundles = DATA_BUNDLE_GROUPS
     .map(group => ({
       ...group,
-      bundles: visibleDataBundles.filter(bundle => getDataBundleGroup(bundle) === group.key),
+      bundles: categoryFilteredBundles.filter(bundle => getDataBundleGroup(bundle) === group.key),
     }))
     .filter(group => group.bundles.length > 0)
   const activeDataBundleGroup = groupedDataBundles.find(group => group.key === selectedDataBundleGroup) ?? groupedDataBundles[0]
-  // A search spans every group. Searching "1GB" from the Daily tab should surface the monthly 1GB
-  // plans too, otherwise the tabs hide most of what was asked for.
-  const planSearchActive = planQuery.trim().length > 0
-  const planSearchResults = planSearchActive
-    ? visibleDataBundles.filter(bundle => matchesPlanQuery(bundle, planQuery))
-    : []
-  const shownDataBundles = planSearchActive ? planSearchResults : (activeDataBundleGroup?.bundles ?? [])
+  const shownDataBundles = activeDataBundleGroup?.bundles ?? []
   const selectedDataBundle = isDataService ? dataBundles.find(bundle => bundle.itemCode === selectedBundleCode) : null
   const packageBillers = isPackageBillService ? (selectedBillProvider?.billers ?? []) : []
   const selectedPackageBiller = isPackageBillService
@@ -277,7 +280,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setSelectedBillerCode('')
     setSelectedBundleCode('')
     setSelectedDataBundleGroup('best_offers')
-    setPlanQuery('')
+    setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
     setTouched(INITIAL_TOUCHED)
     setShowRecentAccounts(false)
     setProvider(defaultNetworkProviderName)
@@ -562,6 +565,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setSelectedBundleCode('')
                     setAmount('')
                     setSelectedDataBundleGroup('best_offers')
+                    setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
                   }
                   setTouched(current => ({ ...current, provider: true }))
                 }}
@@ -640,43 +644,51 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         {isDataService ? (
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
-            <Input
-              placeholder="Search plans — 1GB, weekly, 500"
-              value={planQuery}
-              onChange={e => setPlanQuery(e.target.value)}
-              className="mb-3"
-            />
-            {!planSearchActive && (
+            {showPlanCategoryPicker && (
               <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
-                {groupedDataBundles.map(group => (
+                {[ALL_PLAN_CATEGORIES, ...planCategories].map(category => (
                   <button
-                    key={group.key}
+                    key={category}
                     type="button"
-                    onClick={() => setSelectedDataBundleGroup(group.key)}
+                    onClick={() => setSelectedPlanCategory(category)}
                     className={`shrink-0 border px-3 py-2 text-[9px] font-bold uppercase tracking-[0.8px] transition-all ${
-                      activeDataBundleGroup?.key === group.key
+                      activePlanCategory === category
                         ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)] text-[var(--gold2)]'
                         : 'border-[var(--border)] bg-[var(--clay2)] text-[var(--muted)]'
                     }`}
                   >
-                    {group.label}
+                    {formatPlanCategoryLabel(category)}
                   </button>
                 ))}
               </div>
             )}
-            {planSearchActive && (
-              <div className="mb-2 text-[9px] text-[var(--muted)]">
-                {planSearchResults.length === 0
-                  ? 'No plans match that search.'
-                  : `${planSearchResults.length} plan${planSearchResults.length === 1 ? '' : 's'} across all categories`}
-              </div>
-            )}
+            <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+              {groupedDataBundles.map(group => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => setSelectedDataBundleGroup(group.key)}
+                  className={`shrink-0 border px-3 py-2 text-[9px] font-bold uppercase tracking-[0.8px] transition-all ${
+                    activeDataBundleGroup?.key === group.key
+                      ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)] text-[var(--gold2)]'
+                      : 'border-[var(--border)] bg-[var(--clay2)] text-[var(--muted)]'
+                  }`}
+                >
+                  {group.label}
+                </button>
+              ))}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               {shownDataBundles.map(bundle => {
                 const subtitle = getDataBundleSubtitle(bundle)
                 const validityDisplay = bundle.validity
-                const specialContext = !planSearchActive && activeDataBundleGroup?.key === 'special' ? getSpecialBundleContext(bundle) : null
+                const specialContext = activeDataBundleGroup?.key === 'special' ? getSpecialBundleContext(bundle) : null
                 const priceHint = getPriceHintVsFlutterwave(bundle, dataBundles)
+                // Under a specific category every card shares it, so the label only earns space
+                // on All, where two same-size plans can differ only by category.
+                const categoryLabel = showPlanCategoryPicker && activePlanCategory === ALL_PLAN_CATEGORIES
+                  ? formatPlanCategoryLabel(getPlanCategory(bundle))
+                  : null
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
@@ -715,6 +727,9 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                         </div>
                       )}
                     </div>
+                    {categoryLabel && (
+                      <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">{categoryLabel}</div>
+                    )}
                     {subtitle && (
                       <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
                     )}
@@ -732,7 +747,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 )
               })}
             </div>
-            {!planSearchActive && activeDataBundleGroup?.key === 'special' && (
+            {activeDataBundleGroup?.key === 'special' && (
               <div className="mt-2 text-[10px] text-[var(--muted)]">
                 Some special plans do not include an explicit expiry in the provider catalog. We only show validity when the network states it.
               </div>
@@ -930,6 +945,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setSelectedBundleCode('')
                     setAmount('')
                     setSelectedDataBundleGroup('best_offers')
+                    setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
                     setStep('form')
                   }}
                   className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)] underline"

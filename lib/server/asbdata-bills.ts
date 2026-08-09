@@ -372,6 +372,7 @@ function toAsbdataBundles(plans: PricedAsbdataPlan[]): BillDataBundle[] {
     provider: 'asbdata' as const,
     providerPlanId: String(plan.planId),
     providerNetworkId: plan.networkId,
+    planType: plan.planTypeNormalized,
     efficiencyLabel: plan.planTypeNormalized !== 'STANDARD' ? plan.planTypeNormalized : (plan.planType || undefined),
   }))
 }

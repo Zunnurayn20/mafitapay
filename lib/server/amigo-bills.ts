@@ -253,6 +253,7 @@ function toAmigoBundles(plans: PricedAmigoPlan[]): BillDataBundle[] {
     provider: 'amigo',
     providerPlanId: String(plan.planId),
     providerNetworkId: plan.networkId,
+    planType: plan.planType,
     efficiencyPercent: plan.efficiencyPercent,
     efficiencyLabel: plan.efficiencyLabel,
   }))
