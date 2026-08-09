@@ -240,6 +240,16 @@ export interface CryptoAsset {
   sellRate: number
   buySpreadBps: number
   sellSpreadBps: number
+  /**
+   * Flat ₦ network/gas recovery on buys. On top of buySpreadBps margin.
+   * When unset, server applies a network default.
+   */
+  buyNetworkFeeNgn?: number
+  /**
+   * Flat ₦ network/gas recovery on sells / deposit credits. On top of sellSpreadBps.
+   * When unset, server applies a network default.
+   */
+  sellNetworkFeeNgn?: number
   quoteTtlSeconds: number
   isActive?: boolean
   baseExecutionEnabled?: boolean
@@ -261,6 +271,8 @@ export interface CryptoQuote {
   amountNgn: number
   cryptoAmount: number
   unitRate: number
+  /** Locked gas/network recovery fee in ₦ for this quote. */
+  networkFeeNgn?: number
   providerPayload?: Record<string, unknown>
   expiresAt: string
   usedAt?: string

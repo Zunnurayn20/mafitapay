@@ -439,7 +439,8 @@ export async function POST(req: Request) {
   }
 
   const quotedAmount = quote.amountNgn
-  const fee = 0
+  // Gas/network recovery locked into the quote at create time (plus spread margin already in unitRate).
+  const fee = Math.max(0, Number(quote.networkFeeNgn) || 0)
   const cryptoAmount = quote.cryptoAmount
   const ref = generateRef()
   let liveAsset = asset
@@ -477,7 +478,12 @@ export async function POST(req: Request) {
 
     const totalDebit = quotedAmount + fee
     if (wallet.balance < totalDebit) {
-      return NextResponse.json({ error: 'Insufficient NGN balance', success: false }, { status: 400 })
+      return NextResponse.json({
+        error: fee > 0
+          ? `Insufficient NGN balance. Need ₦${totalDebit.toLocaleString('en-NG')} (order + ₦${fee.toLocaleString('en-NG')} network fee).`
+          : 'Insufficient NGN balance',
+        success: false,
+      }, { status: 400 })
     }
     try {
       const executionRail = getExecutionRailForAsset(asset)
@@ -531,11 +537,13 @@ export async function POST(req: Request) {
       }, { status: 400 })
     }
 
+    // Same pattern as bank transfers: amount includes network fee because settlement
+    // releases locked funds by |amount| and never reads the fee column.
     transaction = {
       id: ref,
       type: 'crypto_buy' as const,
       status: 'pending' as const,
-      amount: -quotedAmount,
+      amount: -totalDebit,
       fee,
       description: `Buy ${formatCrypto(cryptoAmount, liveAsset.symbol)}`,
       reference: ref,
@@ -557,12 +565,15 @@ export async function POST(req: Request) {
         cryptoAmount,
         unitRate: quote.unitRate,
         liveRate: liveAsset.buyRate,
+        orderAmountNgn: quotedAmount,
+        networkFeeNgn: fee,
+        totalDebitNgn: totalDebit,
       },
     }
   } else {
     const netCredit = quotedAmount - fee
     if (netCredit <= 0) {
-      return NextResponse.json({ error: 'Amount is too small after fees', success: false }, { status: 400 })
+      return NextResponse.json({ error: 'Amount is too small after network fees', success: false }, { status: 400 })
     }
     try {
       liveAsset = await assertQuoteStillMatchesLiveMarket(asset, action, quote.unitRate)
@@ -601,16 +612,20 @@ export async function POST(req: Request) {
         cryptoAmount,
         unitRate: quote.unitRate,
         liveRate: liveAsset.sellRate,
+        networkFeeNgn: fee,
+        grossAmountNgn: quotedAmount,
       },
     }
   }
 
+  const buyTotalDebit = quotedAmount + fee
   const result = await applyWalletMutation({
     userId: user.id,
     asset: 'NGN',
-    balanceDelta: action === 'buy' ? -quotedAmount : 0,
-    lockedBalanceDelta: action === 'buy' ? quotedAmount : 0,
-    minimumAvailableBalance: action === 'buy' ? quotedAmount : undefined,
+    // Buy: lock order + network fee so gas recovery is held with the reservation.
+    balanceDelta: action === 'buy' ? -buyTotalDebit : 0,
+    lockedBalanceDelta: action === 'buy' ? buyTotalDebit : 0,
+    minimumAvailableBalance: action === 'buy' ? buyTotalDebit : undefined,
     transaction,
   })
   const cryptoOrder = await createCryptoOrder({

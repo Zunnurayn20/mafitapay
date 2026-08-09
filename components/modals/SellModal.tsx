@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
+import { getCryptoNetworkFeeNgn } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
 import { formatNGN } from '@/lib/utils'
 import { CryptoAsset, CryptoDepositAddressFamily, CryptoPairId } from '@/types'
@@ -43,6 +44,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     ?? sellableAssets[0]
   const addressFamily = getAddressFamilyForAsset(asset)
   const depositAddress = cryptoDepositAddresses.find(item => item.addressFamily === addressFamily && item.isActive)
+  const sellNetworkFeeNgn = asset ? getCryptoNetworkFeeNgn(asset, 'sell') : 0
 
   useEffect(() => {
     if (!open) {
@@ -152,6 +154,10 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             <div>
               <div className="text-[7px] uppercase tracking-[1px] text-[var(--text2)]">Auto-credit sell rate</div>
               <div className="font-mono text-[15px] font-bold text-[var(--gold)]">{formatNGN(asset.sellRate)} / {asset.symbol}</div>
+              <div className="mt-1 text-[9px] text-[var(--muted)]">
+                Rate includes platform margin
+                {sellNetworkFeeNgn > 0 ? ` · network fee ${formatNGN(sellNetworkFeeNgn)} deducted per credit` : ''}
+              </div>
             </div>
             <button
               type="button"
@@ -216,7 +222,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               <div className="border border-[rgba(202,165,96,.24)] bg-[var(--clay)] p-4">
                 <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Send any amount</div>
                 <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
-                  Send only {asset.symbol} on {asset.network}. Once the network confirms it, MafitaPay detects the deposit and credits your NGN balance.
+                  Send only {asset.symbol} on {asset.network}. Once the network confirms it, MafitaPay detects the deposit and credits your NGN balance at the sell rate
+                  {sellNetworkFeeNgn > 0 ? ` minus a ${formatNGN(sellNetworkFeeNgn)} network fee for on-chain gas` : ''}.
                 </div>
               </div>
 

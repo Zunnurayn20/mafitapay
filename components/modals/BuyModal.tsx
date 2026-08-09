@@ -9,7 +9,7 @@ import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
 import { useCryptoAssets } from '@/lib/client/catalogs'
-import { getMinimumBuyNgn } from '@/lib/crypto-rules'
+import { getCryptoNetworkFeeNgn, getMinimumBuyNgn } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
 import { fmtDate, formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
 import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
@@ -98,7 +98,13 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       ? rawAmount * usdNgnRate
       : rawAmount
   const crypto = quote?.cryptoAmount ?? (asset ? (amountMode === 'asset' ? rawAmount : amt / asset.buyRate) : 0)
-  const fee   = 0
+  // Prefer the fee locked into the quote; fall back to live asset/network default for the form.
+  const fee = quote?.networkFeeNgn != null && Number.isFinite(quote.networkFeeNgn)
+    ? Math.max(0, quote.networkFeeNgn)
+    : asset
+      ? getCryptoNetworkFeeNgn(asset, 'buy')
+      : 0
+  const totalDebit = amt + fee
   const minimumBuyNgn = asset ? getMinimumBuyNgn(asset.id) : 1000
   const belowMinimum = amt > 0 && amt < minimumBuyNgn
   const addressValidation = asset ? validateWalletAddressForPair(asset.id, address) : { valid: false, error: 'Destination wallet address is required.' }
@@ -413,10 +419,10 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             </div>
             <div className="mt-1.5 text-[9px] text-[var(--muted)]">
               {amountMode === 'asset'
-                ? `Estimated NGN debit: ${formatNGN(amt)}`
+                ? `Estimated NGN order: ${formatNGN(amt)}`
                 : amountMode === 'usd'
                   ? `Approximate NGN conversion: ${formatNGN(amt)}`
-                  : `Approximate USD value uses the current USD/NGN market snapshot.`}
+                  : `Rate includes platform margin. Network fee covers on-chain gas.`}
             </div>
             {belowMinimum && (
               <div className="mt-1 text-[9px] text-[var(--red2)]">
@@ -443,8 +449,10 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               {addressError ?? getWalletAddressHint(asset.id)}
             </div>
           </div>
-          <div className="bg-[var(--clay)] border border-[rgba(202,165,96,.24)] p-3 text-[11px]">
-            <div className="flex justify-between py-1 font-bold"><span className="text-[var(--text)]">Total NGN debit</span><span className="text-[var(--gold)] font-mono">{formatNGN(amt + fee)}</span></div>
+          <div className="bg-[var(--clay)] border border-[rgba(202,165,96,.24)] p-3 text-[11px] space-y-1">
+            <div className="flex justify-between py-0.5"><span className="text-[var(--muted)]">Order</span><span className="font-mono text-[var(--text)]">{formatNGN(amt)}</span></div>
+            <div className="flex justify-between py-0.5"><span className="text-[var(--muted)]">Network fee (gas)</span><span className="font-mono text-[var(--text)]">{formatNGN(fee)}</span></div>
+            <div className="flex justify-between py-1 font-bold border-t border-[var(--border)] mt-1 pt-1.5"><span className="text-[var(--text)]">Total NGN debit</span><span className="text-[var(--gold)] font-mono">{formatNGN(totalDebit)}</span></div>
           </div>
           {availabilityError && (
             <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[10px] text-[var(--text)]">
@@ -478,7 +486,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
                   {formatCrypto(crypto, asset.symbol)} <span className="text-[var(--gold2)]">·</span> {asset.network}
                 </div>
                 <div className="mt-1 text-[11px] text-[var(--text2)]">
-                  {formatNGN(amt + fee)} will be reserved from your wallet after PIN confirmation.
+                  {formatNGN(totalDebit)} will be reserved from your wallet after PIN confirmation
+                  {fee > 0 ? ` (includes ${formatNGN(fee)} network fee)` : ''}.
                 </div>
                 <div className="mt-3 inline-flex items-center border px-2.5 py-1 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--text)]">
                   <span className={`mr-2 inline-block h-1.5 w-1.5 rounded-full ${asset.pricingSource === 'live' ? 'bg-[var(--green2)]' : asset.pricingSource === 'backup' ? 'bg-[var(--gold2)]' : 'bg-[var(--red2)]'}`} />
@@ -502,7 +511,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             key={pinVersion}
             onComplete={handlePin}
             title={submittingOrder ? 'Submitting Order…' : nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Buy Order'}
-            subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(amt + fee)} from your NGN balance`}
+            subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(totalDebit)} from your NGN balance`}
             secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
             secondaryActionIconOnly
             onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}

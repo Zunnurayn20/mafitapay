@@ -287,6 +287,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     marketSourceId: string
     buySpreadBps: number
     sellSpreadBps: number
+    buyNetworkFeeNgn: string
+    sellNetworkFeeNgn: string
     quoteTtlSeconds: number
     isActive: boolean
     baseExecutionEnabled: boolean
@@ -306,6 +308,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     marketSourceId: '',
     buySpreadBps: 180,
     sellSpreadBps: 180,
+    buyNetworkFeeNgn: '',
+    sellNetworkFeeNgn: '',
     quoteTtlSeconds: 90,
     isActive: true,
     baseExecutionEnabled: false,
@@ -704,6 +708,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       marketRate: marketRatePreview,
       buySpreadBps: newCryptoAsset.buySpreadBps,
       sellSpreadBps: newCryptoAsset.sellSpreadBps,
+      buyNetworkFeeNgn: parseOptionalNumber(newCryptoAsset.buyNetworkFeeNgn),
+      sellNetworkFeeNgn: parseOptionalNumber(newCryptoAsset.sellNetworkFeeNgn),
       buyRate: marketRatePreview > 0 ? computeBuyRate(marketRatePreview, newCryptoAsset.buySpreadBps) : 0,
       sellRate: marketRatePreview > 0 ? computeSellRate(marketRatePreview, newCryptoAsset.sellSpreadBps) : 0,
       quoteTtlSeconds: newCryptoAsset.quoteTtlSeconds,
@@ -734,6 +740,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         marketSourceId: '',
         buySpreadBps: 180,
         sellSpreadBps: 180,
+        buyNetworkFeeNgn: '',
+        sellNetworkFeeNgn: '',
         quoteTtlSeconds: 90,
         isActive: true,
         baseExecutionEnabled: false,

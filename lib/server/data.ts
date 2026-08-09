@@ -10,7 +10,7 @@ import {
   MOCK_WALLET,
   NETWORK_PROVIDERS,
 } from '../constants'
-import { getEffectiveQuoteTtlSeconds } from '../crypto-rules'
+import { getCryptoNetworkFeeNgn, getDefaultNetworkFeeNgn, getEffectiveQuoteTtlSeconds } from '../crypto-rules'
 import { getExecutionRailForAsset } from '../crypto-execution'
 import { computeBuyRate, computeSellRate, getDefaultCryptoMarketSourceId } from '../crypto-market'
 import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../routed-assets'
@@ -454,6 +454,8 @@ type CryptoPairRow = {
   sell_rate: number
   buy_spread_bps: number
   sell_spread_bps: number
+  buy_network_fee_ngn: number | null
+  sell_network_fee_ngn: number | null
   quote_ttl_seconds: number
   is_active: number
   base_execution_enabled: number
@@ -477,6 +479,7 @@ type CryptoQuoteRow = {
   amount_ngn: number
   crypto_amount: number
   unit_rate: number
+  network_fee_ngn: number | null
   provider_payload: string | null
   expires_at: string
   used_at: string | null
@@ -999,6 +1002,8 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
     sellRate: Number(row.sell_rate),
     buySpreadBps: Number(row.buy_spread_bps),
     sellSpreadBps: Number(row.sell_spread_bps),
+    buyNetworkFeeNgn: row.buy_network_fee_ngn == null ? undefined : Number(row.buy_network_fee_ngn),
+    sellNetworkFeeNgn: row.sell_network_fee_ngn == null ? undefined : Number(row.sell_network_fee_ngn),
     quoteTtlSeconds: Number(row.quote_ttl_seconds),
     isActive: Boolean(row.is_active),
     baseExecutionEnabled: Boolean(row.base_execution_enabled),
@@ -1066,6 +1071,7 @@ function mapCryptoQuoteRow(row: CryptoQuoteRow): CryptoQuote {
     amountNgn: Number(row.amount_ngn),
     cryptoAmount: Number(row.crypto_amount),
     unitRate: Number(row.unit_rate),
+    networkFeeNgn: row.network_fee_ngn == null ? 0 : Number(row.network_fee_ngn),
     providerPayload: parseJson(row.provider_payload, undefined),
     expiresAt: row.expires_at,
     usedAt: row.used_at ?? undefined,
@@ -1869,6 +1875,8 @@ function initSchema(db: DatabaseSync) {
       sell_rate REAL NOT NULL,
       buy_spread_bps INTEGER NOT NULL,
       sell_spread_bps INTEGER NOT NULL,
+      buy_network_fee_ngn REAL,
+      sell_network_fee_ngn REAL,
       quote_ttl_seconds INTEGER NOT NULL DEFAULT 90,
       is_active INTEGER NOT NULL DEFAULT 1,
       base_execution_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1892,6 +1900,7 @@ function initSchema(db: DatabaseSync) {
       amount_ngn REAL NOT NULL,
       crypto_amount REAL NOT NULL,
       unit_rate REAL NOT NULL,
+      network_fee_ngn REAL NOT NULL DEFAULT 0,
       expires_at TEXT NOT NULL,
       used_at TEXT,
       created_at TEXT NOT NULL
@@ -2393,6 +2402,10 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'crypto_orders', 'execution_status', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'execution_reference', 'TEXT')
   ensureColumn(db, 'crypto_orders', 'destination_tx_hash', 'TEXT')
+  // Null means "use network default" so existing rows pick up gas recovery without a manual admin pass.
+  ensureColumn(db, 'crypto_pairs', 'buy_network_fee_ngn', 'REAL')
+  ensureColumn(db, 'crypto_pairs', 'sell_network_fee_ngn', 'REAL')
+  ensureColumn(db, 'crypto_quotes', 'network_fee_ngn', 'REAL NOT NULL DEFAULT 0')
   ensureColumn(db, 'crypto_deposit_events', 'sweep_status', "TEXT NOT NULL DEFAULT 'pending'")
   ensureColumn(db, 'crypto_deposit_events', 'sweep_tx_hash', 'TEXT')
   ensureColumn(db, 'crypto_deposit_events', 'sweep_error', 'TEXT')
@@ -6553,6 +6566,8 @@ export async function createCryptoQuote(input: {
 
   const unitRate = input.unitRate ?? (input.side === 'buy' ? asset.buyRate : asset.sellRate)
   const cryptoAmount = input.cryptoAmount ?? (input.amountNgn / unitRate)
+  // Lock gas recovery into the quote so PIN screen and debit match even if admin changes fees mid-flight.
+  const networkFeeNgn = getCryptoNetworkFeeNgn(asset, input.side)
   const now = new Date()
   const quoteTtlSeconds = getEffectiveQuoteTtlSeconds(asset.id, asset.quoteTtlSeconds)
   const expiresAt = new Date(now.getTime() + quoteTtlSeconds * 1000).toISOString()
@@ -6560,8 +6575,8 @@ export async function createCryptoQuote(input: {
 
   getDb().prepare(`
     INSERT INTO crypto_quotes (
-      id, user_id, pair_id, side, amount_ngn, crypto_amount, unit_rate, provider_payload, expires_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, user_id, pair_id, side, amount_ngn, crypto_amount, unit_rate, network_fee_ngn, provider_payload, expires_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.userId,
@@ -6570,6 +6585,7 @@ export async function createCryptoQuote(input: {
     input.amountNgn,
     cryptoAmount,
     unitRate,
+    networkFeeNgn,
     input.providerPayload ? JSON.stringify(input.providerPayload) : null,
     expiresAt,
     now.toISOString()
@@ -7559,8 +7575,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
   const now = new Date().toISOString()
   const statement = db.prepare(`
     INSERT INTO crypto_pairs (
-      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       symbol = excluded.symbol,
@@ -7575,6 +7591,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       sell_rate = excluded.sell_rate,
       buy_spread_bps = excluded.buy_spread_bps,
       sell_spread_bps = excluded.sell_spread_bps,
+      buy_network_fee_ngn = excluded.buy_network_fee_ngn,
+      sell_network_fee_ngn = excluded.sell_network_fee_ngn,
       quote_ttl_seconds = excluded.quote_ttl_seconds,
       is_active = excluded.is_active,
       base_execution_enabled = excluded.base_execution_enabled,
@@ -7596,6 +7614,12 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       const marketRate = Number.isFinite(asset.marketRate) && asset.marketRate > 0 ? asset.marketRate : 0
       const buyRate = marketRate > 0 ? computeBuyRate(marketRate, asset.buySpreadBps) : 0
       const sellRate = marketRate > 0 ? computeSellRate(marketRate, asset.sellSpreadBps) : 0
+      const buyNetworkFeeNgn = asset.buyNetworkFeeNgn != null && Number.isFinite(asset.buyNetworkFeeNgn)
+        ? Math.max(0, asset.buyNetworkFeeNgn)
+        : getDefaultNetworkFeeNgn(asset.network, 'buy')
+      const sellNetworkFeeNgn = asset.sellNetworkFeeNgn != null && Number.isFinite(asset.sellNetworkFeeNgn)
+        ? Math.max(0, asset.sellNetworkFeeNgn)
+        : getDefaultNetworkFeeNgn(asset.network, 'sell')
       const executionRail = asset.executionRail ?? getConfigurableAssetExecutionRail(asset)
       assertSupportedAssetExecutionRail(asset, executionRail)
       const routedConfig = executionRail === 'routed_treasury'
@@ -7619,6 +7643,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
         sellRate,
         asset.buySpreadBps,
         asset.sellSpreadBps,
+        buyNetworkFeeNgn,
+        sellNetworkFeeNgn,
         asset.quoteTtlSeconds,
         asset.isActive === false ? 0 : 1,
         asset.baseExecutionEnabled === true ? 1 : 0,

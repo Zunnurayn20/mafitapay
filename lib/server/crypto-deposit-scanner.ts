@@ -37,6 +37,7 @@ import {
   getLastScannedBlock,
   setLastScannedBlock as persistLastScannedBlock,
 } from '@/lib/server/data'
+import { getCryptoNetworkFeeNgn } from '@/lib/crypto-rules'
 import { formatCrypto, sanitizeErrorForLogs, sanitizeTextForLogs, sanitizeUrlForLogs } from '@/lib/utils'
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
@@ -803,14 +804,24 @@ export async function settleDirectCryptoDeposit(input: {
     console.log(`[crypto-deposit-scanner] rate for ${input.asset.pairId} (direct credit): ${sellRate} (assetFound=${!!assetForRate})`)
   }
 
-  const amountNgn = Number((input.event.amountCrypto * sellRate).toFixed(2))
-  if (!Number.isFinite(amountNgn) || amountNgn <= 0) {
+  const grossNgn = Number((input.event.amountCrypto * sellRate).toFixed(2))
+  if (!Number.isFinite(grossNgn) || grossNgn <= 0) {
     console.error(`[crypto-deposit-scanner] Calculated NGN credit invalid for ${input.asset.pairId} (amountCrypto=${input.event.amountCrypto}, rate=${sellRate}). Leaving unmatched.`)
     return input.event
   }
 
+  // Sell spread is already in sellRate. Network fee recovers sweep/gas cost on top.
+  const networkFeeNgn = assetForRate
+    ? getCryptoNetworkFeeNgn(assetForRate, 'sell')
+    : 0
+  const amountNgn = Number(Math.max(0, grossNgn - networkFeeNgn).toFixed(2))
+  if (amountNgn <= 0) {
+    console.error(`[crypto-deposit-scanner] Net credit after network fee is zero for ${input.asset.pairId} (gross=${grossNgn}, fee=${networkFeeNgn}). Leaving unmatched.`)
+    return input.event
+  }
+
   if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
-    console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol} (rate=${sellRate})`)
+    console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol} (rate=${sellRate}, networkFee=${networkFeeNgn}, gross=${grossNgn})`)
   }
   const now = new Date().toISOString()
   const transactionId = `tx_${input.event.externalEventId.replace(/[^a-zA-Z0-9]/g, '').slice(-24)}`
@@ -825,7 +836,7 @@ export async function settleDirectCryptoDeposit(input: {
         type: 'crypto_sell',
         status: 'success',
         amount: amountNgn,
-        fee: 0,
+        fee: networkFeeNgn,
         description: `Sell ${formatCrypto(input.event.amountCrypto, input.asset.symbol)}`,
         reference: transactionId,
         recipient: 'MafitaPay crypto deposit',
@@ -846,6 +857,8 @@ export async function settleDirectCryptoDeposit(input: {
           amountUnits: input.event.amountUnits,
           unitRate: sellRate,
           liveRate: sellRate,
+          grossAmountNgn: grossNgn,
+          networkFeeNgn,
         },
       },
     })

@@ -234,6 +234,30 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               />
             </label>
             <label className="text-[10px] text-[var(--muted)]">
+              Buy network fee (₦)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={newCryptoAsset.buyNetworkFeeNgn}
+                onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
+                placeholder="Gas recovery (optional)"
+                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+              />
+            </label>
+            <label className="text-[10px] text-[var(--muted)]">
+              Sell network fee (₦)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={newCryptoAsset.sellNetworkFeeNgn}
+                onChange={event => setNewCryptoAsset(current => ({ ...current, sellNetworkFeeNgn: event.target.value }))}
+                placeholder="Sweep/gas (optional)"
+                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+              />
+            </label>
+            <label className="text-[10px] text-[var(--muted)]">
               Quote Validity (sec)
               <input
                 type="number"
@@ -431,6 +455,30 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     min={0}
                     value={newCryptoAsset.sellSpreadBps}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, sellSpreadBps: Number(event.target.value) }))}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Buy network fee (₦)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={newCryptoAsset.buyNetworkFeeNgn}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
+                    placeholder="Gas recovery"
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Sell network fee (₦)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={newCryptoAsset.sellNetworkFeeNgn}
+                    onChange={event => setNewCryptoAsset(current => ({ ...current, sellNetworkFeeNgn: event.target.value }))}
+                    placeholder="Sweep/gas"
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
@@ -681,7 +729,46 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Buy network fee (₦)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={item.buyNetworkFeeNgn ?? ''}
+                    placeholder="Gas recovery"
+                    onChange={event => {
+                      const raw = event.target.value
+                      setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
+                        ...asset,
+                        buyNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
+                      } : asset))
+                    }}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
+                <label className="text-[10px] text-[var(--muted)]">
+                  Sell network fee (₦)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={item.sellNetworkFeeNgn ?? ''}
+                    placeholder="Sweep/gas recovery"
+                    onChange={event => {
+                      const raw = event.target.value
+                      setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
+                        ...asset,
+                        sellNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
+                      } : asset))
+                    }}
+                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                  />
+                </label>
               </div>
+              <p className="mt-2 text-[10px] text-[var(--muted)]">
+                Spreads (bps) are your margin. Network fees (₦) recover on-chain gas. Leave fee blank to use the network default.
+              </p>
               {item.executionRail === 'routed_treasury' && (
                 <>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
