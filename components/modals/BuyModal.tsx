@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -85,6 +85,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const [lockingQuote, setLockingQuote] = useState(false)
   const [submittingOrder, setSubmittingOrder] = useState(false)
   const [lastUsedAddress, setLastUsedAddress] = useState('')
+  const addressInputRef = useRef<HTMLInputElement>(null)
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = assets.find(a => a.id === pairId)
@@ -160,6 +161,22 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     if (step !== 'form') return
     setAvailabilityError(null)
   }, [amount, address, pairId, step])
+
+  async function pasteAddress() {
+    // readText is unavailable in the Android WebView and on non-HTTPS origins, and Firefox
+    // gates it behind a pref -- fall back to focusing the field so a long-press paste works.
+    try {
+      const text = await navigator.clipboard?.readText()
+      if (!text?.trim()) {
+        showToast('Clipboard is empty.', 'error')
+        return
+      }
+      setAddress(text.trim())
+    } catch {
+      addressInputRef.current?.focus()
+      showToast('Press and hold the address field to paste.', 'error')
+    }
+  }
 
   async function runBuyPreflight() {
     if (!asset) {
@@ -432,9 +449,10 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           </div>
           <div>
             <Input label="Destination Wallet Address"
+              ref={addressInputRef}
               placeholder={asset ? getWalletAddressPlaceholder(asset.id) : 'Paste wallet address…'}
               value={address} onChange={e => setAddress(e.target.value)}
-              className="text-[12px] font-mono" suffix="PASTE" />
+              className="text-[12px] font-mono" suffix="PASTE" onSuffixClick={() => void pasteAddress()} />
             {lastUsedAddress && lastUsedAddress !== address.trim() && (
               <button
                 type="button"
