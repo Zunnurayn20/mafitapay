@@ -211,6 +211,7 @@ export type KnownCryptoPairId =
   | 'ETH_ARB'
   | 'ETH_OP'
   | 'ETH_LINEA'
+  | 'ETH_ROBINHOOD'
   | 'POL_POLYGON'
   | 'SOL_SOLANA'
   | 'BNB_BSC'
@@ -220,7 +221,7 @@ export type KnownCryptoPairId =
 export type CryptoPairId = KnownCryptoPairId | (string & {})
 export type KnownCryptoSymbol = 'USDT' | 'USDC' | 'ETH' | 'SOL' | 'BNB' | 'TON' | 'SUI' | 'NEAR' | 'POL'
 export type CryptoSymbol = KnownCryptoSymbol | (string & {})
-export type KnownCryptoNetwork = 'BSC' | 'Base' | 'Ethereum' | 'Arbitrum' | 'Optimism' | 'Polygon' | 'Linea' | 'Solana' | 'TON' | 'Sui' | 'NEAR'
+export type KnownCryptoNetwork = 'BSC' | 'Base' | 'Ethereum' | 'Arbitrum' | 'Optimism' | 'Polygon' | 'Linea' | 'Robinhood' | 'Solana' | 'TON' | 'Sui' | 'NEAR'
 export type CryptoNetwork = KnownCryptoNetwork | (string & {})
 
 export interface CryptoAsset {

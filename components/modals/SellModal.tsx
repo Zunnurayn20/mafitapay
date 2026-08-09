@@ -17,7 +17,20 @@ function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFami
   if (network === 'ton') return 'ton'
   if (network === 'near') return 'near'
   if (network === 'sui') return 'sui'
-  if (network === 'base' || network === 'bsc' || network === 'ethereum' || network === 'polygon' || network === 'matic' || asset.routedAddressFamily === 'evm') return 'evm'
+  if (
+    network === 'base'
+    || network === 'bsc'
+    || network === 'ethereum'
+    || network === 'polygon'
+    || network === 'matic'
+    || network === 'arbitrum'
+    || network === 'optimism'
+    || network === 'linea'
+    || network === 'robinhood'
+    || asset.routedAddressFamily === 'evm'
+  ) {
+    return 'evm'
+  }
   return null
 }
 

@@ -20,6 +20,8 @@ function getCryptoNetworkForPair(pairId: CryptoPairId): CryptoNetwork {
       return 'Base'
     case 'ETH_ETHEREUM':
       return 'Ethereum'
+    case 'ETH_ROBINHOOD':
+      return 'Robinhood'
     case 'SUI_SUI':
       return 'Sui'
     case 'NEAR_NEAR':

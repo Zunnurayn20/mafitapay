@@ -2,7 +2,7 @@ import type { CryptoAsset, CryptoNetwork, CryptoPairId, CryptoSymbol, KnownCrypt
 
 export type RoutedTreasuryPairId = Extract<
   KnownCryptoPairId,
-  'USDT_BSC' | 'BNB_BSC' | 'ETH_ARB' | 'ETH_OP' | 'POL_POLYGON' | 'ETH_LINEA' | 'USDC_SOLANA' | 'SOL_SOLANA'
+  'USDT_BSC' | 'BNB_BSC' | 'ETH_ARB' | 'ETH_OP' | 'POL_POLYGON' | 'ETH_LINEA' | 'ETH_ROBINHOOD' | 'USDC_SOLANA' | 'SOL_SOLANA'
 >
 
 export type RoutedTreasuryAddressFamily = 'evm' | 'solana'
@@ -88,6 +88,18 @@ export const ROUTED_TREASURY_PAIR_CONFIG: Record<RoutedTreasuryPairId, RoutedTre
     symbol: 'ETH',
     network: 'Linea',
     toChain: '59144',
+    toToken: EVM_NATIVE_SENTINEL,
+    decimals: 18,
+    addressFamily: 'evm',
+    minimumBuyNgn: 500,
+    maxQuoteDriftPercent: 1,
+  },
+  /** Robinhood Chain — Arbitrum Orbit L2, chain ID 4663, ETH gas. */
+  ETH_ROBINHOOD: {
+    pairId: 'ETH_ROBINHOOD',
+    symbol: 'ETH',
+    network: 'Robinhood',
+    toChain: '4663',
     toToken: EVM_NATIVE_SENTINEL,
     decimals: 18,
     addressFamily: 'evm',

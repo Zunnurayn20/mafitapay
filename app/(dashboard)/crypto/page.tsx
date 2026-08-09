@@ -58,6 +58,8 @@ function pickRepresentative(options: CryptoAsset[]) {
       : network === 'base' ? 40
       : network === 'bsc' ? 35
       : network === 'solana' ? 30
+      : network === 'robinhood' ? 38
+      : network === 'arbitrum' || network === 'optimism' || network === 'linea' ? 36
       : 10
     return networkTier * 10 + pricing
   }

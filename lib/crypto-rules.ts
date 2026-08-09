@@ -20,6 +20,10 @@ const DEFAULT_NETWORK_FEE_NGN_BY_PAIR: Partial<Record<string, NetworkFeePair>> =
 
   // Native / swap-heavy on L2 or sidechains
   ETH_BASE: { buy: 150, sell: 220 },
+  ETH_ARB: { buy: 140, sell: 200 },
+  ETH_OP: { buy: 140, sell: 200 },
+  ETH_LINEA: { buy: 140, sell: 200 },
+  ETH_ROBINHOOD: { buy: 140, sell: 200 },
   BNB_BSC: { buy: 100, sell: 160 },
   SOL_SOLANA: { buy: 80, sell: 130 },
   POL_POLYGON: { buy: 70, sell: 120 },
@@ -46,6 +50,7 @@ const DEFAULT_NETWORK_FEE_NGN_BY_NETWORK: Partial<Record<string, NetworkFeePair>
   Arbitrum: { buy: 120, sell: 180 },
   Optimism: { buy: 120, sell: 180 },
   Linea: { buy: 120, sell: 180 },
+  Robinhood: { buy: 120, sell: 180 },
   TON: { buy: 180, sell: 250 },
   Sui: { buy: 120, sell: 180 },
   NEAR: { buy: 120, sell: 180 },

@@ -26,6 +26,10 @@ function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFami
     || network === 'ethereum'
     || network === 'polygon'
     || network === 'matic'
+    || network === 'arbitrum'
+    || network === 'optimism'
+    || network === 'linea'
+    || network === 'robinhood'
     || asset.routedAddressFamily === 'evm'
   ) {
     return 'evm'

@@ -98,7 +98,7 @@ export const ADMIN_MODULE_TREE = [
   },
 ] as const
 
-export const CRYPTO_NETWORK_OPTIONS: CryptoAsset['network'][] = ['Base', 'BSC', 'Ethereum', 'Arbitrum', 'Optimism', 'Polygon', 'Linea', 'Solana', 'Sui', 'TON', 'NEAR']
+export const CRYPTO_NETWORK_OPTIONS: CryptoAsset['network'][] = ['Base', 'BSC', 'Ethereum', 'Arbitrum', 'Optimism', 'Polygon', 'Linea', 'Robinhood', 'Solana', 'Sui', 'TON', 'NEAR']
 export const CRYPTO_EXECUTION_RAIL_OPTIONS: Array<{ value: NonNullable<CryptoAsset['executionRail']> | ''; label: string }> = [
   { value: '', label: 'Catalog Only' },
   { value: 'routed_treasury', label: 'Routed Treasury' },
