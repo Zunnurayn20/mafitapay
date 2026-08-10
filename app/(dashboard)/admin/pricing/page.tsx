@@ -3,16 +3,19 @@ import { requireAdminPageUser } from '@/lib/server/admin-queries'
 import { loadPricingRulesForAdmin } from '@/lib/server/data-pricing'
 import { getPricedAmigoPlans } from '@/lib/server/amigo-bills'
 import { getPricedAsbdataPlans, listAsbdataPlanTypes } from '@/lib/server/asbdata-bills'
+import { getPricedBardetechPlans, listBardetechPlanTypes } from '@/lib/server/bardetech-bills'
 import { PricingClient } from './PricingClient'
 
 export default async function AdminPricingPage() {
   await requireAdminPageUser()
 
-  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes] = await Promise.all([
+  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes, bardetechPlans, bardetechPlanTypes] = await Promise.all([
     loadPricingRulesForAdmin(),
     getPricedAmigoPlans().catch(() => []),
     getPricedAsbdataPlans().catch(() => []),
     listAsbdataPlanTypes(),
+    getPricedBardetechPlans().catch(() => []),
+    listBardetechPlanTypes(),
   ])
 
   const preview = [
@@ -32,6 +35,14 @@ export default async function AdminPricingPage() {
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
     })),
+    ...bardetechPlans.slice(0, 4).map(plan => ({
+      vendor: 'bardetech' as const,
+      name: `${plan.network} ${plan.size}`,
+      variationCode: String(plan.planId),
+      costNgn: plan.costNgn,
+      marginNgn: plan.marginNgn,
+      retailNgn: plan.retailNgn,
+    })),
   ]
 
   const planTypes = Array.from(new Set([
@@ -42,6 +53,7 @@ export default async function AdminPricingPage() {
     'CORPORATE GIFTING',
     'AWOOF DATA',
     ...asbdataPlanTypes,
+    ...bardetechPlanTypes,
     ...amigoPlans.map(plan => plan.planType),
   ])).sort()
 
@@ -49,7 +61,7 @@ export default async function AdminPricingPage() {
     <div className="space-y-4">
       <AdminPageCard
         title="Data pricing"
-        description="Operator margins on wholesale data plans (Amigo + ASBDATA). Same model as online-data-sub: percent, flat, floor, cap, and round — most specific rule wins."
+        description="Operator margins on wholesale data plans (Amigo + ASBDATA + Bardetech). Same model as online-data-sub: percent, flat, floor, cap, and round — most specific rule wins."
       >
         <PricingClient
           initialRules={rules}

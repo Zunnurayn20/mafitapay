@@ -17,8 +17,15 @@ import {
 export const PRICING_SCOPES = ['PLAN', 'PLAN_TYPE', 'NETWORK', 'GLOBAL'] as const
 export type PricingScope = (typeof PRICING_SCOPES)[number]
 
-export const PRICING_VENDORS = ['amigo', 'asbdata'] as const
+export const PRICING_VENDORS = ['amigo', 'asbdata', 'bardetech'] as const
 export type PricingVendor = (typeof PRICING_VENDORS)[number]
+
+/** Display names for rule descriptions. Keyed so a new vendor cannot fall through to a wrong label. */
+const VENDOR_LABELS: Record<string, string> = {
+  amigo: 'Amigo',
+  asbdata: 'ASBDATA',
+  bardetech: 'Bardetech',
+}
 
 /** Specificity order — lower index wins. */
 const SCOPE_RANK: Record<PricingScope, number> = {
@@ -240,7 +247,7 @@ export function describeScope(rule: {
   planType?: string | null
   variationCode?: string | null
 }): string {
-  const vendorPrefix = rule.vendor ? `${rule.vendor === 'amigo' ? 'Amigo' : 'ASBDATA'} · ` : ''
+  const vendorPrefix = rule.vendor ? `${VENDOR_LABELS[rule.vendor] ?? rule.vendor} · ` : ''
   switch (rule.scope) {
     case 'GLOBAL':
       return `${vendorPrefix}All plans`.trim()

@@ -31,7 +31,7 @@ export type AdminPricingRule = {
 }
 
 export type PricingPreviewRow = {
-  vendor: 'amigo' | 'asbdata'
+  vendor: 'amigo' | 'asbdata' | 'bardetech'
   name: string
   variationCode: string
   costNgn: number
@@ -41,8 +41,15 @@ export type PricingPreviewRow = {
 
 const SCOPES = ['GLOBAL', 'NETWORK', 'PLAN_TYPE', 'PLAN'] as const
 
+/** Vendor display names. Falls back to the raw value so an unknown vendor is never mislabelled. */
+const VENDOR_LABELS: Record<string, string> = {
+  amigo: 'Amigo',
+  asbdata: 'ASBDATA',
+  bardetech: 'Bardetech',
+}
+
 function describeScope(rule: AdminPricingRule): string {
-  const vendorPrefix = rule.vendor ? `${rule.vendor === 'amigo' ? 'Amigo' : 'ASBDATA'} · ` : ''
+  const vendorPrefix = rule.vendor ? `${VENDOR_LABELS[rule.vendor] ?? rule.vendor} · ` : ''
   switch (rule.scope) {
     case 'GLOBAL':
       return `${vendorPrefix}All plans`.trim()
@@ -245,6 +252,7 @@ export function PricingClient({
             <option value="">All vendors</option>
             <option value="amigo">Amigo</option>
             <option value="asbdata">ASBDATA</option>
+            <option value="bardetech">Bardetech</option>
           </AdminSelect>
           <AdminSelect
             value={createForm.network}

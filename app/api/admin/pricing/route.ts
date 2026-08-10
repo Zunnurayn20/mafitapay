@@ -13,9 +13,12 @@ import {
   describeScope,
   loadPricingRulesForAdmin,
   validatePricingRuleInput,
+  PRICING_VENDORS,
+  type PricingVendor,
 } from '@/lib/server/data-pricing'
 import { getPricedAmigoPlans } from '@/lib/server/amigo-bills'
 import { getPricedAsbdataPlans, listAsbdataPlanTypes } from '@/lib/server/asbdata-bills'
+import { getPricedBardetechPlans, listBardetechPlanTypes } from '@/lib/server/bardetech-bills'
 
 /** Drop fields that do not apply to the chosen scope so unique targets stay consistent. */
 function normalizeTargetFields<T extends {
@@ -40,7 +43,10 @@ function normalizeTargetFields<T extends {
 function parseMarginBody(body: Record<string, unknown>) {
   const scope = typeof body.scope === 'string' ? body.scope.trim().toUpperCase() : ''
   const vendorRaw = typeof body.vendor === 'string' ? body.vendor.trim().toLowerCase() : ''
-  const vendor = vendorRaw === 'amigo' || vendorRaw === 'asbdata' ? vendorRaw : null
+  // Validate against the shared list so a new vendor cannot be silently dropped to null here.
+  const vendor = (PRICING_VENDORS as readonly string[]).includes(vendorRaw)
+    ? vendorRaw as PricingVendor
+    : null
   const network = typeof body.network === 'string' && body.network.trim() ? body.network.trim() : null
   const planType = typeof body.planType === 'string' && body.planType.trim() ? body.planType.trim() : null
   const variationCode = typeof body.variationCode === 'string' && body.variationCode.trim()
@@ -85,11 +91,13 @@ export async function GET() {
   const admin = await requireAdminUser()
   if (!admin) return unauthorized()
 
-  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes] = await Promise.all([
+  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes, bardetechPlans, bardetechPlanTypes] = await Promise.all([
     loadPricingRulesForAdmin(),
     getPricedAmigoPlans().catch(() => []),
     getPricedAsbdataPlans().catch(() => []),
     listAsbdataPlanTypes(),
+    getPricedBardetechPlans().catch(() => []),
+    listBardetechPlanTypes(),
   ])
 
   const preview = [
@@ -109,6 +117,14 @@ export async function GET() {
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
     })),
+    ...bardetechPlans.slice(0, 4).map(plan => ({
+      vendor: 'bardetech' as const,
+      name: `${plan.network} ${plan.size}`,
+      variationCode: String(plan.planId),
+      costNgn: plan.costNgn,
+      marginNgn: plan.marginNgn,
+      retailNgn: plan.retailNgn,
+    })),
   ]
 
   const planTypes = Array.from(new Set([
@@ -119,6 +135,7 @@ export async function GET() {
     'CORPORATE GIFTING',
     'AWOOF DATA',
     ...asbdataPlanTypes,
+    ...bardetechPlanTypes,
     ...amigoPlans.map(plan => plan.planType),
   ])).sort()
 

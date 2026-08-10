@@ -114,7 +114,7 @@ function getSpecialBundleContext(bundle: { itemName: string; validity?: string }
 type BundlePriceComparison = {
   label: string
   amount: number
-  provider?: 'flutterwave' | 'amigo' | 'asbdata'
+  provider?: 'flutterwave' | 'amigo' | 'asbdata' | 'bardetech'
 }
 
 /**
@@ -196,7 +196,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     itemCode?: string
     providerPlanId?: string
     providerNetworkId?: number
-    providerName?: 'flutterwave' | 'amigo' | 'asbdata'
+    providerName?: 'flutterwave' | 'amigo' | 'asbdata' | 'bardetech'
   } | null>(null)
   const needsProvider = serviceConfig?.requiresNetwork ?? false
   const needsAccount = serviceConfig?.requiresAccount ?? true

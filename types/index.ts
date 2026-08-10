@@ -423,7 +423,7 @@ export interface BillDataBundle {
   billerCode: string
   itemName: string
   validity?: string
-  provider?: 'flutterwave' | 'amigo' | 'asbdata'
+  provider?: 'flutterwave' | 'amigo' | 'asbdata' | 'bardetech'
   providerPlanId?: string
   providerNetworkId?: number
   /**

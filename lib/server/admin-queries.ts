@@ -14,6 +14,7 @@ import {
 import { getFlutterwaveBalance } from '@/lib/server/flutterwave-collections'
 import { getAmigoBalance } from '@/lib/server/amigo-bills'
 import { getAsbdataBalance } from '@/lib/server/asbdata-bills'
+import { getBardetechBalance } from '@/lib/server/bardetech-bills'
 import type { ProviderBalance } from '@/lib/server/provider-balance'
 import type { User, Wallet } from '@/types'
 
@@ -41,7 +42,7 @@ export async function listAdminWalletRows(limit = 100): Promise<AdminWalletRow[]
 }
 
 export async function loadAdminOverviewData() {
-  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance] = await Promise.all([
+  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance, bardetechBalance] = await Promise.all([
     listUsers(),
     listAdminWalletRows(100),
     listRecentTransactions(100),
@@ -53,6 +54,7 @@ export async function loadAdminOverviewData() {
     getFlutterwaveBalance('NGN'),
     getAmigoBalance(),
     getAsbdataBalance(),
+    getBardetechBalance(),
   ])
 
   const today = new Date()
@@ -90,6 +92,7 @@ export async function loadAdminOverviewData() {
     },
     amigoBalance,
     asbdataBalance,
+    bardetechBalance,
   ]
 
   // Only providers we could actually read count toward the total. A configured provider that
