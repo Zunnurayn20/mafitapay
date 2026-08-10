@@ -153,6 +153,28 @@ function getPriceHintVsFlutterwave(
  */
 const ALL_PLAN_CATEGORIES = '__all__'
 
+/**
+ * Vendor supplying a plan. Bundles from Flutterwave carry no provider field -- the merge helpers
+ * already treat a missing provider as Flutterwave, so the same default applies here.
+ */
+const ALL_PLAN_VENDORS = '__all_vendors__'
+
+const PLAN_VENDOR_LABELS: Record<string, string> = {
+  flutterwave: 'Flutterwave',
+  amigo: 'Amigo',
+  asbdata: 'ASBData',
+  bardetech: 'Barde',
+}
+
+function getPlanVendor(bundle: { provider?: string }) {
+  return bundle.provider || 'flutterwave'
+}
+
+function formatPlanVendorLabel(vendor: string) {
+  if (vendor === ALL_PLAN_VENDORS) return 'All providers'
+  return PLAN_VENDOR_LABELS[vendor] ?? vendor
+}
+
 function getPlanCategory(bundle: { planType?: string }) {
   return bundle.planType?.trim() || 'STANDARD'
 }
@@ -184,6 +206,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [selectedBundleCode, setSelectedBundleCode] = useState('')
   const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>('best_offers')
   const [selectedPlanCategory, setSelectedPlanCategory] = useState<string>(ALL_PLAN_CATEGORIES)
+  const [selectedPlanVendor, setSelectedPlanVendor] = useState<string>(ALL_PLAN_VENDORS)
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
   const formAccountInputRef = useRef<HTMLInputElement>(null)
@@ -211,9 +234,21 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const visibleDataBundles = isDataService
     ? dataBundles.filter(bundle => getDataBundleGroup(bundle) !== null)
     : []
+  // Vendors present in the loaded catalog. Which ones appear depends on what is configured and
+  // whether each answered, so this is derived rather than listed.
+  const planVendors = Array.from(new Set(visibleDataBundles.map(getPlanVendor)))
+    .sort((a, b) => formatPlanVendorLabel(a).localeCompare(formatPlanVendorLabel(b)))
+  const showPlanVendorPicker = planVendors.length > 1
+  const activePlanVendor = showPlanVendorPicker && planVendors.includes(selectedPlanVendor)
+    ? selectedPlanVendor
+    : ALL_PLAN_VENDORS
+  const vendorFilteredBundles = activePlanVendor === ALL_PLAN_VENDORS
+    ? visibleDataBundles
+    : visibleDataBundles.filter(bundle => getPlanVendor(bundle) === activePlanVendor)
   // Categories come from the bundles actually loaded, not a hardcoded list -- vendors differ on
   // which ones they publish, and an option that filters to nothing is worse than no option.
-  const planCategories = Array.from(new Set(visibleDataBundles.map(getPlanCategory))).sort()
+  // Derived from the vendor-filtered set so picking Barde cannot leave a category it does not sell.
+  const planCategories = Array.from(new Set(vendorFilteredBundles.map(getPlanCategory))).sort()
   // The picker only earns its space when there is a real choice to make.
   const showPlanCategoryPicker = planCategories.length > 1
   // Switching network can retire the picked category; fall back rather than showing an empty list.
@@ -221,8 +256,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     ? selectedPlanCategory
     : ALL_PLAN_CATEGORIES
   const categoryFilteredBundles = activePlanCategory === ALL_PLAN_CATEGORIES
-    ? visibleDataBundles
-    : visibleDataBundles.filter(bundle => getPlanCategory(bundle) === activePlanCategory)
+    ? vendorFilteredBundles
+    : vendorFilteredBundles.filter(bundle => getPlanCategory(bundle) === activePlanCategory)
   // Duration groups are built from the category-filtered set, so picking SME drops any duration tab
   // that has no SME plans instead of leaving a tab that opens onto nothing.
   const groupedDataBundles = DATA_BUNDLE_GROUPS
@@ -281,6 +316,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setSelectedBundleCode('')
     setSelectedDataBundleGroup('best_offers')
     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
+    setSelectedPlanVendor(ALL_PLAN_VENDORS)
     setTouched(INITIAL_TOUCHED)
     setShowRecentAccounts(false)
     setProvider(defaultNetworkProviderName)
@@ -566,6 +602,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setAmount('')
                     setSelectedDataBundleGroup('best_offers')
                     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
+                    setSelectedPlanVendor(ALL_PLAN_VENDORS)
                   }
                   setTouched(current => ({ ...current, provider: true }))
                 }}
@@ -644,6 +681,22 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         {isDataService ? (
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
+            {showPlanVendorPicker && (
+              <div className="mb-3 flex items-center gap-2 border border-[var(--border)] bg-[var(--clay2)] px-3">
+                <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Provider</span>
+                <select
+                  value={activePlanVendor}
+                  onChange={event => setSelectedPlanVendor(event.target.value)}
+                  className="flex-1 min-w-0 cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
+                >
+                  {[ALL_PLAN_VENDORS, ...planVendors].map(vendor => (
+                    <option key={vendor} value={vendor}>
+                      {formatPlanVendorLabel(vendor)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {showPlanCategoryPicker && (
               <div className="mb-3 flex items-center gap-2 border border-[var(--border)] bg-[var(--clay2)] px-3">
                 <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Category</span>
@@ -689,13 +742,17 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const categoryLabel = showPlanCategoryPicker && activePlanCategory === ALL_PLAN_CATEGORIES
                   ? formatPlanCategoryLabel(getPlanCategory(bundle))
                   : null
-                const providerBadge = bundle.provider === 'amigo'
-                  ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
-                  : bundle.provider === 'asbdata'
-                    ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
-                    : bundle.provider === 'bardetech'
-                      ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
-                      : null
+                // Under a single vendor every card carries the same mark, so it stops telling the
+                // user anything -- the dropdown already says whose plans these are.
+                const providerBadge = activePlanVendor !== ALL_PLAN_VENDORS
+                  ? null
+                  : bundle.provider === 'amigo'
+                    ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
+                    : bundle.provider === 'asbdata'
+                      ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
+                      : bundle.provider === 'bardetech'
+                        ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
+                        : null
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
@@ -942,6 +999,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setAmount('')
                     setSelectedDataBundleGroup('best_offers')
                     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
+                    setSelectedPlanVendor(ALL_PLAN_VENDORS)
                     setStep('form')
                   }}
                   className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)] underline"
