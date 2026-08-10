@@ -7,7 +7,7 @@ import { isAdminEmail } from '@/lib/admin-access'
 import { formatNGN } from '@/lib/utils'
 import {
   LayoutDashboard, ClipboardList, TrendingUp, Zap,
-  Receipt, Users, UserCircle, ShieldCheck, LogOut, ChevronRight, BarChart3
+  Receipt, Users, UserCircle, ShieldCheck, LogOut, ChevronRight, BarChart3, LifeBuoy
 } from 'lucide-react'
 
 const SEEN_TRANSACTION_BADGE_KEY = 'mafitapay-history-badge-seen'
@@ -28,6 +28,7 @@ const NAV = [
     { href: '/profile',    label: 'Profile',         Icon: UserCircle },
     { href: '/kyc',        label: 'KYC Verification', Icon: ShieldCheck },
     { href: '/security',   label: 'Security',         Icon: ShieldCheck },
+    { href: '/support',    label: 'Contact Support',  Icon: LifeBuoy },
   ]},
 ]
 
