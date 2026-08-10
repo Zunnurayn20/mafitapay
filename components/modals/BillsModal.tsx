@@ -693,7 +693,9 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                   ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
                   : bundle.provider === 'asbdata'
                     ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
-                    : null
+                    : bundle.provider === 'bardetech'
+                      ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
+                      : null
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
