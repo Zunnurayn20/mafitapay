@@ -11,17 +11,21 @@ import {
 /**
  * Bardetech VTU API — data bundles and airtime.
  *
- * Docs: https://bardetech.com/documentation/ (behind account login)
+ * Docs: https://bardetech.com/documentation/ (live token rendered into the cURL examples)
  * Auth: Authorization: Token <token>
  *
- *   GET  /api/network/  plan catalog
- *   POST /api/data/     buy data
- *   POST /api/topup/    buy airtime
+ *   GET  /api/user/           account / balance
+ *   GET  /api/get/network/    network list
+ *   GET  /api/network/        data plan catalog
+ *   GET  /api/data/           data transactions
+ *   POST /api/data/           buy data
+ *   POST /api/topup/          buy airtime
  *
- * Bardetech runs the same Django VTU codebase as ASBDATA, so this mirrors asbdata-bills.ts
- * closely and deliberately: same auth header, same endpoint paths, same request bodies, and the
- * same "HTTP 200 with a status field" failure convention. Confirmed identical network ids
- * (1 MTN, 2 Glo, 3 9mobile, 4 Airtel) -- note 9mobile is 3 here as with ASBDATA, but 9 on Amigo.
+ * Paths verified against the published docs. Bardetech runs the same Django VTU codebase as
+ * ASBDATA, so this mirrors asbdata-bills.ts closely and deliberately: same auth header, same
+ * request bodies, and the same "HTTP 200 with a status field" failure convention. Confirmed
+ * identical network ids (1 MTN, 2 Glo, 3 9mobile, 4 Airtel) -- note 9mobile is 3 here as with
+ * ASBDATA, but 9 on Amigo.
  *
  * The two are kept as separate modules rather than one parameterised client because each vendor
  * prices independently, holds its own float, and drifts on its own schedule; a shared client would
