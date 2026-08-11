@@ -85,10 +85,11 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
         const handle = await App.addListener('appStateChange', ({ isActive }) => {
           if (!readBiometricSetting(BIOMETRIC_UNLOCK_KEY, false)) return
 
-          if (!isActive) {
-            clearBiometricSession()
-            return
-          }
+          // Backgrounding no longer locks the app. The unlocked flag lives in sessionStorage,
+          // which the WebView discards when the process is killed -- so swiping the app away
+          // still forces a fresh scan, while switching out to read an OTP or take a call does
+          // not. Clearing it here was what made every resume re-prompt.
+          if (!isActive) return
 
           if (isBiometricSessionUnlocked()) return
           setState(current => {
@@ -166,7 +167,7 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
           </Button>
         ) : (
           <Button className="w-full" onClick={() => void unlock()} disabled={busy}>
-            {busy ? 'Verifying…' : 'Unlock with fingerprint or face'}
+            {busy ? 'Verifying...' : 'Unlock with fingerprint or face'}
           </Button>
         )}
       </div>

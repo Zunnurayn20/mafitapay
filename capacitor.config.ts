@@ -11,6 +11,9 @@ const config: CapacitorConfig = {
     url: serverUrl,
     cleartext: serverUrl.startsWith('http://'),
     androidScheme: 'https',
+    // Branded offline screen instead of the WebView's default error page. Bundled in webDir, so
+    // it loads with no network; it gets no Capacitor plugins, hence plain HTML/CSS/JS.
+    errorPath: 'offline.html',
   },
   android: {
     allowMixedContent: false,

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c0907" />
+    <title>MafitaPay - No connection</title>
+    <!--
+      Shown by Capacitor (server.errorPath) when the WebView cannot reach the app.
+
+      Deliberately self-contained: this file has no access to Capacitor plugins, and by
+      definition runs when the network is unavailable, so every colour, font and asset is inlined
+      or local. Tokens mirror app/globals.css so the screen reads as part of the product rather
+      than a browser error, and the light-theme values follow prefers-color-scheme since
+      data-theme is not available here.
+    -->
+    <style>
+      :root {
+        color-scheme: dark light;
+        --page-bg: #0c0907;
+        --coal: #18130f;
+        --clay: #221b15;
+        --border: #3f3428;
+        --gold: #caa560;
+        --gold2: #e0c48a;
+        --text: #f0e8dd;
+        --text2: #c5b7a3;
+        --muted: #8d7b66;
+        --display: Georgia, 'Times New Roman', serif;
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          --page-bg: #f4ede2;
+          --coal: #ffffff;
+          --clay: #f2ebdf;
+          --border: #d8cbb6;
+          --gold: #b98a43;
+          --gold2: #8c6b31;
+          --text: #241b13;
+          --text2: #5c4630;
+          --muted: #8e765c;
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        background: var(--page-bg);
+        color: var(--text);
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Faint brand pattern, matching the Card component's woven motif. */
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.08;
+        background-image:
+          radial-gradient(circle at 12px 12px, rgba(202, 165, 96, 0.22) 0 1.5px, transparent 1.5px),
+          linear-gradient(135deg, transparent 0 42%, rgba(202, 165, 96, 0.12) 42% 45%, transparent 45% 55%, rgba(202, 165, 96, 0.12) 55% 58%, transparent 58% 100%);
+        background-size: 24px 24px, 48px 48px;
+      }
+
+      .card {
+        position: relative;
+        width: 100%;
+        max-width: 22rem;
+        padding: 2rem 1.5rem 1.75rem;
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        background: var(--coal);
+        text-align: center;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+      }
+
+      .card::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto;
+        height: 3px;
+        border-radius: 1rem 1rem 0 0;
+        background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      }
+
+      .icon {
+        width: 3.5rem;
+        height: 3.5rem;
+        margin: 0 auto 1.25rem;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(202, 165, 96, 0.24);
+        border-radius: 999px;
+        background: rgba(202, 165, 96, 0.12);
+        color: var(--gold2);
+      }
+
+      .icon svg { width: 1.75rem; height: 1.75rem; }
+
+      h1 {
+        margin: 0;
+        font-family: var(--display);
+        font-size: 1.3rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+
+      .detail {
+        margin: 0.6rem 0 0;
+        font-size: 0.85rem;
+        line-height: 1.6;
+        color: var(--text2);
+      }
+
+      .hints {
+        margin: 1.25rem 0 0;
+        padding: 0.75rem 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: var(--clay);
+        text-align: left;
+        list-style: none;
+      }
+
+      .hints li {
+        position: relative;
+        padding-left: 1rem;
+        font-size: 0.75rem;
+        line-height: 1.7;
+        color: var(--text2);
+      }
+
+      .hints li::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0.62rem;
+        width: 4px;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--gold);
+      }
+
+      button {
+        width: 100%;
+        margin-top: 1.25rem;
+        padding: 0.95rem 1rem;
+        border: none;
+        border-radius: 0.5rem;
+        background: var(--gold);
+        color: #fff;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: opacity 0.15s ease;
+      }
+
+      button:active { opacity: 0.85; }
+      button[disabled] { opacity: 0.6; cursor: default; }
+
+      @media (prefers-color-scheme: light) {
+        button { color: #fff; }
+      }
+
+      .status {
+        margin: 0.85rem 0 0;
+        min-height: 1rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .spin { animation: spin 0.9s linear infinite; transform-origin: center; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      @media (prefers-reduced-motion: reduce) {
+        .spin { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card" role="alert">
+      <div class="icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 8.8a16 16 0 0 1 6.5-3.4" />
+          <path d="M15.5 5.4A16 16 0 0 1 22 8.8" />
+          <path d="M5 12.6a11 11 0 0 1 3.4-2.1" />
+          <path d="M15.6 10.5a11 11 0 0 1 3.4 2.1" />
+          <path d="M8.8 16.3a6 6 0 0 1 6.4 0" />
+          <line x1="12" y1="20" x2="12.01" y2="20" />
+          <line x1="3" y1="3" x2="21" y2="21" />
+        </svg>
+      </div>
+
+      <h1>No connection</h1>
+      <p class="detail">
+        MafitaPay could not reach the network. Your account and balance are safe - nothing was
+        interrupted.
+      </p>
+
+      <ul class="hints">
+        <li>Check mobile data or Wi-Fi is on</li>
+        <li>Turn off airplane mode</li>
+        <li>Move somewhere with better signal</li>
+      </ul>
+
+      <button id="retry" type="button">Try again</button>
+      <p class="status" id="status" aria-live="polite"></p>
+    </main>
+
+    <script>
+      (function () {
+        var button = document.getElementById('retry')
+        var status = document.getElementById('status')
+
+        function retry() {
+          if (button.disabled) return
+          button.disabled = true
+          button.textContent = 'Reconnecting...'
+          status.textContent = ''
+
+          // Give the reload a moment to fail visibly rather than flashing the same screen.
+          window.setTimeout(function () {
+            try {
+              window.location.reload()
+            } catch (error) {
+              reset('Still offline')
+            }
+          }, 400)
+
+          // If the reload never navigates away, the network is still down.
+          window.setTimeout(function () {
+            reset('Still offline')
+          }, 6000)
+        }
+
+        function reset(message) {
+          button.disabled = false
+          button.textContent = 'Try again'
+          status.textContent = message || ''
+        }
+
+        button.addEventListener('click', retry)
+
+        // Reconnecting on its own is the expected case: retry without making the user tap.
+        window.addEventListener('online', function () {
+          status.textContent = 'Back online'
+          retry()
+        })
+      })()
+    </script>
+  </body>
+</html>
