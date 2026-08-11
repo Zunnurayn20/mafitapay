@@ -1,7 +1,6 @@
 'use client'
 import { BankAccountPicker } from '@/components/ui/BankAccountPicker'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -13,7 +12,6 @@ import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/htt
 import { useAppStore } from '@/store'
 import { quoteTransferFee } from '@/lib/transfer-fees'
 import { formatNGN } from '@/lib/utils'
-import { savePendingConfirmation } from '@/lib/client/transaction-confirmation'
 import type { Beneficiary } from '@/types'
 
 type Step = 'form' | 'pin' | 'processing' | 'success'
@@ -21,7 +19,6 @@ type Step = 'form' | 'pin' | 'processing' | 'success'
 const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter()
   const { refreshSession, showToast, securitySettings, transferFeeMarginNgn } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
@@ -152,16 +149,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
         }
       }
 
-      savePendingConfirmation({
-        kind: 'transfer', title: mode === 'internal' ? 'Internal transfer' : 'Bank transfer', amountNgn: amt,
-        details: mode === 'internal'
-          ? [{ label: 'Recipient', value: recipient }, { label: 'Amount', value: formatNGN(amt) }, { label: 'Fee', value: 'FREE' }]
-          : [{ label: 'Recipient', value: accountName }, { label: 'Bank', value: `${bankName} · ${accountNumber}` }, { label: 'Fee', value: formatNGN(quote.fee) }, { label: 'Total debit', value: formatNGN(quote.total) }],
-        request: mode === 'internal' ? { mode, recipient, amount: amt, narration } : { mode, bankCode, bankName, accountNumber, accountName, amount: amt, narration },
-        returnPath: '/dashboard',
-      })
-      onClose()
-      router.push('/confirm')
+      setPinVersion(current => current + 1)
+      setStep('pin')
     } finally {
       setVerifying(false)
     }

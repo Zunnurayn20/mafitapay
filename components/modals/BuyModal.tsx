@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -15,7 +14,6 @@ import { getCryptoNetworkFeeNgn, getMinimumBuyNgn } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
 import { fmtDate, formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
 import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
-import { savePendingConfirmation } from '@/lib/client/transaction-confirmation'
 
 type Step = 'form' | 'pin' | 'processing' | 'success'
 type AmountMode = 'ngn' | 'usd' | 'asset'
@@ -71,7 +69,6 @@ function writeLastUsedBuyAddress(pairId: CryptoPairId, address: string) {
 }
 
 export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter()
   const { refreshSession, showToast, modalData, securitySettings } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const assets = useCryptoAssets()
@@ -244,11 +241,10 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
         throw quoteResult.reason
       }
 
-      const lockedQuote = quoteResult.value.data.quote as CryptoQuote
       setAvailabilityError(null)
-      setQuote(lockedQuote)
-      savePendingConfirmation({ kind: 'crypto_buy', title: `Buy ${asset.symbol}`, amountNgn: amt + (lockedQuote.networkFeeNgn ?? fee), details: [{ label: 'Asset', value: `${asset.symbol} · ${asset.network}` }, { label: 'Receive', value: formatCrypto(lockedQuote.cryptoAmount, asset.symbol) }, { label: 'Destination', value: address }, { label: 'Network fee', value: formatNGN(lockedQuote.networkFeeNgn ?? fee) }], request: { pairId: asset.id, amount: amt, quoteId: lockedQuote.id, walletAddress: address }, returnPath: '/crypto' })
-      onClose(); router.push('/confirm')
+      setQuote(quoteResult.value.data.quote)
+      setPinVersion(current => current + 1)
+      setStep('pin')
     } finally {
       setLockingQuote(false)
     }
