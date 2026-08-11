@@ -20,20 +20,29 @@ import { generateRef } from '@/lib/utils'
 
 interface BillsModalProps { open: boolean; onClose: () => void }
 type TouchedState = { amount: boolean; account: boolean; provider: boolean }
-type DataBundleGroupKey = 'best_offers' | 'daily' | 'weekly' | 'monthly' | 'night' | 'special'
+type DataBundleGroupKey = 'daily' | 'few_days' | 'weekly' | 'fortnightly' | 'monthly' | 'extended' | 'night' | 'special'
 type Step = 'form' | 'phone' | 'pin'
 
 const INITIAL_TOUCHED: TouchedState = { amount: false, account: false, provider: false }
 
 const DATA_BUNDLE_GROUPS: Array<{ key: DataBundleGroupKey; label: string }> = [
-  { key: 'best_offers', label: 'Best Offers' },
   { key: 'daily', label: 'Daily' },
+  { key: 'few_days', label: '2-5 Days' },
   { key: 'weekly', label: 'Weekly' },
+  { key: 'fortnightly', label: '2-4 Weeks' },
   { key: 'monthly', label: 'Monthly' },
+  { key: 'extended', label: 'Long Term' },
   { key: 'night', label: 'Night' },
   { key: 'special', label: 'Special' },
 ]
 const NETWORK_PROVIDER_DISPLAY_ORDER = ['mtn', 'airtel', 'glo', '9mobile'] as const
+
+/**
+ * Tab selected when the list first opens. Monthly is where most of the catalog sits, and empty
+ * groups are dropped before render, so this falls through to the first surviving tab if a network
+ * happens to sell no monthly plan.
+ */
+const DEFAULT_DATA_BUNDLE_GROUP: DataBundleGroupKey = 'monthly'
 
 function getBillerLogo(name: string) {
   const normalized = name.trim().toLowerCase()
@@ -53,9 +62,49 @@ function getBillerLogo(name: string) {
   return null
 }
 
-function isStrictDailyValidity(validity?: string) {
-  const normalized = validity?.toLowerCase() ?? ''
-  return normalized === '1 day' || normalized === '24hrs' || normalized === '24 hours'
+/**
+ * Days a plan lasts, or null when the text carries no duration.
+ *
+ * Vendors spell the same duration many ways -- "30days", "30 days", "1day(24hours)",
+ * "2day(48hours)", "7days (social plan)", "3Months", "1year" -- so read the number and its unit
+ * rather than matching strings. A parenthesised hours figure ("1day(24hours)") restates the same
+ * duration, so the leading value wins and the bracket is ignored.
+ */
+function parseValidityDays(validity?: string): number | null {
+  const text = validity?.toLowerCase().trim()
+  if (!text) return null
+
+  // Take the first number+unit pair; later brackets restate it rather than extending it.
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(hour|hrs|hr|day|dy|week|wk|month|mth|year|yr)/)
+  if (match) {
+    const value = Number(match[1])
+    if (!Number.isFinite(value)) return null
+    const unit = match[2]
+    if (unit.startsWith('hour') || unit === 'hrs' || unit === 'hr') return Math.max(1, Math.round(value / 24))
+    if (unit.startsWith('day') || unit === 'dy') return value
+    if (unit.startsWith('week') || unit === 'wk') return value * 7
+    if (unit.startsWith('month') || unit === 'mth') return value * 30
+    if (unit.startsWith('year') || unit === 'yr') return value * 365
+  }
+
+  // Bare units with no leading number: "monthly", "weekly", "daily".
+  if (/\bmonthly\b/.test(text)) return 30
+  if (/\bweekly\b/.test(text)) return 7
+  if (/\bdaily\b/.test(text)) return 1
+  return null
+}
+
+/**
+ * Duration bucket for a plan. Boundaries follow how the plans are actually sold: a week is 7 days,
+ * a month 30, so 14-day plans sit between weekly and monthly and belong with the shorter one.
+ */
+function getValidityGroup(days: number): DataBundleGroupKey {
+  if (days <= 1) return 'daily'
+  if (days <= 6) return 'few_days'
+  if (days <= 13) return 'weekly'
+  if (days <= 29) return 'fortnightly'
+  if (days <= 31) return 'monthly'
+  return 'extended'
 }
 
 function getNetworkProviderOrder(name: string) {
@@ -74,11 +123,12 @@ function getDataBundleGroup(bundle: { itemName: string; validity?: string }) {
   if (name.includes('broadband') || name.includes('router only') || name.includes('fup unlimited')) {
     return null
   }
-  if (isStrictDailyValidity(bundle.validity)) return 'daily'
+  // Night plans are sold on when they run, not how long they last, so they are checked first.
   if (validity.includes('night') || name.includes('night')) return 'night'
-  if (validity.includes('day') || name.includes('(1 day)') || name.includes('(2 days)')) return 'best_offers'
-  if (validity.includes('week')) return 'weekly'
-  if (validity.includes('month')) return 'monthly'
+
+  const days = parseValidityDays(bundle.validity) ?? parseValidityDays(bundle.itemName)
+  if (days != null) return getValidityGroup(days)
+  // No readable duration: the network never stated one.
   return 'special'
 }
 
@@ -206,7 +256,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [account, setAccount]   = useState('')
   const [selectedBillerCode, setSelectedBillerCode] = useState('')
   const [selectedBundleCode, setSelectedBundleCode] = useState('')
-  const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>('best_offers')
+  const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>(DEFAULT_DATA_BUNDLE_GROUP)
   const [selectedPlanCategory, setSelectedPlanCategory] = useState<string>(ALL_PLAN_CATEGORIES)
   const [selectedPlanVendor, setSelectedPlanVendor] = useState<string>(ALL_PLAN_VENDORS)
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
@@ -316,7 +366,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setAccount('')
     setSelectedBillerCode('')
     setSelectedBundleCode('')
-    setSelectedDataBundleGroup('best_offers')
+    setSelectedDataBundleGroup(DEFAULT_DATA_BUNDLE_GROUP)
     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
     setSelectedPlanVendor(ALL_PLAN_VENDORS)
     setTouched(INITIAL_TOUCHED)
@@ -602,7 +652,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                   if (isDataService) {
                     setSelectedBundleCode('')
                     setAmount('')
-                    setSelectedDataBundleGroup('best_offers')
+                    setSelectedDataBundleGroup(DEFAULT_DATA_BUNDLE_GROUP)
                     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
                     setSelectedPlanVendor(ALL_PLAN_VENDORS)
                   }
@@ -993,7 +1043,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setProvider(detectedProviderName)
                     setSelectedBundleCode('')
                     setAmount('')
-                    setSelectedDataBundleGroup('best_offers')
+                    setSelectedDataBundleGroup(DEFAULT_DATA_BUNDLE_GROUP)
                     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
                     setSelectedPlanVendor(ALL_PLAN_VENDORS)
                     setStep('form')
