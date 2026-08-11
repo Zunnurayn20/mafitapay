@@ -180,7 +180,9 @@ function getPlanCategory(bundle: { planType?: string }) {
 }
 
 function formatPlanCategoryLabel(category: string) {
-  if (category === ALL_PLAN_CATEGORIES) return 'All'
+  // Self-describing rather than a bare "All": the selectors carry no field label, so the default
+  // option is the only thing naming what the control filters.
+  if (category === ALL_PLAN_CATEGORIES) return 'All categories'
   // Vendor values arrive shouted (CORPORATE GIFTING); title-case so the menu matches the rest of
   // the UI, but keep SME/SME2/CG-style acronyms uppercase.
   return category
@@ -682,12 +684,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
             {showPlanVendorPicker && (
-              <div className="mb-3 flex items-center gap-2 border border-[var(--border)] bg-[var(--clay2)] px-3">
-                <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Provider</span>
+              <div className="mb-3 border border-[var(--border)] bg-[var(--clay2)] px-3">
                 <select
                   value={activePlanVendor}
                   onChange={event => setSelectedPlanVendor(event.target.value)}
-                  className="flex-1 min-w-0 cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
+                  className="w-full cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
                 >
                   {[ALL_PLAN_VENDORS, ...planVendors].map(vendor => (
                     <option key={vendor} value={vendor}>
@@ -698,12 +699,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               </div>
             )}
             {showPlanCategoryPicker && (
-              <div className="mb-3 flex items-center gap-2 border border-[var(--border)] bg-[var(--clay2)] px-3">
-                <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Category</span>
+              <div className="mb-3 border border-[var(--border)] bg-[var(--clay2)] px-3">
                 <select
                   value={activePlanCategory}
                   onChange={event => setSelectedPlanCategory(event.target.value)}
-                  className="flex-1 min-w-0 cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
+                  className="w-full cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
                 >
                   {[ALL_PLAN_CATEGORIES, ...planCategories].map(category => (
                     <option key={category} value={category}>
@@ -742,17 +742,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const categoryLabel = showPlanCategoryPicker && activePlanCategory === ALL_PLAN_CATEGORIES
                   ? formatPlanCategoryLabel(getPlanCategory(bundle))
                   : null
-                // Under a single vendor every card carries the same mark, so it stops telling the
-                // user anything -- the dropdown already says whose plans these are.
-                const providerBadge = activePlanVendor !== ALL_PLAN_VENDORS
-                  ? null
-                  : bundle.provider === 'amigo'
-                    ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
-                    : bundle.provider === 'asbdata'
-                      ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
-                      : bundle.provider === 'bardetech'
-                        ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
-                        : null
+                const providerBadge = bundle.provider === 'amigo'
+                  ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
+                  : bundle.provider === 'asbdata'
+                    ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
+                    : bundle.provider === 'bardetech'
+                      ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
+                      : null
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
