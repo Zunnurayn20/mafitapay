@@ -85,11 +85,15 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
         const handle = await App.addListener('appStateChange', ({ isActive }) => {
           if (!readBiometricSetting(BIOMETRIC_UNLOCK_KEY, false)) return
 
-          // Backgrounding no longer locks the app. The unlocked flag lives in sessionStorage,
-          // which the WebView discards when the process is killed -- so swiping the app away
-          // still forces a fresh scan, while switching out to read an OTP or take a call does
-          // not. Clearing it here was what made every resume re-prompt.
-          if (!isActive) return
+          // Lock as soon as the app is backgrounded (including when the phone sleeps). The
+          // authenticated web session remains intact, so resuming returns to this gate rather
+          // than showing a login form to a user who is already signed in.
+          if (!isActive) {
+            clearBiometricSession()
+            setState(current => current === 'open' ? 'locked' : current)
+            promptOnLock.current = true
+            return
+          }
 
           if (isBiometricSessionUnlocked()) return
           setState(current => {
