@@ -231,12 +231,13 @@
           button.textContent = 'Reconnecting...'
           status.textContent = ''
 
-          // Give the reload a moment to fail visibly rather than flashing the same screen.
+          // Navigate back to the remote app explicitly. Reloading the local error document can
+          // resolve to localhost/offline.html and Android then opens it outside the WebView.
           window.setTimeout(function () {
             try {
-              window.location.reload()
+              window.location.replace('https://mafitapay.com/?reconnect=' + Date.now())
             } catch (error) {
-              reset('Still offline')
+              window.location.href = 'https://mafitapay.com/?reconnect=' + Date.now()
             }
           }, 400)
 
