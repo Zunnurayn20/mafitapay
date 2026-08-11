@@ -140,6 +140,12 @@ export default function ProfilePage() {
               sub: kycCopy.headline,
               action: () => router.push('/kyc'),
             },
+            ...(user?.isAdmin ? [{
+              icon: 'Admin',
+              title: 'Admin Workspace',
+              sub: 'Manage operations, customers, transactions, and platform settings',
+              action: () => router.push('/admin'),
+            }] : []),
           ].map(item => (
             <button
               key={item.title}
@@ -147,7 +153,7 @@ export default function ProfilePage() {
               onClick={item.action}
               className="flex w-full items-center gap-4 border-b border-[var(--border)] px-5 py-4 text-left transition-colors hover:bg-[var(--clay)] last:border-0"
             >
-              <span className="text-lg">{item.icon}</span>
+              <span className={item.icon === 'Admin' ? 'text-[9px] font-black uppercase tracking-[.8px] text-[var(--gold2)]' : 'text-lg'}>{item.icon}</span>
               <div className="flex-1">
                 <div className="text-[13px] font-semibold text-[var(--text)]">{item.title}</div>
                 <div className="mt-0.5 text-[9px] text-[var(--muted)]">{item.sub}</div>
