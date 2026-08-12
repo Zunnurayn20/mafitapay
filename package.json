@@ -23,7 +23,8 @@
     "mobile:run:prod": "npx cap run android",
     "mobile:bundle": "cd android && ./gradlew bundleRelease",
     "android:bundle": "cd android && gradlew.bat bundleRelease",
-    "db:migrate:postgres": "node scripts/migrate-sqlite-to-postgres.mjs"
+    "db:migrate:postgres": "node scripts/migrate-sqlite-to-postgres.mjs",
+    "db:verify:postgres": "node scripts/verify-postgres-migration.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",
