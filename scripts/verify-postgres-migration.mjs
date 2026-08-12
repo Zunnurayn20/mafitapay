@@ -39,7 +39,15 @@ try {
   await postgres.connect()
   const source = sqliteSummary()
   const target = await postgresSummary()
-  const mismatches = Object.keys(source).filter(key => source[key] !== target[key])
+  const mismatches = Object.keys(source).filter(key => {
+    const left = source[key]
+    const right = target[key]
+    // Currency totals are compared at the NGN kobo precision used by the app.
+    if (key.startsWith('wallet') || key.startsWith('ledger')) {
+      return Math.round(left * 100) !== Math.round(right * 100)
+    }
+    return left !== right
+  })
   console.log(JSON.stringify({ source, target, matched: mismatches.length === 0, mismatches }, null, 2))
   if (mismatches.length) process.exitCode = 1
 } finally {
