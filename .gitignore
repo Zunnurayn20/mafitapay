@@ -39,6 +39,7 @@ yarn-error.log*
 /data/*.db-*
 /data/app.json
 /data/uploads/
+/.migration-backups/
 
 # Windows metadata artifacts
 # No leading separator: Git sees these as U+F03A, not ':', so '*:Zone.Identifier' never matched.

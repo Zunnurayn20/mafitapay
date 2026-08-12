@@ -22,7 +22,8 @@
     "mobile:run": "MAFITAPAY_MOBILE_SERVER_URL=http://10.0.2.2:3000 npx cap run android",
     "mobile:run:prod": "npx cap run android",
     "mobile:bundle": "cd android && ./gradlew bundleRelease",
-    "android:bundle": "cd android && gradlew.bat bundleRelease"
+    "android:bundle": "cd android && gradlew.bat bundleRelease",
+    "db:migrate:postgres": "node scripts/migrate-sqlite-to-postgres.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",
@@ -56,6 +57,7 @@
     "near-api-js": "^7.2.0",
     "next": "16.2.3",
     "ox": "^0.14.20",
+    "pg": "^8.23.0",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
