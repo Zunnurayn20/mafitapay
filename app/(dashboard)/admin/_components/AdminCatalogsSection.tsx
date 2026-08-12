@@ -16,11 +16,6 @@ function formatNgn(value: number) {
   return `₦${value.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
 }
 
-/** Sell network fee slightly above buy when using the simple one-field control. */
-function defaultSellNetworkFromBuy(buyFee: number) {
-  return Math.round(Math.max(0, buyFee) * 1.2 * 100) / 100
-}
-
 function pricingPreview(asset: Pick<CryptoAsset, 'marketPriceUsd' | 'marketRate' | 'buyMarginNgnPerUsd' | 'sellMarginNgnPerUsd' | 'buyRate' | 'sellRate' | 'symbol'>) {
   const usd = asset.marketPriceUsd ?? 0
   const mid = asset.marketRate
@@ -261,7 +256,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               </span>
             </label>
             <label className="text-[10px] text-[var(--muted)]">
-              Network fee (₦ per order)
+              Buy network fee (₦ per order)
               <input
                 type="number"
                 min={0}
@@ -270,11 +265,10 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 onChange={event => {
                   const raw = event.target.value
                   const buyFee = raw.trim() === '' ? '' : String(Math.max(0, Number(raw) || 0))
-                  const sellFee = buyFee === '' ? '' : String(defaultSellNetworkFromBuy(Number(buyFee)))
                   setNewCryptoAsset(current => ({
                     ...current,
                     buyNetworkFeeNgn: buyFee,
-                    sellNetworkFeeNgn: sellFee,
+                    sellNetworkFeeNgn: '0',
                   }))
                 }}
                 placeholder="Leave blank for automatic"
@@ -486,17 +480,6 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     step="0.01"
                     value={newCryptoAsset.buyNetworkFeeNgn}
                     onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Sell network fee only (₦)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={newCryptoAsset.sellNetworkFeeNgn}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, sellNetworkFeeNgn: event.target.value }))}
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                   />
                 </label>
@@ -721,13 +704,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                         setCryptoPricing(current => current.map(asset => {
                           if (asset.id !== item.id) return asset
                           if (raw.trim() === '') {
-                            return { ...asset, buyNetworkFeeNgn: undefined, sellNetworkFeeNgn: undefined }
+                            return { ...asset, buyNetworkFeeNgn: undefined, sellNetworkFeeNgn: 0 }
                           }
                           const buyFee = Math.max(0, Number(raw) || 0)
                           return {
                             ...asset,
                             buyNetworkFeeNgn: buyFee,
-                            sellNetworkFeeNgn: defaultSellNetworkFromBuy(buyFee),
+                            sellNetworkFeeNgn: 0,
                           }
                         }))
                       }}
@@ -881,24 +864,6 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                       setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
                         ...asset,
                         buyNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
-                      } : asset))
-                    }}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Sell network fee only (₦)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={item.sellNetworkFeeNgn ?? ''}
-                    placeholder={String(getDefaultNetworkFeeNgn(item.network, 'sell', item.id))}
-                    onChange={event => {
-                      const raw = event.target.value
-                      setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
-                        ...asset,
-                        sellNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
                       } : asset))
                     }}
                     className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"

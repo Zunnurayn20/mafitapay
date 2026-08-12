@@ -153,6 +153,8 @@ export function getCryptoNetworkFeeNgn(
   asset: Pick<CryptoAsset, 'id' | 'network' | 'buyNetworkFeeNgn' | 'sellNetworkFeeNgn'>,
   side: 'buy' | 'sell',
 ): number {
+  // Deposits/sells are credited at the displayed sell rate. Gas recovery is a buy-only charge.
+  if (side === 'sell') return 0
   const configured = side === 'buy' ? asset.buyNetworkFeeNgn : asset.sellNetworkFeeNgn
   if (configured != null && Number.isFinite(configured) && configured >= 0) {
     return roundNgn(configured)

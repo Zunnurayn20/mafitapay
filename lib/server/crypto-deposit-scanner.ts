@@ -810,18 +810,12 @@ export async function settleDirectCryptoDeposit(input: {
     return input.event
   }
 
-  // Sell spread is already in sellRate. Network fee recovers sweep/gas cost on top.
-  const networkFeeNgn = assetForRate
-    ? getCryptoNetworkFeeNgn(assetForRate, 'sell')
-    : 0
-  const amountNgn = Number(Math.max(0, grossNgn - networkFeeNgn).toFixed(2))
-  if (amountNgn <= 0) {
-    console.error(`[crypto-deposit-scanner] Net credit after network fee is zero for ${input.asset.pairId} (gross=${grossNgn}, fee=${networkFeeNgn}). Leaving unmatched.`)
-    return input.event
-  }
+  // Deposits credit the displayed sell rate in full. Network fees apply only to crypto buys.
+  const networkFeeNgn = 0
+  const amountNgn = grossNgn
 
   if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
-    console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol} (rate=${sellRate}, networkFee=${networkFeeNgn}, gross=${grossNgn})`)
+    console.log(`[crypto-deposit-scanner] crediting user=${input.event.userId} NGN +${amountNgn} for ${input.event.amountCrypto} ${input.asset.symbol} (rate=${sellRate}, gross=${grossNgn})`)
   }
   const now = new Date().toISOString()
   const transactionId = `tx_${input.event.externalEventId.replace(/[^a-zA-Z0-9]/g, '').slice(-24)}`

@@ -439,8 +439,8 @@ export async function POST(req: Request) {
   }
 
   const quotedAmount = quote.amountNgn
-  // Gas/network recovery locked into the quote at create time (plus spread margin already in unitRate).
-  const fee = Math.max(0, Number(quote.networkFeeNgn) || 0)
+  // Gas/network recovery is buy-only; deposits/sells receive the displayed sell rate in full.
+  const fee = action === 'buy' ? Math.max(0, Number(quote.networkFeeNgn) || 0) : 0
   const cryptoAmount = quote.cryptoAmount
   const ref = generateRef()
   let liveAsset = asset
@@ -571,10 +571,6 @@ export async function POST(req: Request) {
       },
     }
   } else {
-    const netCredit = quotedAmount - fee
-    if (netCredit <= 0) {
-      return NextResponse.json({ error: 'Amount is too small after network fees', success: false }, { status: 400 })
-    }
     try {
       liveAsset = await assertQuoteStillMatchesLiveMarket(asset, action, quote.unitRate)
     } catch (error) {
@@ -593,7 +589,7 @@ export async function POST(req: Request) {
       id: ref,
       type: 'crypto_sell' as const,
       status: 'pending' as const,
-      amount: netCredit,
+      amount: quotedAmount,
       fee,
       description: `Sell ${formatCrypto(cryptoAmount, liveAsset.symbol)}`,
       reference: ref,

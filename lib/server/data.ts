@@ -6609,8 +6609,8 @@ export async function createCryptoQuote(input: {
 
   const unitRate = input.unitRate ?? (input.side === 'buy' ? asset.buyRate : asset.sellRate)
   const cryptoAmount = input.cryptoAmount ?? (input.amountNgn / unitRate)
-  // Lock gas recovery into the quote so PIN screen and debit match even if admin changes fees mid-flight.
-  const networkFeeNgn = getCryptoNetworkFeeNgn(asset, input.side)
+  // Gas recovery applies to crypto buys only. Deposits/sells credit the displayed sell rate in full.
+  const networkFeeNgn = input.side === 'buy' ? getCryptoNetworkFeeNgn(asset, 'buy') : 0
   const now = new Date()
   const quoteTtlSeconds = getEffectiveQuoteTtlSeconds(asset.id, asset.quoteTtlSeconds)
   const expiresAt = new Date(now.getTime() + quoteTtlSeconds * 1000).toISOString()
@@ -7669,9 +7669,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       const buyNetworkFeeNgn = asset.buyNetworkFeeNgn != null && Number.isFinite(asset.buyNetworkFeeNgn)
         ? Math.max(0, asset.buyNetworkFeeNgn)
         : getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
-      const sellNetworkFeeNgn = asset.sellNetworkFeeNgn != null && Number.isFinite(asset.sellNetworkFeeNgn)
-        ? Math.max(0, asset.sellNetworkFeeNgn)
-        : getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id)
+      // Retain the column for backwards-compatible data, but sell/deposit fees are no longer supported.
+      const sellNetworkFeeNgn = 0
       const executionRail = asset.executionRail ?? getConfigurableAssetExecutionRail(asset)
       assertSupportedAssetExecutionRail(asset, executionRail)
       const routedConfig = executionRail === 'routed_treasury'
