@@ -38,6 +38,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+# Keep operational database migration scripts available in the runtime image.
+COPY --from=builder /app/scripts ./scripts
 
 # SQLite + uploads live here — mount a Railway volume at /app/data
 # Run as root so Railway volume mounts are writable for SQLite.
