@@ -8480,6 +8480,17 @@ async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
 
 export async function getSecuritySettingsByUserId(userId: string): Promise<SecuritySettingsRecord | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<SecuritySettingsRow>('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1', [userId])
+    const row = result.rows[0]
+    if (!row) return null
+    const [summary, latest] = await Promise.all([
+      queryPostgres<{ count: string; last_used_at: string | null }>('SELECT COUNT(*) AS count, MAX(last_used_at) AS last_used_at FROM biometric_credentials WHERE user_id = ?', [userId]),
+      queryPostgres<{ label: string | null }>('SELECT label FROM biometric_credentials WHERE user_id = ? ORDER BY COALESCE(last_used_at, created_at) DESC LIMIT 1', [userId]),
+    ])
+    const count = Number(summary.rows[0]?.count ?? 0)
+    return { ...mapSecuritySettingsRow(row), hasBiometricCredential: count > 0, biometricCredentialCount: count, biometricCredentialLabel: latest.rows[0]?.label ?? undefined, biometricLastVerifiedAt: summary.rows[0]?.last_used_at ?? undefined }
+  }
   const db = getDb()
   const row = db
     .prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1')
@@ -8517,6 +8528,15 @@ function cleanupExpiredWebAuthnArtifacts(db: DatabaseSync) {
 
 export async function getBiometricCredentialsByUserId(userId: string): Promise<BiometricCredentialRecord[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await Promise.all([
+      queryPostgres('DELETE FROM webauthn_challenges WHERE expires_at <= ? OR used_at IS NOT NULL', [now]),
+      queryPostgres('DELETE FROM biometric_approvals WHERE expires_at <= ? OR used_at IS NOT NULL', [now]),
+    ])
+    const result = await queryPostgres<BiometricCredentialRow>('SELECT * FROM biometric_credentials WHERE user_id = ? ORDER BY COALESCE(last_used_at, created_at) DESC', [userId])
+    return result.rows.map(mapBiometricCredentialRow)
+  }
   const db = getDb()
   cleanupExpiredWebAuthnArtifacts(db)
   const rows = db.prepare(`
@@ -8536,6 +8556,16 @@ export async function saveWebAuthnChallenge(input: {
   origin: string
 }) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + WEBAUTHN_CHALLENGE_TTL_MINUTES * 60_000).toISOString()
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM webauthn_challenges WHERE expires_at <= ? OR used_at IS NOT NULL', [now])
+      await queryPostgresClient(client, 'UPDATE webauthn_challenges SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL', [now, input.userId, input.purpose])
+      await queryPostgresClient(client, 'INSERT INTO webauthn_challenges (id, user_id, purpose, challenge, rp_id, origin, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)', [`wch_${randomBytes(6).toString('hex')}`, input.userId, input.purpose, input.challenge, input.rpId, input.origin, expiresAt, now])
+    })
+    return
+  }
   const db = getDb()
   cleanupExpiredWebAuthnArtifacts(db)
   const now = new Date().toISOString()
@@ -8558,6 +8588,15 @@ export async function saveWebAuthnChallenge(input: {
 
 export async function consumeWebAuthnChallenge(userId: string, purpose: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) return withPostgresTransaction(async client => {
+    const now = new Date().toISOString()
+    await queryPostgresClient(client, 'DELETE FROM webauthn_challenges WHERE expires_at <= ? OR used_at IS NOT NULL', [now])
+    const result = await queryPostgresClient<WebAuthnChallengeRow>(client, 'SELECT * FROM webauthn_challenges WHERE user_id = ? AND purpose = ? AND used_at IS NULL ORDER BY created_at DESC LIMIT 1 FOR UPDATE', [userId, purpose])
+    const row = result.rows[0]
+    if (!row || new Date(row.expires_at).getTime() <= Date.now()) throw new Error('Biometric challenge expired. Try again.')
+    await queryPostgresClient(client, 'UPDATE webauthn_challenges SET used_at = ? WHERE id = ?', [now, row.id])
+    return row
+  })
   const db = getDb()
   cleanupExpiredWebAuthnArtifacts(db)
   const row = db.prepare(`
@@ -8585,6 +8624,10 @@ export async function saveBiometricCredential(input: {
   label?: string
 }) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`INSERT INTO biometric_credentials (id, user_id, credential_id, public_key, counter, transports, device_type, backed_up, label, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(credential_id) DO UPDATE SET public_key = excluded.public_key, counter = excluded.counter, transports = excluded.transports, device_type = excluded.device_type, backed_up = excluded.backed_up, label = excluded.label`, [`bio_${randomBytes(6).toString('hex')}`, input.userId, input.credentialId, input.publicKey, Number(input.counter ?? 0), input.transports?.length ? JSON.stringify(input.transports) : null, input.deviceType ?? null, input.backedUp === true, input.label ?? null, new Date().toISOString()])
+    return
+  }
   const db = getDb()
   const now = new Date().toISOString()
   db.prepare(`
@@ -8614,12 +8657,20 @@ export async function saveBiometricCredential(input: {
 
 export async function getBiometricCredentialByCredentialId(credentialId: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<BiometricCredentialRow>('SELECT * FROM biometric_credentials WHERE credential_id = ? LIMIT 1', [credentialId])
+    return result.rows[0] ? mapBiometricCredentialRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM biometric_credentials WHERE credential_id = ? LIMIT 1').get(credentialId) as BiometricCredentialRow | undefined
   return row ? mapBiometricCredentialRow(row) : null
 }
 
 export async function touchBiometricCredential(credentialId: string, counter: number) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE biometric_credentials SET counter = ?, last_used_at = ? WHERE credential_id = ?', [counter, new Date().toISOString(), credentialId])
+    return
+  }
   getDb().prepare(`
     UPDATE biometric_credentials
     SET counter = ?, last_used_at = ?
@@ -8629,6 +8680,11 @@ export async function touchBiometricCredential(credentialId: string, counter: nu
 
 export async function removeBiometricCredential(userId: string, credentialId: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres('DELETE FROM biometric_credentials WHERE user_id = ? AND credential_id = ?', [userId, credentialId])
+    if (!(result.rowCount ?? 0)) throw new Error('Biometric credential not found.')
+    return
+  }
   const db = getDb()
   const result = db.prepare('DELETE FROM biometric_credentials WHERE user_id = ? AND credential_id = ?').run(userId, credentialId) as { changes?: number }
   if (!Number(result.changes ?? 0)) {
@@ -8638,6 +8694,16 @@ export async function removeBiometricCredential(userId: string, credentialId: st
 
 export async function createBiometricApproval(userId: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const token = `bioap_${randomBytes(24).toString('hex')}`
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + BIOMETRIC_APPROVAL_TTL_MINUTES * 60_000).toISOString()
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM biometric_approvals WHERE expires_at <= ? OR used_at IS NOT NULL', [now])
+      await queryPostgresClient(client, 'INSERT INTO biometric_approvals (token, user_id, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, NULL)', [token, userId, expiresAt, now])
+    })
+    return { token, expiresAt }
+  }
   const db = getDb()
   cleanupExpiredWebAuthnArtifacts(db)
   const token = `bioap_${randomBytes(24).toString('hex')}`
@@ -8652,6 +8718,18 @@ export async function createBiometricApproval(userId: string) {
 
 export async function consumeBiometricApproval(userId: string, token: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await withPostgresTransaction(async client => {
+      const now = new Date().toISOString()
+      await queryPostgresClient(client, 'DELETE FROM biometric_approvals WHERE expires_at <= ? OR used_at IS NOT NULL', [now])
+      const result = await queryPostgresClient<BiometricApprovalRow>(client, 'SELECT * FROM biometric_approvals WHERE token = ? AND user_id = ? LIMIT 1 FOR UPDATE', [token, userId])
+      const row = result.rows[0]
+      if (!row || row.used_at) throw new Error('Biometric approval is invalid or already used.')
+      if (new Date(row.expires_at).getTime() <= Date.now()) throw new Error('Biometric approval expired. Try again.')
+      await queryPostgresClient(client, 'UPDATE biometric_approvals SET used_at = ? WHERE token = ?', [now, token])
+    })
+    return
+  }
   const db = getDb()
   cleanupExpiredWebAuthnArtifacts(db)
   const row = db.prepare('SELECT * FROM biometric_approvals WHERE token = ? AND user_id = ? LIMIT 1').get(token, userId) as BiometricApprovalRow | undefined
