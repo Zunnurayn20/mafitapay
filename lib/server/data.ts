@@ -6747,6 +6747,24 @@ export async function consumeAuthRateLimitAttempt(input: {
     }
   }
 
+  if (isPostgresEnabled()) {
+    const now = new Date()
+    const nowIso = now.toISOString()
+    const cutoffIso = new Date(now.getTime() - input.windowMinutes * 60 * 1000).toISOString()
+    const retentionIso = new Date(now.getTime() - AUTH_RATE_LIMIT_RETENTION_HOURS * 60 * 60 * 1000).toISOString()
+    return withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM auth_rate_limit_attempts WHERE created_at <= ?', [retentionIso])
+      const states = await Promise.all(uniqueScopes.map(async scope => {
+        const result = await queryPostgresClient<{ count: string; oldest_created_at: string | null }>(client, 'SELECT COUNT(*) AS count, MIN(created_at) AS oldest_created_at FROM auth_rate_limit_attempts WHERE action = ? AND scope = ? AND created_at >= ?', [input.action, scope, cutoffIso])
+        return { scope, count: Number(result.rows[0]?.count ?? 0), oldestCreatedAt: result.rows[0]?.oldest_created_at ?? null }
+      }))
+      const blocked = states.find(state => state.count >= input.limit)
+      if (blocked) return { allowed: false, retryAfterSeconds: blocked.oldestCreatedAt ? Math.max(1, Math.ceil((new Date(blocked.oldestCreatedAt).getTime() + input.windowMinutes * 60 * 1000 - now.getTime()) / 1000)) : input.windowMinutes * 60, remaining: 0, blockedScope: blocked.scope }
+      for (const scope of uniqueScopes) await queryPostgresClient(client, 'INSERT INTO auth_rate_limit_attempts (id, action, scope, created_at) VALUES (?, ?, ?, ?)', [`arl_${randomBytes(6).toString('hex')}`, input.action, scope, nowIso])
+      return { allowed: true, retryAfterSeconds: 0, remaining: Math.max(0, input.limit - (Math.max(...states.map(state => state.count), 0) + 1)), blockedScope: null }
+    })
+  }
+
   const db = getDb()
   const now = new Date()
   const nowIso = now.toISOString()
@@ -6813,6 +6831,11 @@ export async function clearAuthRateLimitAttempts(input: {
   await ensureDbReady()
   const uniqueScopes = Array.from(new Set(input.scopes.map((scope) => scope.trim()).filter(Boolean)))
   if (!uniqueScopes.length) return 0
+  if (isPostgresEnabled()) {
+    let removed = 0
+    for (const scope of uniqueScopes) removed += (await queryPostgres('DELETE FROM auth_rate_limit_attempts WHERE action = ? AND scope = ?', [input.action, scope])).rowCount ?? 0
+    return removed
+  }
   const statement = getDb().prepare('DELETE FROM auth_rate_limit_attempts WHERE action = ? AND scope = ?')
   let removed = 0
   for (const scope of uniqueScopes) {
