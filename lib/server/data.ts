@@ -17,7 +17,7 @@ import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
-import { isPostgresEnabled, queryPostgres } from './postgres'
+import { isPostgresEnabled, queryPostgres, queryPostgresClient, withPostgresTransaction } from './postgres'
 import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositIntent, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
 import {
   settleDirectCryptoDeposit,
@@ -4213,6 +4213,65 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
 
 export async function applyWalletMutation(input: WalletMutationInput): Promise<{ wallet: Wallet; transaction: Transaction }> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const asset = input.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
+    const balanceDelta = input.balanceDelta ?? 0
+    const lockedBalanceDelta = input.lockedBalanceDelta ?? 0
+    const result = await withPostgresTransaction(async client => {
+      const walletResult = await queryPostgresClient<WalletRow>(client, 'SELECT * FROM wallets WHERE user_id = ? LIMIT 1 FOR UPDATE', [input.userId])
+      const walletRow = walletResult.rows[0]
+      if (!walletRow) throw new Error('Wallet not found')
+
+      const balancesResult = await queryPostgresClient<{ asset: string; account: 'available' | 'locked'; balance: number }>(client, `
+        SELECT COALESCE(asset, 'NGN') AS asset, account,
+          COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS balance
+        FROM ledger_entries WHERE user_id = ? GROUP BY asset, account
+      `, [input.userId])
+      const currentBalances = emptyAssetBalances()
+      for (const row of balancesResult.rows) {
+        const key: AssetBalanceKey = row.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
+        if (row.account === 'available') currentBalances[key].available = Number(row.balance)
+        if (row.account === 'locked') currentBalances[key].locked = Number(row.balance)
+      }
+
+      if (typeof input.minimumAvailableBalance === 'number' && currentBalances[asset].available < input.minimumAvailableBalance) {
+        throw new Error('Insufficient balance')
+      }
+      const nextBalance = currentBalances[asset].available + balanceDelta
+      const nextLockedBalance = currentBalances[asset].locked + lockedBalanceDelta
+      if (nextBalance < 0 || nextLockedBalance < 0) throw new Error('Wallet balance cannot go negative')
+      const nextBalances: AssetBalanceSummary = {
+        ...currentBalances,
+        [asset]: { available: nextBalance, locked: nextLockedBalance },
+      }
+
+      await queryPostgresClient(client, `
+        INSERT INTO transactions (id, user_id, type, status, amount, fee, description, reference, recipient, narration, created_at, icon, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        input.transaction.id, input.userId, input.transaction.type, input.transaction.status,
+        input.transaction.amount, input.transaction.fee, input.transaction.description, input.transaction.reference,
+        input.transaction.recipient ?? null, input.transaction.narration ?? null, input.transaction.createdAt,
+        input.transaction.icon ?? null, input.transaction.metadata ? JSON.stringify(input.transaction.metadata) : null,
+      ])
+      const insertLedger = async (account: 'available' | 'locked', delta: number) => {
+        if (!delta) return
+        await queryPostgresClient(client, `
+          INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          `ledger_${randomBytes(6).toString('hex')}`, input.userId, input.transaction.id, asset, account,
+          delta > 0 ? 'credit' : 'debit', Math.abs(delta), input.transaction.description, input.transaction.createdAt,
+        ])
+      }
+      await insertLedger('available', balanceDelta)
+      await insertLedger('locked', lockedBalanceDelta)
+      await queryPostgresClient(client, 'UPDATE wallets SET balance = ?, locked_balance = ? WHERE user_id = ?', [nextBalances.NGN.available, nextBalances.NGN.locked, input.userId])
+      return { wallet: buildWalletFromRow(walletRow, nextBalances), transaction: input.transaction }
+    })
+    await maybeApplyFirstSuccessfulTransactionRewards(input.userId, result.transaction)
+    return result
+  }
   const db = getDb()
   const asset = input.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
   const balanceDelta = input.balanceDelta ?? 0

@@ -86,3 +86,7 @@ export async function withPostgresTransaction<T>(callback: (client: PoolClient) 
     client.release()
   }
 }
+
+export async function queryPostgresClient<Row extends QueryResultRow = QueryResultRow>(client: PoolClient, sql: string, params: SqlParam[] = []) {
+  return await client.query<Row>(sqlitePlaceholdersToPostgres(sql), params.map(normalizeValue))
+}
