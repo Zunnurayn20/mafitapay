@@ -43,9 +43,9 @@ export function AdminShell({
         </header>
 
         <div className="grid flex-1 gap-4 py-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
-          <aside className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_10px_30px_-18px_rgba(15,23,42,0.35)] xl:sticky xl:top-4 xl:self-start">
-            <div className="hidden border-b border-slate-200 px-4 py-3 xl:block">
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Models</div>
+          <aside className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--coal)] xl:sticky xl:top-4 xl:flex xl:h-[calc(100vh-2rem)] xl:flex-col xl:self-start">
+            <div className="hidden border-b border-[var(--border)] px-5 py-4 xl:block">
+              <div className="text-[8px] font-bold uppercase tracking-[1.6px] text-[var(--muted)]">Admin navigation</div>
             </div>
             <AdminNav />
           </aside>
