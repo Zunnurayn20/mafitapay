@@ -8045,6 +8045,13 @@ export async function reviewRewardAwardRequest(input: {
 
 export async function getNetworkProviders(): Promise<NetworkProvider[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<NetworkProviderRow>('SELECT * FROM network_providers ORDER BY name ASC')
+    return result.rows.map(row => {
+      const provider = mapNetworkProviderRow(row)
+      return { ...provider, icon: resolveNetworkProviderIcon(provider.name, provider.icon) }
+    })
+  }
   const rows = getDb().prepare('SELECT * FROM network_providers ORDER BY name ASC').all() as NetworkProviderRow[]
   return rows.map(row => {
     const provider = mapNetworkProviderRow(row)
@@ -8057,6 +8064,12 @@ export async function getNetworkProviders(): Promise<NetworkProvider[]> {
 
 export async function getBankDirectory(country = 'NG', provider?: string): Promise<BankDirectoryEntry[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<BankDirectoryRow>(provider
+      ? 'SELECT * FROM bank_directory WHERE country = ? AND provider = ? AND is_active = ? ORDER BY name ASC'
+      : 'SELECT * FROM bank_directory WHERE country = ? AND is_active = ? ORDER BY name ASC', provider ? [country, provider, true] : [country, true])
+    return result.rows.map(mapBankDirectoryRow)
+  }
   const rows = (provider
     ? getDb().prepare(`
         SELECT * FROM bank_directory
@@ -8074,6 +8087,12 @@ export async function getBankDirectory(country = 'NG', provider?: string): Promi
 
 export async function getBankDirectoryEntryByCode(code: string, country = 'NG', provider?: string): Promise<BankDirectoryEntry | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<BankDirectoryRow>(provider
+      ? 'SELECT * FROM bank_directory WHERE code = ? AND country = ? AND provider = ? LIMIT 1'
+      : 'SELECT * FROM bank_directory WHERE code = ? AND country = ? ORDER BY updated_at DESC LIMIT 1', provider ? [code, country, provider] : [code, country])
+    return result.rows[0] ? mapBankDirectoryRow(result.rows[0]) : null
+  }
   const row = (provider
     ? getDb().prepare(`
         SELECT * FROM bank_directory
@@ -8092,6 +8111,19 @@ export async function getBankDirectoryEntryByCode(code: string, country = 'NG', 
 
 export async function upsertBankDirectory(entries: BankDirectoryEntry[]) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      for (const item of entries) {
+        await queryPostgresClient(client, `
+          INSERT INTO bank_directory (code, country, name, provider, is_active, payload, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(code, country, provider) DO UPDATE SET name = excluded.name, is_active = excluded.is_active, payload = excluded.payload, updated_at = excluded.updated_at
+        `, [item.code, item.country, item.name, item.provider, item.isActive !== false, null, now, now])
+      }
+    })
+    return getBankDirectory(entries[0]?.country ?? 'NG', entries[0]?.provider)
+  }
   const db = getDb()
   const now = new Date().toISOString()
   db.exec('BEGIN')
@@ -8369,6 +8401,15 @@ export async function reviewKycSubmission(input: {
 
 export async function upsertNetworkProviders(providers: NetworkProvider[]) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      for (const provider of providers) {
+        await queryPostgresClient(client, `INSERT INTO network_providers (name, icon, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET icon = excluded.icon, updated_at = excluded.updated_at`, [provider.name, resolveNetworkProviderIcon(provider.name, provider.icon), now, now])
+      }
+    })
+    return getNetworkProviders()
+  }
   const db = getDb()
   const now = new Date().toISOString()
   const statement = db.prepare(`
