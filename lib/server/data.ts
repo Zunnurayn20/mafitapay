@@ -6109,6 +6109,13 @@ export async function getSessionsForUser(userId: string): Promise<SessionRecord[
 
 export async function insertSession(session: SessionRecord) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO sessions (token, user_id, expires_at, created_at, user_agent, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [session.token, session.userId, session.expiresAt, session.createdAt, session.userAgent ?? null, session.ipAddress ?? null])
+    return
+  }
   const db = getDb()
   db.exec('BEGIN')
 
@@ -6411,16 +6418,28 @@ export async function clearAuthRateLimitAttempts(input: {
 
 export async function deleteSessionByToken(token: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM sessions WHERE token = ?', [token])
+    return
+  }
   getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token)
 }
 
 export async function deleteSessionsByUserId(userId: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM sessions WHERE user_id = ?', [userId])
+    return
+  }
   getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
 }
 
 export async function revokeUserSession(userId: string, token: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres('DELETE FROM sessions WHERE token = ? AND user_id = ?', [token, userId])
+    return Number(result.rowCount ?? 0) > 0
+  }
   const result = getDb()
     .prepare('DELETE FROM sessions WHERE token = ? AND user_id = ?')
     .run(token, userId) as { changes?: number }
@@ -6429,6 +6448,12 @@ export async function revokeUserSession(userId: string, token: string) {
 
 export async function revokeOtherUserSessions(userId: string, currentToken?: string | null) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = currentToken
+      ? await queryPostgres('DELETE FROM sessions WHERE user_id = ? AND token != ?', [userId, currentToken])
+      : await queryPostgres('DELETE FROM sessions WHERE user_id = ?', [userId])
+    return Number(result.rowCount ?? 0)
+  }
   const result = currentToken
     ? getDb()
       .prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')
@@ -8435,6 +8460,28 @@ export async function createUser(input: { name: string; email: string; phone: st
     reserveLockedBalance: 0,
     currency: 'NGN' as const,
     virtualAccounts: [],
+  }
+
+  if (isPostgresEnabled()) {
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, `
+        INSERT INTO users (id, name, email, phone, handle, "referralCode", "referredByUserId", "referredByReferralCode", "referredAt", "accountStatus", "kycStatus", tier, "createdAt", "passwordHash", "passwordSalt")
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        user.id, user.name, user.email, user.phone, user.handle, user.referralCode,
+        user.referredByUserId ?? null, user.referredByReferralCode ?? null, user.referredAt ?? null,
+        user.accountStatus, user.kycStatus, user.tier, user.createdAt, user.passwordHash, user.passwordSalt,
+      ])
+      await queryPostgresClient(client, `
+        INSERT INTO wallets (user_id, balance, locked_balance, currency, virtual_accounts) VALUES (?, ?, ?, ?, ?)
+      `, [user.id, wallet.balance, wallet.lockedBalance, wallet.currency, JSON.stringify(wallet.virtualAccounts)])
+      await queryPostgresClient(client, `
+        INSERT INTO security_settings (user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [user.id, 0, null, null, 0, null, 0, 1, now, now])
+    })
+    await maybeApplySignupRewardsForUser(user.id)
+    return user
   }
 
   db.exec('BEGIN')
