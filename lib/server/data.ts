@@ -4195,6 +4195,20 @@ async function maybeApplyRewardRulesForEvent(input: {
       const existingRequest = await queryPostgres<{ id: string }>('SELECT id FROM reward_award_requests WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1', [rule.id, sourceUser.id])
       if (duplicate.rows[0] || existingRequest.rows[0]) continue
       const now = new Date().toISOString()
+      if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
+        const dailyCap = rule.dailyPayoutCapNgn ?? 0
+        const date = new Date()
+        const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString()
+        const dayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1)).toISOString()
+        const paid = await queryPostgres<{ total: string }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE type = ? AND status = ? AND metadata LIKE ? AND created_at >= ? AND created_at < ?`, [rewardType, 'success', `%"rewardRuleId":"${rule.id}"%`, dayStart, dayEnd])
+        const paidToday = Number(paid.rows[0]?.total ?? 0)
+        if (paidToday + rule.amountNgn > dailyCap) {
+          const requestId = `reward_req_${randomBytes(6).toString('hex')}`
+          await queryPostgres(`INSERT INTO reward_award_requests (id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience, beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [requestId, rule.id, rule.name, rule.kind, rewardType, rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null, rule.amountNgn, 'rejected', `Daily payout cap reached at â‚¦${dailyCap.toLocaleString('en-NG')}.`, now, null, now, now])
+          await insertAuditLog({ userId: beneficiary.id, actorUserId: sourceUser.id, action: 'reward.rule_rejected_cap', entityType: 'reward_award_request', entityId: requestId, metadata: { rewardRuleId: rule.id, sourceUserId: sourceUser.id, amount: rule.amountNgn, dailyPayoutCapNgn: dailyCap, paidTodayNgn: paidToday } })
+          continue
+        }
+      }
       if (rule.manualApprovalRequired) {
         const requestId = `reward_req_${randomBytes(6).toString('hex')}`
         await queryPostgres(`INSERT INTO reward_award_requests (id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience, beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [requestId, rule.id, rule.name, rule.kind, rewardType, rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null, rule.amountNgn, 'pending', 'Waiting for admin approval.', null, null, now, now])
