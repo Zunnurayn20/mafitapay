@@ -8184,6 +8184,37 @@ export async function reviewRewardAwardRequest(input: {
   reason?: string
 }) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const context = await withPostgresTransaction(async client => {
+      const requestResult = await queryPostgresClient<RewardAwardRequestRow>(client, 'SELECT * FROM reward_award_requests WHERE id = ? LIMIT 1 FOR UPDATE', [input.requestId])
+      const request = requestResult.rows[0]
+      if (!request) throw new Error('Reward award request not found.')
+      if (request.status === 'approved') throw new Error('Reward award request is already approved.')
+      const users = await queryPostgresClient<UserRow>(client, 'SELECT * FROM users WHERE id IN (?, ?)', [request.source_user_id, request.beneficiary_user_id])
+      const sourceUser = users.rows.find(user => user.id === request.source_user_id)
+      const beneficiary = users.rows.find(user => user.id === request.beneficiary_user_id)
+      if (!sourceUser || !beneficiary) throw new Error('Reward request users could not be loaded.')
+      const now = new Date().toISOString()
+      if (input.action === 'reject') {
+        await queryPostgresClient(client, `UPDATE reward_award_requests SET status = 'rejected', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`, [input.reason?.trim() || 'Rejected by admin.', now, input.adminUserId, now, input.requestId])
+        return { request, sourceUser, beneficiary, approved: false, now }
+      }
+      const duplicate = await queryPostgresClient<{ id: string }>(client, `SELECT id FROM transactions WHERE user_id = ? AND type = ? AND status = ? AND metadata LIKE ? LIMIT 1`, [beneficiary.id, request.reward_type, 'success', `%"rewardRuleId":"${request.reward_rule_id}"%`])
+      if (duplicate.rows[0]) throw new Error('Reward has already been paid for this rule trigger.')
+      await queryPostgresClient(client, `UPDATE reward_award_requests SET status = 'approved', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`, [input.reason?.trim() || 'Approved by admin.', now, input.adminUserId, now, input.requestId])
+      return { request, sourceUser, beneficiary, approved: true, now }
+    })
+    if (!context.approved) {
+      await insertAuditLog({ userId: context.beneficiary.id, actorUserId: input.adminUserId, action: 'reward.rule_rejected_manual', entityType: 'reward_award_request', entityId: input.requestId, metadata: { rewardRuleId: context.request.reward_rule_id, sourceUserId: context.sourceUser.id, amount: Number(context.request.amount_ngn), reason: input.reason?.trim() || 'Rejected by admin.' } })
+      return getRewardRuleReport()
+    }
+    const request = context.request
+    const rewardTransaction: Transaction = { id: `tx_${randomBytes(6).toString('hex')}`, type: request.reward_type, status: 'success', amount: Number(request.amount_ngn), fee: 0, description: request.reward_kind === 'referral' ? `${request.reward_rule_name} â€” ${context.sourceUser.name}` : request.reward_rule_name, reference: generateRef(), createdAt: context.now, icon: request.reward_kind === 'referral' ? 'â‚¦' : 'ðŸŽ', metadata: { rewardRuleId: request.reward_rule_id, rewardRuleName: request.reward_rule_name, rewardEvent: request.trigger_event, sourceUserId: context.sourceUser.id, sourceReferralCode: context.sourceUser.referredByReferralCode ?? '', triggerTransactionId: request.trigger_transaction_id ?? undefined, role: request.audience, referredUserId: request.audience === 'inviter' ? context.sourceUser.id : undefined, approvalMode: 'manual' } }
+    await applyWalletMutation({ userId: context.beneficiary.id, asset: 'NGN', balanceDelta: Number(request.amount_ngn), transaction: rewardTransaction })
+    await insertNotification(createNotification({ userId: context.beneficiary.id, title: `${request.reward_rule_name} paid`, message: `You earned â‚¦${Number(request.amount_ngn).toLocaleString('en-NG')} from the "${request.reward_rule_name}" reward rule.`, type: 'success' }))
+    await insertAuditLog({ userId: context.beneficiary.id, actorUserId: input.adminUserId, action: 'reward.rule_approved_manual', entityType: 'reward_award_request', entityId: input.requestId, metadata: { rewardRuleId: request.reward_rule_id, sourceUserId: context.sourceUser.id, amount: Number(request.amount_ngn) } })
+    return getRewardRuleReport()
+  }
   const db = getDb()
   const requestRow = db
     .prepare('SELECT * FROM reward_award_requests WHERE id = ? LIMIT 1')
