@@ -15,9 +15,9 @@ export default async function DisabledDataPlansPage() {
     getPricedBardetechPlans().catch(() => []),
   ])
   const catalog = [
-    ...amigoPlans.map(plan => ({ vendor: 'amigo' as const, networkId: plan.networkId, network: plan.network, planId: String(plan.planId), category: plan.planType, label: `${plan.label} (${plan.validity})` })),
-    ...asbdataPlans.map(plan => ({ vendor: 'asbdata' as const, networkId: plan.networkId, network: plan.network, planId: String(plan.planId), category: plan.planType, label: `${plan.size} (${plan.validity})` })),
-    ...bardetechPlans.map(plan => ({ vendor: 'bardetech' as const, networkId: plan.networkId, network: plan.network, planId: String(plan.planId), category: plan.planType, label: `${plan.size} (${plan.validity})` })),
+    ...amigoPlans.map(plan => ({ vendor: 'amigo' as const, networkId: plan.networkId, network: plan.network, planId: String(plan.planId), category: plan.planType, label: plan.label, validity: plan.validity, retailNgn: plan.retailNgn })),
+    ...asbdataPlans.map(plan => ({ vendor: 'asbdata' as const, networkId: plan.networkId, network: plan.network, planId: String(plan.planId), category: plan.planType, label: plan.size, validity: plan.validity, retailNgn: plan.retailNgn })),
+    ...bardetechPlans.map(plan => ({ vendor: 'bardetech' as const, networkId: plan.networkId, network: plan.network, planId: String(plan.planId), category: plan.planType, label: plan.size, validity: plan.validity, retailNgn: plan.retailNgn })),
   ]
   return (
     <AdminPageCard
