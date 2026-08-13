@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { AdminPageCard } from '@/components/admin/AdminUi'
 import { requireAdminPageUser } from '@/lib/server/admin-queries'
 import { loadPricingRulesForAdmin } from '@/lib/server/data-pricing'
@@ -61,6 +62,14 @@ export default async function AdminPricingPage() {
     <div className="space-y-4">
       <AdminPageCard
         title="Data pricing"
+        actions={(
+          <Link
+            href="/admin/pricing/disabled-plans"
+            className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Manage disabled plans
+          </Link>
+        )}
         description="Operator margins on wholesale data plans (Amigo + ASBDATA + Bardetech). Same model as online-data-sub: percent, flat, floor, cap, and round — most specific rule wins."
       >
         <PricingClient
