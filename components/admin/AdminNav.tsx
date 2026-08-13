@@ -26,42 +26,71 @@ import {
   ChevronRight,
 } from 'lucide-react'
 
-/** Online-data-sub models first, then MafitaPay-specific tools. */
 export const ADMIN_NAV_GROUPS = [
   {
-    label: 'Models',
+    label: 'Overview',
     items: [
       { href: '/admin', label: 'Overview', icon: Home, exact: true },
       { href: '/analytics', label: 'Analytics', icon: BarChart3 },
-      { href: '/admin/users', label: 'Users', icon: Users, exact: true },
-      { href: '/admin/transactions', label: 'Transactions', icon: Activity },
-      { href: '/admin/wallets', label: 'Wallets', icon: Wallet },
-      { href: '/admin/adjustments', label: 'Adjustments', icon: ClipboardCheck },
-      { href: '/admin/virtual-accounts', label: 'Virtual accounts', icon: Landmark },
-      { href: '/admin/provider-events', label: 'Provider events', icon: DatabaseZap },
-      { href: '/admin/notifications', label: 'Notifications', icon: Bell },
-      { href: '/admin/referrals', label: 'Referrals', icon: Network },
-      { href: '/admin/audit-log', label: 'Audit log', icon: DatabaseZap },
-      { href: '/admin/admins', label: 'Admins', icon: ShieldCheck },
     ],
   },
   {
-    label: 'MafitaPay',
+    label: 'Customers',
     items: [
+      { href: '/admin/users', label: 'Users', icon: Users, exact: true },
+      { href: '/admin/wallets', label: 'Wallets', icon: Wallet },
+      { href: '/admin/virtual-accounts', label: 'Virtual accounts', icon: Landmark },
       { href: '/admin/users/kyc', label: 'KYC queue', icon: ShieldCheck },
+    ],
+  },
+  {
+    label: 'Money',
+    items: [
+      { href: '/admin/transactions', label: 'Transactions', icon: Activity },
+      { href: '/admin/adjustments', label: 'Adjustments', icon: ClipboardCheck },
       { href: '/admin/operations/settlements', label: 'Settlements', icon: BadgeDollarSign },
+    ],
+  },
+  {
+    label: 'Crypto',
+    items: [
       { href: '/admin/operations/orders', label: 'Crypto orders', icon: Coins },
       { href: '/admin/operations/crypto-deposits', label: 'Crypto deposits', icon: Landmark },
-      { href: '/admin/operations/support', label: 'Support tools', icon: Wrench },
       { href: '/admin/catalogs/assets', label: 'Crypto assets', icon: TrendingUp },
+    ],
+  },
+  {
+    label: 'Products & pricing',
+    items: [
       { href: '/admin/pricing', label: 'Data pricing', icon: Percent },
       { href: '/admin/margins', label: 'Transfer margins', icon: BadgeDollarSign },
       { href: '/admin/catalogs/bills', label: 'Bill providers', icon: Boxes },
       { href: '/admin/catalogs/rewards', label: 'Rewards', icon: Gift },
       { href: '/admin/catalogs/raw', label: 'Raw catalogs', icon: DatabaseZap },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { href: '/admin/operations/events', label: 'Provider events', icon: DatabaseZap },
+      { href: '/admin/operations/support', label: 'Support tools', icon: Wrench },
+    ],
+  },
+  {
+    label: 'Monitoring',
+    items: [
       { href: '/admin/health/rails', label: 'Rails health', icon: HeartPulse },
       { href: '/admin/health/providers', label: 'Provider health', icon: RadioTower },
       { href: '/admin/health/market', label: 'Market health', icon: Activity },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { href: '/admin/notifications', label: 'Notifications', icon: Bell },
+      { href: '/admin/referrals', label: 'Referrals', icon: Network },
+      { href: '/admin/audit-log', label: 'Audit log', icon: DatabaseZap },
+      { href: '/admin/admins', label: 'Admins', icon: ShieldCheck },
     ],
   },
 ] as const
