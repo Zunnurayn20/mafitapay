@@ -5368,6 +5368,12 @@ export async function createCexDepositIntent(input: {
   const now = new Date().toISOString()
   const id = `cei_${randomBytes(6).toString('hex')}`
 
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositIntentRow>(`INSERT INTO cex_deposit_intents (id, user_id, reference, exchange, pair_id, expected_amount_crypto, cex_uid, memo, status, expires_at, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`, [id, input.userId, input.reference, input.exchange, input.pairId, input.expectedAmountCrypto, input.cexUid, input.memo ?? null, 'pending', input.expiresAt ?? null, input.note ?? null, now, now])
+    if (!result.rows[0]) throw new Error('Unable to create CEX deposit intent.')
+    return mapCexDepositIntentRow(result.rows[0])
+  }
+
   getDb().prepare(`
     INSERT INTO cex_deposit_intents (
       id, user_id, reference, exchange, pair_id, expected_amount_crypto, cex_uid, memo, status, expires_at, note, created_at, updated_at
@@ -5395,6 +5401,10 @@ export async function createCexDepositIntent(input: {
 
 export async function getCexDepositIntentByReference(reference: string): Promise<CexDepositIntent | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositIntentRow>('SELECT * FROM cex_deposit_intents WHERE reference = ? LIMIT 1', [reference])
+    return result.rows[0] ? mapCexDepositIntentRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM cex_deposit_intents WHERE reference = ? LIMIT 1').get(reference) as CexDepositIntentRow | undefined
   return row ? mapCexDepositIntentRow(row) : null
 }
@@ -5420,6 +5430,10 @@ export async function listCexDepositIntents(input?: { userId?: string; status?: 
     ORDER BY created_at DESC
     LIMIT ?
   `
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositIntentRow>(sql, [...args, limit])
+    return result.rows.map(mapCexDepositIntentRow)
+  }
   const rows = getDb().prepare(sql).all(...args, limit) as CexDepositIntentRow[]
   return rows.map(mapCexDepositIntentRow)
 }
@@ -5427,6 +5441,10 @@ export async function listCexDepositIntents(input?: { userId?: string; status?: 
 export async function markCexDepositIntentMatched(intentId: string, eventId: string): Promise<CexDepositIntent | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositIntentRow>(`UPDATE cex_deposit_intents SET status = 'matched', matched_event_id = ?, updated_at = ? WHERE id = ? RETURNING *`, [eventId, now, intentId])
+    return result.rows[0] ? mapCexDepositIntentRow(result.rows[0]) : null
+  }
   getDb().prepare(`
     UPDATE cex_deposit_intents
     SET status = 'matched', matched_event_id = ?, updated_at = ?
@@ -5442,12 +5460,20 @@ export async function markCexDepositIntentMatched(intentId: string, eventId: str
 // in the next watchdog cycle.
 export async function getLastScannedBlock(key: string): Promise<bigint | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ block_number: string }>('SELECT block_number FROM scanner_state WHERE key = ? LIMIT 1', [key])
+    return result.rows[0]?.block_number ? BigInt(result.rows[0].block_number) : null
+  }
   const row = getDb().prepare('SELECT block_number FROM scanner_state WHERE key = ?').get(key) as { block_number?: string } | undefined
   return row?.block_number ? BigInt(row.block_number) : null
 }
 
 export async function setLastScannedBlock(key: string, block: bigint): Promise<void> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('INSERT INTO scanner_state (key, block_number) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET block_number = excluded.block_number', [key, block.toString()])
+    return
+  }
   getDb().prepare(`
     INSERT INTO scanner_state (key, block_number) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET block_number = excluded.block_number
