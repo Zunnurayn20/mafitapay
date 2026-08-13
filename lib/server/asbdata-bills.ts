@@ -1,4 +1,5 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
+import { getDisabledDataPlans } from '@/lib/server/data'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
 import {
   loadPricingRules,
@@ -474,11 +475,13 @@ export async function getCachedAsbdataPlans(options?: { forceRefresh?: boolean }
 
 /** Vendor catalog (cached) with current pricing rules (uncached) applied. */
 export async function getPricedAsbdataPlans(options?: { forceRefresh?: boolean }): Promise<PricedAsbdataPlan[]> {
-  const [plans, rules] = await Promise.all([
+  const [plans, rules, disabled] = await Promise.all([
     getCachedAsbdataPlans(options),
     loadPricingRules(),
+    getDisabledDataPlans(),
   ])
-  return applyAsbdataPricing(plans, rules)
+  const disabledKeys = new Set(disabled.filter(plan => plan.vendor === 'asbdata').map(plan => `${plan.networkId}:${plan.planId}`))
+  return applyAsbdataPricing(plans, rules).filter(plan => !disabledKeys.has(`${plan.networkId}:${plan.planId}`))
 }
 
 /**

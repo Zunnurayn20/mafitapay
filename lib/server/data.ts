@@ -7090,6 +7090,75 @@ export async function deleteSessionByToken(token: string) {
   getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token)
 }
 
+export type DisabledDataPlanRecord = {
+  vendor: 'amigo' | 'asbdata' | 'bardetech'
+  networkId: number
+  planId: string
+  reason?: string
+  disabledAt: string
+  disabledBy?: string
+}
+
+async function ensureDisabledDataPlansReady() {
+  const sql = `
+    CREATE TABLE IF NOT EXISTS disabled_data_plans (
+      vendor TEXT NOT NULL,
+      network_id INTEGER NOT NULL,
+      plan_id TEXT NOT NULL,
+      reason TEXT,
+      disabled_at TEXT NOT NULL,
+      disabled_by TEXT,
+      PRIMARY KEY (vendor, network_id, plan_id)
+    )
+  `
+  if (isPostgresEnabled()) {
+    await queryPostgres(sql)
+    return
+  }
+  getDb().exec(sql)
+}
+
+export async function getDisabledDataPlans(): Promise<DisabledDataPlanRecord[]> {
+  await ensureDbReady()
+  await ensureDisabledDataPlansReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ vendor: DisabledDataPlanRecord['vendor']; network_id: number; plan_id: string; reason: string | null; disabled_at: string; disabled_by: string | null }>('SELECT * FROM disabled_data_plans ORDER BY vendor, network_id, plan_id')
+    return result.rows.map(row => ({ vendor: row.vendor, networkId: Number(row.network_id), planId: row.plan_id, reason: row.reason ?? undefined, disabledAt: row.disabled_at, disabledBy: row.disabled_by ?? undefined }))
+  }
+  const rows = getDb().prepare('SELECT * FROM disabled_data_plans ORDER BY vendor, network_id, plan_id').all() as Array<{ vendor: DisabledDataPlanRecord['vendor']; network_id: number; plan_id: string; reason: string | null; disabled_at: string; disabled_by: string | null }>
+  return rows.map(row => ({ vendor: row.vendor, networkId: Number(row.network_id), planId: row.plan_id, reason: row.reason ?? undefined, disabledAt: row.disabled_at, disabledBy: row.disabled_by ?? undefined }))
+}
+
+export async function setDataPlanDisabled(input: {
+  vendor: DisabledDataPlanRecord['vendor']
+  networkId: number
+  planId: string
+  disabled: boolean
+  reason?: string
+  disabledBy?: string
+}) {
+  await ensureDbReady()
+  await ensureDisabledDataPlansReady()
+  if (input.disabled) {
+    const now = new Date().toISOString()
+    const params = [input.vendor, input.networkId, input.planId, input.reason?.trim() || null, now, input.disabledBy ?? null]
+    if (isPostgresEnabled()) await queryPostgres('INSERT INTO disabled_data_plans (vendor, network_id, plan_id, reason, disabled_at, disabled_by) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(vendor, network_id, plan_id) DO UPDATE SET reason = excluded.reason, disabled_at = excluded.disabled_at, disabled_by = excluded.disabled_by', params)
+    else getDb().prepare('INSERT INTO disabled_data_plans (vendor, network_id, plan_id, reason, disabled_at, disabled_by) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(vendor, network_id, plan_id) DO UPDATE SET reason = excluded.reason, disabled_at = excluded.disabled_at, disabled_by = excluded.disabled_by').run(...params)
+  } else if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ?', [input.vendor, input.networkId, input.planId])
+  } else {
+    getDb().prepare('DELETE FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ?').run(input.vendor, input.networkId, input.planId)
+  }
+  return getDisabledDataPlans()
+}
+
+export async function isDataPlanDisabled(vendor: DisabledDataPlanRecord['vendor'], networkId: number, planId: string) {
+  await ensureDbReady()
+  await ensureDisabledDataPlansReady()
+  if (isPostgresEnabled()) return (await queryPostgres('SELECT 1 FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ? LIMIT 1', [vendor, networkId, planId])).rows.length > 0
+  return Boolean(getDb().prepare('SELECT 1 FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ? LIMIT 1').get(vendor, networkId, planId))
+}
+
 export async function deleteSessionsByUserId(userId: string) {
   await ensureDbReady()
   if (isPostgresEnabled()) {

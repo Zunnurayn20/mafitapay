@@ -99,6 +99,13 @@ export default async function AdminPricingPage() {
             </a>
             .
           </p>
+          <p>
+            Plans that fail provider delivery can be hidden and blocked without deleting them in{' '}
+            <a href="/admin/pricing/disabled-plans" className="font-semibold text-[#8c6b31] hover:underline">
+              Disabled data plans
+            </a>
+            .
+          </p>
         </div>
       </AdminPageCard>
     </div>
