@@ -1153,6 +1153,34 @@ async function persistCryptoMarketSnapshots(assets: CryptoAsset[]) {
   if (assets.length === 0) return
 
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      for (const asset of assets) {
+        const marketPriceUsd = Number(asset.marketPriceUsd)
+        const marketRate = Number(asset.marketRate)
+        const buyRate = Number(asset.buyRate)
+        const sellRate = Number(asset.sellRate)
+        const change24h = Number(asset.change24h)
+
+        if (!Number.isFinite(marketPriceUsd) || marketPriceUsd <= 0) continue
+        if (!Number.isFinite(marketRate) || marketRate <= 0) continue
+        if (!Number.isFinite(buyRate) || !Number.isFinite(sellRate)) continue
+
+        await queryPostgresClient(client, `
+          UPDATE crypto_pairs
+          SET market_price_source = ?, market_price_usd = ?, market_price_updated_at = ?,
+              market_rate = ?, buy_rate = ?, sell_rate = ?, change_24h = ?, updated_at = ?
+          WHERE id = ?
+        `, [
+          asset.marketSnapshotSource ?? asset.pricingSource ?? 'seed', marketPriceUsd,
+          asset.marketPriceUpdatedAt ?? null, marketRate, buyRate, sellRate,
+          Number.isFinite(change24h) ? change24h : 0, now, asset.id,
+        ])
+      }
+    })
+    return
+  }
   const db = getDb()
   const now = new Date().toISOString()
   const statement = db.prepare(`
@@ -6545,6 +6573,23 @@ export async function updateUserPassword(userId: string, password: string) {
 
 export async function insertNotification(notification: NotificationRecord) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, `
+        INSERT INTO notifications (id, user_id, title, message, type, read, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [notification.id, notification.userId, notification.title, notification.message,
+        notification.type, notification.read, notification.createdAt])
+      await queryPostgresClient(client, `
+        DELETE FROM notifications
+        WHERE id IN (
+          SELECT id FROM notifications
+          WHERE user_id = ? ORDER BY created_at DESC OFFSET 20
+        )
+      `, [notification.userId])
+    })
+    return
+  }
   const db = getDb()
   db.exec('BEGIN')
 
@@ -6581,6 +6626,12 @@ export async function insertNotification(notification: NotificationRecord) {
 
 export async function getNotificationsForUser(userId: string): Promise<NotificationRecord[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<NotificationRow>(
+      'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC', [userId]
+    )
+    return result.rows.map(mapNotificationRow)
+  }
   const rows = getDb()
     .prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId) as NotificationRow[]
@@ -6595,6 +6646,16 @@ export async function upsertPushToken(input: {
   await ensureDbReady()
   const now = new Date().toISOString()
 
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO push_tokens (id, user_id, token, platform, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, token) DO UPDATE SET
+        platform = excluded.platform, last_seen_at = excluded.last_seen_at
+    `, [`pt_${randomBytes(6).toString('hex')}`, input.userId, input.token, input.platform, now, now])
+    return
+  }
+
   getDb()
     .prepare(`
       INSERT INTO push_tokens (id, user_id, token, platform, created_at, last_seen_at)
@@ -6608,6 +6669,12 @@ export async function upsertPushToken(input: {
 
 export async function getPushTokensByUserId(userId: string): Promise<PushTokenRecord[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PushTokenRow>(
+      'SELECT * FROM push_tokens WHERE user_id = ? ORDER BY last_seen_at DESC', [userId]
+    )
+    return result.rows.map(mapPushTokenRow)
+  }
   const rows = getDb()
     .prepare('SELECT * FROM push_tokens WHERE user_id = ? ORDER BY last_seen_at DESC')
     .all(userId) as PushTokenRow[]
@@ -6616,6 +6683,10 @@ export async function getPushTokensByUserId(userId: string): Promise<PushTokenRe
 
 export async function deletePushToken(userId: string, token: string): Promise<void> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM push_tokens WHERE user_id = ? AND token = ?', [userId, token])
+    return
+  }
   getDb().prepare('DELETE FROM push_tokens WHERE user_id = ? AND token = ?').run(userId, token)
 }
 
@@ -6626,6 +6697,22 @@ export async function listRecentNotifications(limit = 80): Promise<Array<Notific
 }>> {
   await ensureDbReady()
   const safeLimit = Math.max(1, Math.min(200, limit))
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<NotificationRow & {
+      user_name?: string | null
+      user_email?: string | null
+      user_phone?: string | null
+    }>(`
+      SELECT n.id, n.user_id, n.title, n.message, n.type, n.read, n.created_at,
+             u.name AS user_name, u.email AS user_email, u.phone AS user_phone
+      FROM notifications n LEFT JOIN users u ON u.id = n.user_id
+      ORDER BY n.created_at DESC LIMIT ?
+    `, [safeLimit])
+    return result.rows.map(row => ({
+      ...mapNotificationRow(row), userName: row.user_name ?? undefined,
+      userEmail: row.user_email ?? undefined, userPhone: row.user_phone ?? undefined,
+    }))
+  }
   const rows = getDb()
     .prepare(`
       SELECT
@@ -6660,9 +6747,9 @@ export async function listRecentNotifications(limit = 80): Promise<Array<Notific
 
 export async function getCryptoAssets(options?: { forceRefresh?: boolean; liveOnly?: boolean }): Promise<CryptoAsset[]> {
   await ensureDbReady()
-  const rows = getDb()
-    .prepare('SELECT * FROM crypto_pairs WHERE is_active = 1')
-    .all() as CryptoPairRow[]
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE is_active = ?', [true])).rows
+    : getDb().prepare('SELECT * FROM crypto_pairs WHERE is_active = 1').all() as CryptoPairRow[]
   const persistedAssets = rows.map(mapCryptoPairRow)
   const shouldRefresh = options?.forceRefresh === true || persistedAssets.some(asset =>
     asset.marketSnapshotSource !== 'live' || !isCryptoMarketSnapshotFresh(asset.marketPriceUpdatedAt)
@@ -6688,9 +6775,9 @@ export async function getCryptoAssets(options?: { forceRefresh?: boolean; liveOn
 
 export async function getCryptoAssetById(id: string): Promise<CryptoAsset | null> {
   await ensureDbReady()
-  const row = getDb()
-    .prepare('SELECT * FROM crypto_pairs WHERE id = ? LIMIT 1')
-    .get(id) as CryptoPairRow | undefined
+  const row = isPostgresEnabled()
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE id = ? LIMIT 1', [id])).rows[0]
+    : getDb().prepare('SELECT * FROM crypto_pairs WHERE id = ? LIMIT 1').get(id) as CryptoPairRow | undefined
   if (!row) return null
   const persistedAsset = mapCryptoPairRow(row)
   const [asset] = persistedAsset.marketSnapshotSource === 'live' && isCryptoMarketSnapshotFresh(persistedAsset.marketPriceUpdatedAt)
@@ -6702,9 +6789,9 @@ export async function getCryptoAssetById(id: string): Promise<CryptoAsset | null
 
 export async function getCryptoAssetBySymbol(symbol: string): Promise<CryptoAsset | null> {
   await ensureDbReady()
-  const row = getDb()
-    .prepare('SELECT * FROM crypto_pairs WHERE symbol = ? AND is_active = 1 LIMIT 1')
-    .get(symbol) as CryptoPairRow | undefined
+  const row = isPostgresEnabled()
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE symbol = ? AND is_active = ?', [symbol, true])).rows[0]
+    : getDb().prepare('SELECT * FROM crypto_pairs WHERE symbol = ? AND is_active = 1 LIMIT 1').get(symbol) as CryptoPairRow | undefined
   if (!row) return null
   const persistedAsset = mapCryptoPairRow(row)
   const [asset] = persistedAsset.marketSnapshotSource === 'live' && isCryptoMarketSnapshotFresh(persistedAsset.marketPriceUpdatedAt)
@@ -6716,9 +6803,9 @@ export async function getCryptoAssetBySymbol(symbol: string): Promise<CryptoAsse
 
 export async function refreshCryptoMarketSnapshots(): Promise<CryptoAsset[]> {
   await ensureDbReady()
-  const rows = getDb()
-    .prepare('SELECT * FROM crypto_pairs WHERE is_active = 1')
-    .all() as CryptoPairRow[]
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE is_active = ?', [true])).rows
+    : getDb().prepare('SELECT * FROM crypto_pairs WHERE is_active = 1').all() as CryptoPairRow[]
   return await refreshCryptoAssetsSingleFlight(rows.map(mapCryptoPairRow))
 }
 
@@ -7773,6 +7860,7 @@ export async function upsertNetworkProviders(providers: NetworkProvider[]) {
 
 export async function upsertCryptoAssets(assets: CryptoAsset[]) {
   await ensureDbReady()
+  if (isPostgresEnabled()) return upsertCryptoAssetsPostgres(assets)
   const db = getDb()
   const now = new Date().toISOString()
   const statement = db.prepare(`
@@ -7876,6 +7964,57 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
     throw error
   }
 
+  return getCryptoAssets()
+}
+
+async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
+  const now = new Date().toISOString()
+  const sql = `
+    INSERT INTO crypto_pairs (
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name, symbol = excluded.symbol, network = excluded.network, icon = excluded.icon,
+      market_source_id = excluded.market_source_id, market_price_source = excluded.market_price_source,
+      market_price_usd = excluded.market_price_usd, market_price_updated_at = excluded.market_price_updated_at,
+      market_rate = excluded.market_rate, buy_rate = excluded.buy_rate, sell_rate = excluded.sell_rate,
+      buy_spread_bps = excluded.buy_spread_bps, sell_spread_bps = excluded.sell_spread_bps,
+      buy_margin_ngn_per_usd = excluded.buy_margin_ngn_per_usd, sell_margin_ngn_per_usd = excluded.sell_margin_ngn_per_usd,
+      buy_network_fee_ngn = excluded.buy_network_fee_ngn, sell_network_fee_ngn = excluded.sell_network_fee_ngn,
+      quote_ttl_seconds = excluded.quote_ttl_seconds, is_active = excluded.is_active,
+      base_execution_enabled = excluded.base_execution_enabled, execution_rail = excluded.execution_rail,
+      routed_to_chain = excluded.routed_to_chain, routed_to_token = excluded.routed_to_token,
+      routed_decimals = excluded.routed_decimals, routed_address_family = excluded.routed_address_family,
+      minimum_buy_ngn = excluded.minimum_buy_ngn, max_quote_drift_percent = excluded.max_quote_drift_percent,
+      change_24h = excluded.change_24h, updated_at = excluded.updated_at
+  `
+  await withPostgresTransaction(async client => {
+    for (const asset of assets) {
+      const marketSourceId = asset.marketSourceId?.trim() || getDefaultCryptoMarketSourceId(asset.symbol)
+      const marketRate = Number.isFinite(asset.marketRate) && asset.marketRate > 0 ? asset.marketRate : 0
+      const marketPriceUsd = Number.isFinite(asset.marketPriceUsd) && (asset.marketPriceUsd ?? 0) > 0 ? Number(asset.marketPriceUsd) : 0
+      const buyMargin = Number.isFinite(asset.buyMarginNgnPerUsd) ? Math.max(0, asset.buyMarginNgnPerUsd) : DEFAULT_USD_MARGIN_NGN
+      const sellMargin = Number.isFinite(asset.sellMarginNgnPerUsd) ? Math.max(0, asset.sellMarginNgnPerUsd) : DEFAULT_USD_MARGIN_NGN
+      const buyNetworkFeeNgn = asset.buyNetworkFeeNgn != null && Number.isFinite(asset.buyNetworkFeeNgn)
+        ? Math.max(0, asset.buyNetworkFeeNgn) : getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
+      const executionRail = asset.executionRail ?? getConfigurableAssetExecutionRail(asset)
+      assertSupportedAssetExecutionRail(asset, executionRail)
+      const routedConfig = executionRail === 'routed_treasury'
+        ? getRoutedTreasuryPairConfigForAsset({ ...asset, executionRail }) : null
+      await queryPostgresClient(client, sql, [
+        asset.id, asset.symbol, asset.name, asset.network, asset.icon, marketSourceId,
+        asset.marketSnapshotSource ?? asset.pricingSource ?? 'seed', asset.marketPriceUsd ?? null,
+        asset.marketPriceUpdatedAt ?? null, marketRate,
+        marketRate > 0 ? computeBuyRate(marketPriceUsd, marketRate, buyMargin) : 0,
+        marketRate > 0 ? computeSellRate(marketPriceUsd, marketRate, sellMargin) : 0,
+        0, 0, buyMargin, sellMargin, buyNetworkFeeNgn, 0, asset.quoteTtlSeconds,
+        asset.isActive !== false, asset.baseExecutionEnabled === true, executionRail ?? null,
+        routedConfig?.toChain ?? null, routedConfig?.toToken ?? null, routedConfig?.decimals ?? null,
+        routedConfig?.addressFamily ?? null, routedConfig?.minimumBuyNgn ?? null,
+        routedConfig?.maxQuoteDriftPercent ?? null, asset.change24h, now, now,
+      ])
+    }
+  })
   return getCryptoAssets()
 }
 
@@ -8315,6 +8454,10 @@ export async function verifySensitiveActionAuthorization(
 
 export async function markNotificationsReadByUserId(userId: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE notifications SET read = ? WHERE user_id = ?', [true, userId])
+    return getNotificationsForUser(userId)
+  }
   getDb().prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(userId)
   return getNotificationsForUser(userId)
 }
@@ -8328,6 +8471,17 @@ export async function insertAuditLog(input: {
   metadata?: Record<string, unknown>
 }) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO audit_logs (id, user_id, actor_user_id, action, entity_type, entity_id, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `audit_${randomBytes(6).toString('hex')}`, input.userId ?? null, input.actorUserId ?? null,
+      input.action, input.entityType, input.entityId, input.metadata ? JSON.stringify(input.metadata) : null,
+      new Date().toISOString(),
+    ])
+    return
+  }
   getDb().prepare(`
     INSERT INTO audit_logs (id, user_id, actor_user_id, action, entity_type, entity_id, metadata, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
