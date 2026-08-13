@@ -4670,6 +4670,17 @@ export async function recordProviderEvent(input: {
   payload?: Record<string, unknown>
 }): Promise<{ event: ProviderEvent; inserted: boolean }> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const id = `pe_${randomBytes(6).toString('hex')}`
+    const now = new Date().toISOString()
+    const inserted = await queryPostgres<ProviderEventRow>(`
+      INSERT INTO provider_events (id, external_event_id, provider, reference, status, payload, failure_reason, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(external_event_id) DO NOTHING RETURNING *
+    `, [id, input.externalEventId, input.provider, input.reference, input.status, input.payload ? JSON.stringify(input.payload) : null, input.failureReason ?? null, now])
+    const event = inserted.rows[0] ?? (await queryPostgres<ProviderEventRow>('SELECT * FROM provider_events WHERE external_event_id = ? LIMIT 1', [input.externalEventId])).rows[0]
+    if (!event) throw new Error('Unable to persist provider event')
+    return { event: mapProviderEventRow(event), inserted: inserted.rows.length > 0 }
+  }
   const db = getDb()
   const id = `pe_${randomBytes(6).toString('hex')}`
   const now = new Date().toISOString()
@@ -4704,6 +4715,10 @@ export async function recordProviderEvent(input: {
 
 export async function markProviderEventProcessed(externalEventId: string): Promise<ProviderEvent | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<ProviderEventRow>('UPDATE provider_events SET processed_at = ? WHERE external_event_id = ? RETURNING *', [new Date().toISOString(), externalEventId])
+    return result.rows[0] ? mapProviderEventRow(result.rows[0]) : null
+  }
   const db = getDb()
   const processedAt = new Date().toISOString()
   db.prepare('UPDATE provider_events SET processed_at = ? WHERE external_event_id = ?')
@@ -4715,6 +4730,10 @@ export async function markProviderEventProcessed(externalEventId: string): Promi
 
 export async function requeueProviderEvent(externalEventId: string): Promise<ProviderEvent | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<ProviderEventRow>('UPDATE provider_events SET processed_at = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE external_event_id = ? RETURNING *', [externalEventId])
+    return result.rows[0] ? mapProviderEventRow(result.rows[0]) : null
+  }
   const db = getDb()
   db.prepare('UPDATE provider_events SET processed_at = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE external_event_id = ?')
     .run(externalEventId)
@@ -4744,6 +4763,14 @@ export async function listProviderEvents(input?: { status?: string; provider?: s
     args.push(`%${input.reference.trim()}%`)
   }
 
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<ProviderEventRow>(`
+      SELECT * FROM provider_events ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC LIMIT ?
+    `, [...args, limit])
+    return result.rows.map(mapProviderEventRow)
+  }
+
   const rows = getDb()
     .prepare(`
       SELECT * FROM provider_events
@@ -4757,6 +4784,10 @@ export async function listProviderEvents(input?: { status?: string; provider?: s
 
 export async function getProviderEventsByReference(reference: string): Promise<ProviderEvent[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<ProviderEventRow>('SELECT * FROM provider_events WHERE reference = ? ORDER BY created_at DESC', [reference])
+    return result.rows.map(mapProviderEventRow)
+  }
   const rows = getDb()
     .prepare('SELECT * FROM provider_events WHERE reference = ? ORDER BY created_at DESC')
     .all(reference) as ProviderEventRow[]
