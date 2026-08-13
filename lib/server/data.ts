@@ -8052,6 +8052,10 @@ export async function upsertBankDirectory(entries: BankDirectoryEntry[]) {
 
 export async function getLatestKycSubmissionByUserId(userId: string): Promise<KycSubmission | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<KycSubmissionRow>('SELECT * FROM kyc_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId])
+    return result.rows[0] ? mapKycSubmissionRow(result.rows[0]) : null
+  }
   const row = getDb()
     .prepare('SELECT * FROM kyc_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1')
     .get(userId) as KycSubmissionRow | undefined
@@ -8060,6 +8064,14 @@ export async function getLatestKycSubmissionByUserId(userId: string): Promise<Ky
 
 export async function getLatestSensitiveKycIdentityByUserId(userId: string): Promise<{ submissionId: string; documentType: 'bvn' | 'nin'; documentNumber: string } | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<Pick<KycSensitiveIdentityRow, 'submission_id' | 'document_type' | 'encrypted_document_number'>>(`
+      SELECT ks.submission_id, ks.document_type, ks.encrypted_document_number FROM kyc_sensitive_identities ks
+      INNER JOIN kyc_submissions k ON k.id = ks.submission_id WHERE ks.user_id = ? ORDER BY k.created_at DESC LIMIT 1
+    `, [userId])
+    const row = result.rows[0]
+    return row ? { submissionId: row.submission_id, documentType: row.document_type, documentNumber: decryptSensitiveValue(row.encrypted_document_number) } : null
+  }
   const row = getDb().prepare(`
     SELECT ks.submission_id, ks.document_type, ks.encrypted_document_number
     FROM kyc_sensitive_identities ks
@@ -8080,6 +8092,10 @@ export async function getLatestSensitiveKycIdentityByUserId(userId: string): Pro
 
 export async function getKycSubmissionByDocumentUrl(documentUrl: string): Promise<KycSubmission | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<KycSubmissionRow>('SELECT * FROM kyc_submissions WHERE document_url = ? ORDER BY created_at DESC LIMIT 1', [documentUrl])
+    return result.rows[0] ? mapKycSubmissionRow(result.rows[0]) : null
+  }
   const row = getDb()
     .prepare('SELECT * FROM kyc_submissions WHERE document_url = ? ORDER BY created_at DESC LIMIT 1')
     .get(documentUrl) as KycSubmissionRow | undefined
@@ -8088,6 +8104,10 @@ export async function getKycSubmissionByDocumentUrl(documentUrl: string): Promis
 
 export async function listKycSubmissions(): Promise<KycSubmission[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<KycSubmissionRow>('SELECT * FROM kyc_submissions ORDER BY created_at DESC')
+    return result.rows.map(mapKycSubmissionRow)
+  }
   const rows = getDb()
     .prepare('SELECT * FROM kyc_submissions ORDER BY created_at DESC')
     .all() as KycSubmissionRow[]
@@ -8104,6 +8124,26 @@ export async function createKycSubmission(input: {
   fileSize?: number
 }): Promise<KycSubmission> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    const id = `kyc_${randomBytes(6).toString('hex')}`
+    const storedDocumentNumber = (input.documentType === 'bvn' || input.documentType === 'nin') ? maskDocumentNumber(input.documentType, input.documentNumber.trim()) : input.documentNumber.trim()
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, `
+        INSERT INTO kyc_submissions (id, user_id, document_type, document_number, document_url, document_name, mime_type, file_size, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, input.userId, input.documentType, storedDocumentNumber, input.documentUrl.trim(), input.documentName?.trim() || null, input.mimeType?.trim() || null, input.fileSize ?? null, 'pending', now, now])
+      if (input.documentType === 'bvn' || input.documentType === 'nin') {
+        const encrypted = encryptSensitiveValue(input.documentNumber.trim())
+        await queryPostgresClient(client, `INSERT INTO kyc_sensitive_identities (submission_id, user_id, document_type, encrypted_document_number, key_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [id, input.userId, input.documentType, encrypted.payload, encrypted.keyVersion, now, now])
+      }
+      await queryPostgresClient(client, 'UPDATE users SET "kycStatus" = ?, tier = ? WHERE id = ?', ['pending', 'basic', input.userId])
+    })
+    const submission = await getLatestKycSubmissionByUserId(input.userId)
+    if (!submission) throw new Error('Unable to create KYC submission')
+    await insertAuditLog({ userId: input.userId, actorUserId: input.userId, action: 'kyc.submitted', entityType: 'kyc_submission', entityId: submission.id, metadata: { documentType: submission.documentType, documentName: submission.documentName, documentUrl: submission.documentUrl } })
+    return submission
+  }
   const db = getDb()
   const now = new Date().toISOString()
   const id = `kyc_${randomBytes(6).toString('hex')}`
@@ -8180,6 +8220,19 @@ export async function reviewKycSubmission(input: {
   notes?: string
 }): Promise<KycSubmission | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    const updated = await withPostgresTransaction(async client => {
+      const selected = await queryPostgresClient<KycSubmissionRow>(client, 'SELECT * FROM kyc_submissions WHERE id = ? LIMIT 1 FOR UPDATE', [input.submissionId])
+      const row = selected.rows[0]
+      if (!row) return null
+      const result = await queryPostgresClient<KycSubmissionRow>(client, `UPDATE kyc_submissions SET status = ?, notes = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ? RETURNING *`, [input.status, input.notes?.trim() || null, input.reviewerUserId, now, now, input.submissionId])
+      await queryPostgresClient(client, 'UPDATE users SET "kycStatus" = ?, tier = ? WHERE id = ?', [input.status === 'approved' ? 'verified' : 'rejected', input.status === 'approved' ? 'verified' : 'basic', row.user_id])
+      return result.rows[0] ? mapKycSubmissionRow(result.rows[0]) : null
+    })
+    if (updated) await insertAuditLog({ userId: updated.userId, actorUserId: input.reviewerUserId, action: input.status === 'approved' ? 'kyc.approved' : 'kyc.rejected', entityType: 'kyc_submission', entityId: updated.id, metadata: { notes: input.notes?.trim() || undefined } })
+    return updated
+  }
   const db = getDb()
   const now = new Date().toISOString()
 
