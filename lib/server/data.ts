@@ -3715,6 +3715,28 @@ export async function getSessionByToken(token: string): Promise<SessionRecord | 
 
 export async function getWalletByUserId(userId: string): Promise<Wallet | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const walletResult = await queryPostgres<WalletRow>('SELECT * FROM wallets WHERE user_id = ? LIMIT 1', [userId])
+    const row = walletResult.rows[0]
+    if (!row) return null
+    const balancesResult = await queryPostgres<{ asset: string; account: 'available' | 'locked'; balance: number }>(`
+      SELECT COALESCE(asset, 'NGN') AS asset, account,
+        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS balance
+      FROM ledger_entries WHERE user_id = ? GROUP BY asset, account
+    `, [userId])
+    const balances = emptyAssetBalances()
+    for (const balance of balancesResult.rows) {
+      const asset: AssetBalanceKey = balance.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
+      if (balance.account === 'available') balances[asset].available = Number(balance.balance)
+      if (balance.account === 'locked') balances[asset].locked = Number(balance.balance)
+    }
+    const persistedBalance = Number(row.balance)
+    const persistedLockedBalance = Number(row.locked_balance)
+    if (persistedBalance !== balances.NGN.available || persistedLockedBalance !== balances.NGN.locked) {
+      await queryPostgres('UPDATE wallets SET balance = ?, locked_balance = ? WHERE user_id = ?', [balances.NGN.available, balances.NGN.locked, userId])
+    }
+    return buildWalletFromRow(row, balances)
+  }
   const row = getDb()
     .prepare('SELECT * FROM wallets WHERE user_id = ? LIMIT 1')
     .get(userId) as WalletRow | undefined
@@ -3731,6 +3753,23 @@ export async function getWalletByUserId(userId: string): Promise<Wallet | null> 
 
 export async function getTransactionsForUser(userId: string): Promise<Transaction[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>('SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC', [userId])
+    return result.rows.map(row => ({
+      id: row.id,
+      type: row.type as Transaction['type'],
+      status: row.status as Transaction['status'],
+      amount: Number(row.amount),
+      fee: Number(row.fee),
+      description: row.description,
+      reference: row.reference,
+      recipient: row.recipient ?? undefined,
+      narration: row.narration ?? undefined,
+      createdAt: row.created_at,
+      icon: row.icon ?? undefined,
+      metadata: parseJson(row.metadata, undefined),
+    }))
+  }
   const rows = getDb()
     .prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId) as TransactionRow[]
@@ -3753,6 +3792,16 @@ export async function getTransactionsForUser(userId: string): Promise<Transactio
 
 export async function getTransactionById(userId: string, transactionId: string): Promise<Transaction | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>('SELECT * FROM transactions WHERE id = ? AND user_id = ? LIMIT 1', [transactionId, userId])
+    const row = result.rows[0]
+    if (!row) return null
+    return {
+      id: row.id, type: row.type as Transaction['type'], status: row.status as Transaction['status'], amount: Number(row.amount), fee: Number(row.fee),
+      description: row.description, reference: row.reference, recipient: row.recipient ?? undefined, narration: row.narration ?? undefined,
+      createdAt: row.created_at, icon: row.icon ?? undefined, metadata: parseJson(row.metadata, undefined),
+    }
+  }
   const row = getDb()
     .prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? LIMIT 1')
     .get(transactionId, userId) as TransactionRow | undefined
