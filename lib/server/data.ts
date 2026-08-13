@@ -3736,6 +3736,27 @@ export async function deletePricingRule(id: string): Promise<boolean> {
 
 export async function getReferralOverviewByUserId(userId: string): Promise<ReferralOverview | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const userResult = await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [userId])
+    const user = userResult.rows[0]
+    if (!user) return null
+    const [referredResult, totalResult, bonusResult] = await Promise.all([
+      queryPostgres<UserRow>('SELECT * FROM users WHERE "referredByUserId" = ? ORDER BY "createdAt" DESC', [userId]),
+      queryPostgres<{ total: string }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE user_id = ? AND type = ? AND status = ?`, [userId, 'referral_bonus', 'success']),
+      queryPostgres<Pick<TransactionRow, 'amount' | 'metadata'>>(`SELECT amount, metadata FROM transactions WHERE user_id = ? AND type = ? AND status = ? ORDER BY created_at DESC`, [userId, 'referral_bonus', 'success']),
+    ])
+    const bonusByUser = new Map<string, number>()
+    for (const row of bonusResult.rows) {
+      const metadata = readReferralBonusMetadata(parseJson(row.metadata, undefined as Record<string, unknown> | undefined))
+      if (metadata.referredUserId && metadata.role === 'inviter') bonusByUser.set(metadata.referredUserId, (bonusByUser.get(metadata.referredUserId) ?? 0) + Number(row.amount))
+    }
+    const entries = await Promise.all(referredResult.rows.map(async row => {
+      const count = await queryPostgres<{ count: string }>(`SELECT COUNT(*) AS count FROM transactions WHERE user_id = ? AND status = ? AND type NOT IN ('referral_bonus', 'reward_bonus')`, [row.id, 'success'])
+      const earnedAmount = bonusByUser.get(row.id) ?? 0
+      return { userId: row.id, name: row.name, joinedAt: row.referredAt ?? row.createdAt, transactionCount: Number(count.rows[0]?.count ?? 0), earnedAmount, rewardPaid: earnedAmount > 0 }
+    }))
+    return { referralCode: user.referralCode, totalReferrals: entries.length, totalEarned: Number(totalResult.rows[0]?.total ?? 0), entries }
+  }
   const db = getDb()
   const user = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(userId) as UserRow | undefined
   if (!user) return null
