@@ -6877,6 +6877,16 @@ export async function updateUserAccountStatus(input: {
   reason?: string
 }) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const current = await getUserById(input.userId)
+    if (!current) return null
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'UPDATE users SET "accountStatus" = ? WHERE id = ?', [input.status, input.userId])
+      if (input.status === 'deactivated') await queryPostgresClient(client, 'DELETE FROM sessions WHERE user_id = ?', [input.userId])
+    })
+    await insertAuditLog({ userId: input.userId, actorUserId: input.actorUserId ?? input.userId, action: input.status === 'deactivated' ? 'account.deactivated' : 'account.reactivated', entityType: 'user', entityId: input.userId, metadata: input.reason ? { reason: input.reason } : undefined })
+    return getUserById(input.userId)
+  }
   const db = getDb()
   const current = await getUserById(input.userId)
   if (!current) return null
@@ -6917,6 +6927,12 @@ export async function updateUserProfile(userId: string, updates: { name?: string
   const phone = typeof updates.phone === 'string' && updates.phone.trim() ? updates.phone.trim() : current.phone
   const handle = name !== current.name ? buildHandle(name, current.email) : current.handle
 
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE users SET name = ?, phone = ?, handle = ? WHERE id = ?', [name, phone, handle, userId])
+    await insertAuditLog({ userId, actorUserId: userId, action: 'profile.updated', entityType: 'user', entityId: userId, metadata: { name, phone } })
+    return getUserById(userId)
+  }
+
   getDb()
     .prepare('UPDATE users SET name = ?, phone = ?, handle = ? WHERE id = ?')
     .run(name, phone, handle, userId)
@@ -6936,6 +6952,11 @@ export async function updateUserProfile(userId: string, updates: { name?: string
 export async function updateUserPassword(userId: string, password: string) {
   await ensureDbReady()
   const { passwordHash, passwordSalt } = createPasswordRecord(password)
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE users SET "passwordHash" = ?, "passwordSalt" = ? WHERE id = ?', [passwordHash, passwordSalt, userId])
+    await insertAuditLog({ userId, actorUserId: userId, action: 'security.password_changed', entityType: 'user', entityId: userId })
+    return
+  }
   getDb()
     .prepare('UPDATE users SET passwordHash = ?, passwordSalt = ? WHERE id = ?')
     .run(passwordHash, passwordSalt, userId)
