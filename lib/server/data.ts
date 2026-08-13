@@ -4564,6 +4564,51 @@ export async function resolvePendingTransaction(
   outcome: 'success' | 'failed'
 ): Promise<{ wallet: Wallet; transaction: Transaction } | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const settled = await withPostgresTransaction(async client => {
+      const walletResult = await queryPostgresClient<WalletRow>(client, 'SELECT * FROM wallets WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+      const transactionResult = await queryPostgresClient<TransactionRow>(client, 'SELECT * FROM transactions WHERE id = ? AND user_id = ? LIMIT 1 FOR UPDATE', [transactionId, userId])
+      const walletRow = walletResult.rows[0]
+      const transactionRow = transactionResult.rows[0]
+      if (!walletRow || !transactionRow) return null
+      if (transactionRow.status !== 'pending') return { wallet: null, transaction: mapTransactionRow(transactionRow) }
+      const balancesResult = await queryPostgresClient<{ asset: string; account: string; balance: string }>(client, `SELECT COALESCE(asset, 'NGN') AS asset, account, COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS balance FROM ledger_entries WHERE user_id = ? GROUP BY COALESCE(asset, 'NGN'), account`, [userId])
+      const balances: AssetBalanceSummary = { NGN: { available: 0, locked: 0 }, RESERVE: { available: 0, locked: 0 } }
+      for (const row of balancesResult.rows) {
+        const asset = row.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
+        if (row.account === 'available' || row.account === 'locked') balances[asset][row.account] = Number(row.balance)
+      }
+      const amount = Math.abs(Number(transactionRow.amount))
+      const metadata = parseJson(transactionRow.metadata, {} as Record<string, unknown>)
+      const asset = metadata.walletAsset === 'RESERVE' ? 'RESERVE' : 'NGN'
+      const flow = typeof metadata.settlementFlow === 'string' ? metadata.settlementFlow : (transactionRow.type === 'p2p_withdrawal' || transactionRow.type === 'withdrawal' ? 'release_locked' : transactionRow.type === 'deposit' ? 'credit_on_success' : 'none')
+      if (flow !== 'release_locked' && flow !== 'credit_on_success') throw new Error(`Unsupported settlement flow for transaction ${transactionRow.type}`)
+      const kind = typeof metadata.settlementKind === 'string' ? metadata.settlementKind : 'generic'
+      const now = new Date().toISOString()
+      if (flow === 'release_locked') {
+        balances[asset].locked -= amount
+        await queryPostgresClient(client, 'INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [`ledger_${randomBytes(6).toString('hex')}`, userId, transactionId, asset, 'locked', 'debit', amount, `${kind} settlement for ${transactionRow.description}`, now])
+        if (outcome === 'failed') {
+          balances[asset].available += amount
+          await queryPostgresClient(client, 'INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [`ledger_${randomBytes(6).toString('hex')}`, userId, transactionId, asset, 'available', 'credit', amount, `${kind} failed refund for ${transactionRow.description}`, now])
+        }
+      } else if (outcome === 'success') {
+        balances[asset].available += amount
+        await queryPostgresClient(client, 'INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [`ledger_${randomBytes(6).toString('hex')}`, userId, transactionId, asset, 'available', 'credit', amount, `${kind} settlement for ${transactionRow.description}`, now])
+      }
+      if (balances[asset].available < 0 || balances[asset].locked < 0) throw new Error('Invalid wallet state during settlement')
+      await queryPostgresClient(client, 'UPDATE wallets SET balance = ?, locked_balance = ? WHERE user_id = ?', [balances.NGN.available, balances.NGN.locked, userId])
+      const updated = await queryPostgresClient<TransactionRow>(client, 'UPDATE transactions SET status = ? WHERE id = ? AND user_id = ? RETURNING *', [outcome, transactionId, userId])
+      return { wallet: buildWalletFromRow(walletRow, balances), transaction: mapTransactionRow(updated.rows[0] ?? transactionRow) }
+    })
+    if (!settled) return null
+    if (settled.wallet === null) {
+      const wallet = await getWalletByUserId(userId)
+      return wallet ? { wallet, transaction: settled.transaction } : null
+    }
+    await maybeApplyFirstSuccessfulTransactionRewards(userId, settled.transaction)
+    return settled
+  }
   const db = getDb()
   db.exec('BEGIN')
 
