@@ -14,9 +14,10 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
   const [form, setForm] = useState<{ vendor: DisabledPlan['vendor']; networkId: string; category: string; planId: string; reason: string }>({ vendor: 'asbdata', networkId: '', category: '', planId: '', reason: '' })
   const vendorPlans = catalog.filter(plan => plan.vendor === form.vendor)
   const networks = Array.from(new Map(vendorPlans.map(plan => [plan.networkId, plan.network])).entries())
-  const networkPlans = vendorPlans.filter(plan => String(plan.networkId) === form.networkId)
-  const categories = Array.from(new Set(networkPlans.map(plan => plan.category).filter(Boolean))).sort()
+  const networkPlans = vendorPlans.filter(plan => !form.networkId || String(plan.networkId) === form.networkId)
+  const categories = Array.from(new Set(vendorPlans.map(plan => plan.category).filter(Boolean))).sort()
   const availablePlans = networkPlans.filter(plan => !form.category || plan.category === form.category)
+  const selectedPlan = availablePlans.find(plan => `${plan.networkId}:${plan.planId}` === form.planId)
 
   async function update(payload: Record<string, unknown>) {
     setBusy(true); setError('')
@@ -31,7 +32,8 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
 
   async function disable(event: React.FormEvent) {
     event.preventDefault()
-    const saved = await update({ vendor: form.vendor, networkId: Number(form.networkId), planId: form.planId, reason: form.reason, disabled: true })
+    if (!selectedPlan) return
+    const saved = await update({ vendor: form.vendor, networkId: selectedPlan.networkId, planId: selectedPlan.planId, reason: form.reason, disabled: true })
     if (saved) setForm(current => ({ ...current, planId: '', reason: '' }))
   }
 
@@ -40,20 +42,20 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
       <AdminSelect value={form.vendor} onChange={event => setForm({ vendor: event.target.value as DisabledPlan['vendor'], networkId: '', category: '', planId: '', reason: '' })}>
         {Object.entries(VENDOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </AdminSelect>
-      <AdminSelect required value={form.networkId} onChange={event => setForm(current => ({ ...current, networkId: event.target.value, category: '', planId: '' }))}>
-        <option value="">Choose network</option>
+      <AdminSelect value={form.networkId} onChange={event => setForm(current => ({ ...current, networkId: event.target.value, planId: '' }))}>
+        <option value="">All networks</option>
         {networks.map(([id, network]) => <option key={id} value={id}>{network}</option>)}
       </AdminSelect>
-      <AdminSelect disabled={!form.networkId} value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value, planId: '' }))}>
+      <AdminSelect value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value, planId: '' }))}>
         <option value="">All categories</option>
         {categories.map(category => <option key={category} value={category}>{category}</option>)}
       </AdminSelect>
-      <AdminSelect required disabled={!form.networkId} value={form.planId} onChange={event => setForm(current => ({ ...current, planId: event.target.value }))}>
+      <AdminSelect required value={form.planId} onChange={event => setForm(current => ({ ...current, planId: event.target.value }))}>
         <option value="">Choose data plan</option>
-        {availablePlans.map(plan => <option key={plan.planId} value={plan.planId}>{plan.label}</option>)}
+        {availablePlans.map(plan => <option key={`${plan.networkId}:${plan.planId}`} value={`${plan.networkId}:${plan.planId}`}>{`${plan.network} · ${plan.label}`}</option>)}
       </AdminSelect>
       <AdminInput placeholder="Reason (optional)" value={form.reason} onChange={event => setForm(current => ({ ...current, reason: event.target.value }))} />
-      <div className="md:col-span-4"><AdminButton disabled={busy || !form.networkId || !form.planId} type="submit">{busy ? 'Saving…' : 'Disable selected plan'}</AdminButton></div>
+      <div className="md:col-span-5"><AdminButton disabled={busy || !selectedPlan} type="submit">{busy ? 'Saving…' : 'Disable selected plan'}</AdminButton></div>
     </form>
     <AdminError message={error} />
     <AdminTable><AdminThead columns={['Provider', 'Network ID', 'Plan ID', 'Reason', '']} /><tbody>
