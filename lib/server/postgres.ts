@@ -65,6 +65,9 @@ export function sqlitePlaceholdersToPostgres(sql: string) {
 }
 
 function normalizeValue(value: SqlParam) {
+  // The imported schema deliberately preserves legacy SQLite INTEGER flags as BIGINT.
+  // Keep the repository's boolean convenience values compatible with those columns.
+  if (typeof value === 'boolean') return value ? 1 : 0
   return value === undefined ? null : value
 }
 
