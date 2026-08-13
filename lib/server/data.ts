@@ -4154,6 +4154,40 @@ async function maybeApplyRewardRulesForEvent(input: {
   transaction?: Transaction
 }) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const sourceResult = await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [input.sourceUserId])
+    const sourceUser = sourceResult.rows[0]
+    if (!sourceUser) return
+    const rules = (await queryPostgres<RewardRuleRow>('SELECT * FROM reward_rules WHERE is_active = ? AND trigger_event = ? ORDER BY created_at ASC, id ASC', [true, input.event])).rows.map(mapRewardRuleRow)
+    for (const rule of rules) {
+      if (rule.requiresReferral && !sourceUser.referredByUserId) continue
+      if (input.event === 'first_successful_transaction') {
+        if (!input.transaction || !isReferralRewardEligibleTransaction(input.transaction)) continue
+        if (rule.allowedTransactionTypes?.length && !rule.allowedTransactionTypes.includes(input.transaction.type)) continue
+        if (rule.excludedTransactionTypes?.length && rule.excludedTransactionTypes.includes(input.transaction.type)) continue
+      }
+      const beneficiaryUserId = rule.audience === 'inviter' ? sourceUser.referredByUserId : sourceUser.id
+      if (!beneficiaryUserId) continue
+      const beneficiary = (await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [beneficiaryUserId])).rows[0]
+      if (!beneficiary) continue
+      const rewardType: Transaction['type'] = rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus'
+      const duplicate = await queryPostgres<{ id: string }>(`SELECT id FROM transactions WHERE user_id = ? AND type = ? AND status = ? AND metadata LIKE ? LIMIT 1`, [beneficiary.id, rewardType, 'success', `%"rewardRuleId":"${rule.id}"%`])
+      const existingRequest = await queryPostgres<{ id: string }>('SELECT id FROM reward_award_requests WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1', [rule.id, sourceUser.id])
+      if (duplicate.rows[0] || existingRequest.rows[0]) continue
+      const now = new Date().toISOString()
+      if (rule.manualApprovalRequired) {
+        const requestId = `reward_req_${randomBytes(6).toString('hex')}`
+        await queryPostgres(`INSERT INTO reward_award_requests (id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience, beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [requestId, rule.id, rule.name, rule.kind, rewardType, rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null, rule.amountNgn, 'pending', 'Waiting for admin approval.', null, null, now, now])
+        await insertAuditLog({ userId: beneficiary.id, actorUserId: sourceUser.id, action: 'reward.rule_pending_manual', entityType: 'reward_award_request', entityId: requestId, metadata: { rewardRuleId: rule.id, sourceUserId: sourceUser.id, amount: rule.amountNgn } })
+        continue
+      }
+      const rewardTransaction: Transaction = { id: `tx_${randomBytes(6).toString('hex')}`, type: rewardType, status: 'success', amount: rule.amountNgn, fee: 0, description: rule.kind === 'referral' ? `${rule.name} â€” ${sourceUser.name}` : rule.name, reference: generateRef(), createdAt: now, icon: rule.kind === 'referral' ? 'â‚¦' : 'ðŸŽ', metadata: { rewardRuleId: rule.id, rewardRuleName: rule.name, rewardEvent: rule.triggerEvent, sourceUserId: sourceUser.id, sourceReferralCode: sourceUser.referredByReferralCode ?? '', triggerTransactionId: input.transaction?.id, role: rule.audience, referredUserId: rule.audience === 'inviter' ? sourceUser.id : undefined } }
+      await applyWalletMutation({ userId: beneficiary.id, asset: 'NGN', balanceDelta: rule.amountNgn, transaction: rewardTransaction })
+      await insertNotification(createNotification({ userId: beneficiary.id, title: `${rule.name} paid`, message: `You earned â‚¦${rule.amountNgn.toLocaleString('en-NG')} from the "${rule.name}" reward rule.`, type: 'success' }))
+      await insertAuditLog({ userId: beneficiary.id, actorUserId: sourceUser.id, action: 'reward.rule_applied', entityType: 'transaction', entityId: rewardTransaction.id, metadata: { rewardRuleId: rule.id, sourceUserId: sourceUser.id, amount: rule.amountNgn } })
+    }
+    return
+  }
   const db = getDb()
   const sourceUser = db
     .prepare('SELECT * FROM users WHERE id = ? LIMIT 1')
