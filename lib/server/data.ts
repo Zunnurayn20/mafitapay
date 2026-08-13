@@ -3360,6 +3360,7 @@ export async function getUserByReferralCode(referralCode: string): Promise<Store
 
 export async function listUsers(): Promise<User[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) return (await queryPostgres<UserRow>('SELECT * FROM users ORDER BY "createdAt" DESC')).rows.map(sanitizeUser)
   const rows = getDb()
     .prepare('SELECT * FROM users ORDER BY createdAt DESC')
     .all() as UserRow[]
@@ -3377,6 +3378,10 @@ export async function listUsers(): Promise<User[]> {
  */
 export async function getTotalWalletLiability(): Promise<number> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ total: string }>(`SELECT COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS total FROM ledger_entries WHERE COALESCE(asset, 'NGN') = 'NGN' AND account IN ('available', 'locked')`)
+    return Math.round(Number(result.rows[0]?.total ?? 0) * 100) / 100
+  }
   const row = getDb()
     .prepare(`
       SELECT COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS total
