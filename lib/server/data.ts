@@ -6076,6 +6076,20 @@ export async function findPendingCryptoSellOrderForDeposit(input: {
 }): Promise<CryptoOrder | null> {
   await ensureDbReady()
   const tolerancePercent = input.tolerancePercent ?? 0.02
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>(`
+      SELECT * FROM crypto_orders WHERE user_id = ? AND pair_id = ? AND side = 'sell' AND status = 'pending'
+      ORDER BY created_at ASC LIMIT 20
+    `, [input.userId, input.pairId])
+    for (const row of result.rows) {
+      const order = mapCryptoOrderRow(row)
+      const expected = Number(order.cryptoAmount)
+      if (!Number.isFinite(expected) || expected <= 0) continue
+      const diff = Math.abs(expected - input.amountCrypto)
+      if (diff <= Math.max(0.00000001, expected * (tolerancePercent / 100))) return order
+    }
+    return null
+  }
   const rows = getDb().prepare(`
     SELECT * FROM crypto_orders
     WHERE user_id = ?
