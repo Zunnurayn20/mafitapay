@@ -17,6 +17,7 @@ import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
+import { isPostgresEnabled, queryPostgres } from './postgres'
 import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositIntent, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
 import {
   settleDirectCryptoDeposit,
@@ -3208,12 +3209,20 @@ export async function writeDb(db: AppDatabase) {
 
 export async function getUserById(userId: string): Promise<StoredUser | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [userId])
+    return result.rows[0] ?? null
+  }
   const row = getDb().prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(userId) as UserRow | undefined
   return row ?? null
 }
 
 export async function getUserByEmail(email: string): Promise<StoredUser | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<UserRow>('SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1', [email.trim()])
+    return result.rows[0] ?? null
+  }
   const row = getDb()
     .prepare('SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1')
     .get(email.trim()) as UserRow | undefined
@@ -3222,6 +3231,10 @@ export async function getUserByEmail(email: string): Promise<StoredUser | null> 
 
 export async function getUserByPhone(phone: string): Promise<StoredUser | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<UserRow>('SELECT * FROM users WHERE phone = ? LIMIT 1', [phone.trim()])
+    return result.rows[0] ?? null
+  }
   const row = getDb()
     .prepare('SELECT * FROM users WHERE phone = ? LIMIT 1')
     .get(phone.trim()) as UserRow | undefined
@@ -3277,6 +3290,10 @@ export async function getUserByVirtualAccountReference(reference: string): Promi
 export async function getUserByHandle(handle: string): Promise<StoredUser | null> {
   await ensureDbReady()
   const normalized = handle.trim().replace(/^@/, '')
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<UserRow>('SELECT * FROM users WHERE lower(handle) = lower(?) OR lower(handle) = lower(?) LIMIT 1', [`@${normalized}`, normalized])
+    return result.rows[0] ?? null
+  }
   const row = getDb()
     .prepare('SELECT * FROM users WHERE lower(handle) = lower(?) OR lower(handle) = lower(?) LIMIT 1')
     .get(`@${normalized}`, normalized) as UserRow | undefined
@@ -3286,6 +3303,10 @@ export async function getUserByHandle(handle: string): Promise<StoredUser | null
 export async function getUserByReferralCode(referralCode: string): Promise<StoredUser | null> {
   await ensureDbReady()
   const normalized = referralCode.trim().toUpperCase()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<UserRow>('SELECT * FROM users WHERE upper("referralCode") = ? LIMIT 1', [normalized])
+    return result.rows[0] ?? null
+  }
   const row = getDb()
     .prepare('SELECT * FROM users WHERE upper(referralCode) = ? LIMIT 1')
     .get(normalized) as UserRow | undefined
@@ -3680,6 +3701,11 @@ export async function getReferralOverviewByUserId(userId: string): Promise<Refer
 
 export async function getSessionByToken(token: string): Promise<SessionRecord | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM sessions WHERE expires_at <= ?', [new Date().toISOString()])
+    const result = await queryPostgres<SessionRow>('SELECT * FROM sessions WHERE token = ? LIMIT 1', [token])
+    return result.rows[0] ? mapSessionRow(result.rows[0]) : null
+  }
   getDb().prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString())
   const row = getDb()
     .prepare('SELECT * FROM sessions WHERE token = ? LIMIT 1')
