@@ -5659,6 +5659,15 @@ export async function markCryptoDepositEventMatched(input: {
 }): Promise<CryptoDepositEvent | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      UPDATE crypto_deposit_events SET status = 'matched',
+      sweep_status = CASE WHEN sweep_status = 'skipped' THEN 'pending' ELSE sweep_status END,
+      crypto_order_id = ?, transaction_id = ?, updated_at = ?
+      WHERE external_event_id = ? AND status = 'unmatched'
+    `, [input.cryptoOrderId ?? null, input.transactionId, now, input.externalEventId])
+    return getCryptoDepositEventByExternalId(input.externalEventId)
+  }
   getDb().prepare(`
     UPDATE crypto_deposit_events
     SET status = 'matched',
@@ -5675,6 +5684,14 @@ export async function markCryptoDepositEventMatched(input: {
 export async function claimCryptoDepositEventSweep(externalEventId: string): Promise<CryptoDepositEvent | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositEventRow>(`
+      UPDATE crypto_deposit_events SET sweep_status = 'sweeping', sweep_error = NULL, updated_at = ?
+      WHERE external_event_id = ? AND status = 'matched'
+      AND (sweep_status IS NULL OR sweep_status = 'pending' OR sweep_status = 'failed') RETURNING *
+    `, [now, externalEventId])
+    return result.rows[0] ? mapCryptoDepositEventRow(result.rows[0]) : null
+  }
   getDb().prepare(`
     UPDATE crypto_deposit_events
     SET sweep_status = 'sweeping',
@@ -5694,6 +5711,13 @@ export async function markCryptoDepositEventSwept(input: {
 }): Promise<CryptoDepositEvent | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      UPDATE crypto_deposit_events SET sweep_status = 'swept', sweep_tx_hash = ?, sweep_error = NULL,
+      swept_at = ?, updated_at = ? WHERE external_event_id = ?
+    `, [input.txHash, now, now, input.externalEventId])
+    return getCryptoDepositEventByExternalId(input.externalEventId)
+  }
   getDb().prepare(`
     UPDATE crypto_deposit_events
     SET sweep_status = 'swept',
@@ -5712,6 +5736,10 @@ export async function markCryptoDepositEventSweepFailed(input: {
 }): Promise<CryptoDepositEvent | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE crypto_deposit_events SET sweep_status = 'failed', sweep_error = ?, updated_at = ? WHERE external_event_id = ?`, [input.error.slice(0, 500), now, input.externalEventId])
+    return getCryptoDepositEventByExternalId(input.externalEventId)
+  }
   getDb().prepare(`
     UPDATE crypto_deposit_events
     SET sweep_status = 'failed',
@@ -5730,6 +5758,10 @@ export async function updateCryptoDepositEventConversion(externalEventId: string
   const payload = {
     ...(existing.payload || {}),
     conversion,
+  }
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE crypto_deposit_events SET payload = ?, updated_at = ? WHERE external_event_id = ?', [JSON.stringify(payload), now, externalEventId])
+    return getCryptoDepositEventByExternalId(externalEventId)
   }
   getDb().prepare(`
     UPDATE crypto_deposit_events
