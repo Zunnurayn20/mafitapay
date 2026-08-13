@@ -7707,12 +7707,24 @@ export async function consumeCryptoQuote(userId: string, quoteId: string, side: 
 
 export async function getBillProviders(): Promise<BillProvider[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) return (await queryPostgres<BillProviderRow>('SELECT * FROM bill_providers ORDER BY name ASC')).rows.map(mapBillProviderRow)
   const rows = getDb().prepare('SELECT * FROM bill_providers ORDER BY name ASC').all() as BillProviderRow[]
   return rows.map(mapBillProviderRow)
 }
 
 export async function upsertBillProviders(providers: BillProvider[]) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      for (const provider of providers) await queryPostgresClient(client, `
+        INSERT INTO bill_providers (id, name, icon, type, account_label, account_placeholder, helper_text, min_amount, max_amount, requires_network, requires_account, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon, type = excluded.type, account_label = excluded.account_label, account_placeholder = excluded.account_placeholder, helper_text = excluded.helper_text, min_amount = excluded.min_amount, max_amount = excluded.max_amount, requires_network = excluded.requires_network, requires_account = excluded.requires_account, is_active = excluded.is_active, updated_at = excluded.updated_at
+      `, [provider.id, provider.name, provider.icon, provider.type, provider.accountLabel ?? null, provider.accountPlaceholder ?? null, provider.helperText ?? null, provider.minAmount ?? null, provider.maxAmount ?? null, provider.requiresNetwork === true, provider.requiresAccount !== false, provider.isActive !== false, now, now])
+    })
+    return getBillProviders()
+  }
   const db = getDb()
   const now = new Date().toISOString()
   const statement = db.prepare(`
@@ -7767,6 +7779,7 @@ export async function upsertBillProviders(providers: BillProvider[]) {
 
 export async function getRewardRules(): Promise<RewardRule[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) return (await queryPostgres<RewardRuleRow>('SELECT * FROM reward_rules ORDER BY created_at DESC, id ASC')).rows.map(mapRewardRuleRow)
   const rows = getDb()
     .prepare('SELECT * FROM reward_rules ORDER BY created_at DESC, id ASC')
     .all() as RewardRuleRow[]
@@ -7775,6 +7788,24 @@ export async function getRewardRules(): Promise<RewardRule[]> {
 
 export async function upsertRewardRules(rules: RewardRule[]) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      for (const rule of rules) {
+        if (!rule.id.trim()) throw new Error('Reward rule id is required.')
+        if (!rule.name.trim()) throw new Error(`${rule.id}: reward rule name is required.`)
+        if (!Number.isFinite(rule.amountNgn) || rule.amountNgn <= 0) throw new Error(`${rule.id}: reward amount must be greater than zero.`)
+        if (rule.dailyPayoutCapNgn != null && (!Number.isFinite(rule.dailyPayoutCapNgn) || rule.dailyPayoutCapNgn <= 0)) throw new Error(`${rule.id}: daily payout cap must be greater than zero when set.`)
+        if (rule.audience === 'inviter' && rule.requiresReferral !== true) throw new Error(`${rule.id}: inviter rewards must require referral context.`)
+        await queryPostgresClient(client, `
+          INSERT INTO reward_rules (id, name, description, kind, trigger_event, audience, amount_ngn, requires_referral, allowed_transaction_types, excluded_transaction_types, daily_payout_cap_ngn, manual_approval_required, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, kind = excluded.kind, trigger_event = excluded.trigger_event, audience = excluded.audience, amount_ngn = excluded.amount_ngn, requires_referral = excluded.requires_referral, allowed_transaction_types = excluded.allowed_transaction_types, excluded_transaction_types = excluded.excluded_transaction_types, daily_payout_cap_ngn = excluded.daily_payout_cap_ngn, manual_approval_required = excluded.manual_approval_required, is_active = excluded.is_active, updated_at = excluded.updated_at
+        `, [rule.id.trim(), rule.name.trim(), rule.description?.trim() || null, rule.kind, rule.triggerEvent, rule.audience, rule.amountNgn, rule.requiresReferral === true, rule.allowedTransactionTypes?.length ? JSON.stringify(rule.allowedTransactionTypes) : null, rule.excludedTransactionTypes?.length ? JSON.stringify(rule.excludedTransactionTypes) : null, rule.dailyPayoutCapNgn ?? null, rule.manualApprovalRequired === true, rule.isActive !== false, rule.createdAt || now, now])
+      }
+    })
+    return getRewardRules()
+  }
   const db = getDb()
   const now = new Date().toISOString()
   const statement = db.prepare(`
