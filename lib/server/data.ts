@@ -4683,7 +4683,7 @@ export async function listProviderEvents(input?: { status?: string; provider?: s
   await ensureDbReady()
   const limit = Math.max(1, Math.min(100, input?.limit ?? 50))
   const where: string[] = []
-  const args: unknown[] = []
+  const args: Array<string | number> = []
 
   if (input?.status?.trim()) {
     where.push('status = ?')
@@ -6862,6 +6862,17 @@ export async function createCryptoQuote(input: {
   const expiresAt = new Date(now.getTime() + quoteTtlSeconds * 1000).toISOString()
   const id = `cq_${randomBytes(6).toString('hex')}`
 
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoQuoteRow>(`
+      INSERT INTO crypto_quotes (id, user_id, pair_id, side, amount_ngn, crypto_amount, unit_rate, network_fee_ngn, provider_payload, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.userId, input.pairId, input.side, input.amountNgn, cryptoAmount, unitRate,
+      networkFeeNgn, input.providerPayload ? JSON.stringify(input.providerPayload) : null, expiresAt, now.toISOString()])
+    const row = result.rows[0]
+    if (!row) throw new Error('Unable to create quote.')
+    return { asset, quote: mapCryptoQuoteRow(row) }
+  }
+
   getDb().prepare(`
     INSERT INTO crypto_quotes (
       id, user_id, pair_id, side, amount_ngn, crypto_amount, unit_rate, network_fee_ngn, provider_payload, expires_at, created_at
@@ -6887,6 +6898,10 @@ export async function createCryptoQuote(input: {
 
 export async function getCryptoQuoteById(id: string): Promise<CryptoQuote | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoQuoteRow>('SELECT * FROM crypto_quotes WHERE id = ? LIMIT 1', [id])
+    return result.rows[0] ? mapCryptoQuoteRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM crypto_quotes WHERE id = ? LIMIT 1').get(id) as CryptoQuoteRow | undefined
   return row ? mapCryptoQuoteRow(row) : null
 }
@@ -6921,6 +6936,22 @@ export async function createCryptoOrder(input: {
   await ensureDbReady()
   const now = new Date().toISOString()
   const id = `co_${randomBytes(6).toString('hex')}`
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>(`
+      INSERT INTO crypto_orders (id, user_id, transaction_id, quote_id, pair_id, side, amount_ngn, crypto_amount, unit_rate, destination_type, destination_label, wallet_address, exchange, provider, provider_order_id, provider_status, provider_reference, provider_payload, execution_rail, execution_status, execution_reference, destination_tx_hash, expires_at, fulfilled_at, webhook_received_at, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.userId, input.transactionId, input.quoteId, input.pairId, input.side, input.amountNgn,
+      input.cryptoAmount, input.unitRate, input.destinationType, input.destinationLabel ?? null,
+      input.walletAddress ?? null, input.exchange ?? null, input.provider ?? null, input.providerOrderId ?? null,
+      input.providerStatus ?? null, input.providerReference ?? null,
+      input.providerPayload ? JSON.stringify(input.providerPayload) : null, input.executionRail ?? null,
+      input.executionStatus ?? null, input.executionReference ?? null, input.destinationTxHash ?? null,
+      input.expiresAt ?? null, input.fulfilledAt ?? null, input.webhookReceivedAt ?? null,
+      input.status ?? 'fulfilled', now, now])
+    const row = result.rows[0]
+    if (!row) throw new Error('Unable to create crypto order.')
+    return mapCryptoOrderRow(row)
+  }
   getDb().prepare(`
     INSERT INTO crypto_orders (
       id, user_id, transaction_id, quote_id, pair_id, side, amount_ngn, crypto_amount, unit_rate, destination_type, destination_label, wallet_address, exchange, provider, provider_order_id, provider_status, provider_reference, provider_payload, execution_rail, execution_status, execution_reference, destination_tx_hash, expires_at, fulfilled_at, webhook_received_at, status, created_at, updated_at
@@ -6970,6 +7001,14 @@ export async function updateCryptoOrderExecution(input: {
 }) {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      UPDATE crypto_orders SET execution_rail = COALESCE(?, execution_rail), execution_status = COALESCE(?, execution_status),
+      execution_reference = COALESCE(?, execution_reference), destination_tx_hash = COALESCE(?, destination_tx_hash), updated_at = ? WHERE id = ?
+    `, [input.executionRail ?? null, input.executionStatus ?? null, input.executionReference ?? null,
+      input.destinationTxHash ?? null, now, input.id])
+    return getCryptoOrderById(input.id)
+  }
   getDb().prepare(`
     UPDATE crypto_orders
     SET execution_rail = COALESCE(?, execution_rail),
@@ -6991,24 +7030,40 @@ export async function updateCryptoOrderExecution(input: {
 
 export async function getCryptoOrderByTransactionId(transactionId: string): Promise<CryptoOrder | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>('SELECT * FROM crypto_orders WHERE transaction_id = ? LIMIT 1', [transactionId])
+    return result.rows[0] ? mapCryptoOrderRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM crypto_orders WHERE transaction_id = ? LIMIT 1').get(transactionId) as CryptoOrderRow | undefined
   return row ? mapCryptoOrderRow(row) : null
 }
 
 export async function getCryptoOrderByProviderReference(providerReference: string): Promise<CryptoOrder | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>('SELECT * FROM crypto_orders WHERE provider_reference = ? LIMIT 1', [providerReference])
+    return result.rows[0] ? mapCryptoOrderRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM crypto_orders WHERE provider_reference = ? LIMIT 1').get(providerReference) as CryptoOrderRow | undefined
   return row ? mapCryptoOrderRow(row) : null
 }
 
 export async function getCryptoOrderByProviderOrderId(providerOrderId: string): Promise<CryptoOrder | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>('SELECT * FROM crypto_orders WHERE provider_order_id = ? LIMIT 1', [providerOrderId])
+    return result.rows[0] ? mapCryptoOrderRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM crypto_orders WHERE provider_order_id = ? LIMIT 1').get(providerOrderId) as CryptoOrderRow | undefined
   return row ? mapCryptoOrderRow(row) : null
 }
 
 export async function getCryptoOrderById(id: string): Promise<CryptoOrder | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>('SELECT * FROM crypto_orders WHERE id = ? LIMIT 1', [id])
+    return result.rows[0] ? mapCryptoOrderRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM crypto_orders WHERE id = ? LIMIT 1').get(id) as CryptoOrderRow | undefined
   return row ? mapCryptoOrderRow(row) : null
 }
@@ -7017,7 +7072,7 @@ export async function listCryptoOrders(input?: { status?: CryptoOrder['status'];
   await ensureDbReady()
   const limit = Math.max(1, Math.min(100, input?.limit ?? 50))
   const where: string[] = []
-  const args: unknown[] = []
+  const args: Array<string | number> = []
 
   if (input?.status) {
     where.push('status = ?')
@@ -7030,6 +7085,14 @@ export async function listCryptoOrders(input?: { status?: CryptoOrder['status'];
   if (input?.side) {
     where.push('side = ?')
     args.push(input.side)
+  }
+
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>(`
+      SELECT * FROM crypto_orders ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC LIMIT ?
+    `, [...args, limit])
+    return result.rows.map(mapCryptoOrderRow)
   }
 
   const rows = getDb().prepare(`
@@ -7046,7 +7109,7 @@ export async function listCryptoOrdersByUser(userId: string, input?: { status?: 
   await ensureDbReady()
   const limit = Math.max(1, Math.min(100, input?.limit ?? 50))
   const where: string[] = ['user_id = ?']
-  const args: unknown[] = [userId]
+  const args: Array<string | number> = [userId]
 
   if (input?.status) {
     where.push('status = ?')
@@ -7059,6 +7122,13 @@ export async function listCryptoOrdersByUser(userId: string, input?: { status?: 
   if (input?.side) {
     where.push('side = ?')
     args.push(input.side)
+  }
+
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoOrderRow>(`
+      SELECT * FROM crypto_orders WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ?
+    `, [...args, limit])
+    return result.rows.map(mapCryptoOrderRow)
   }
 
   const rows = getDb().prepare(`
@@ -7074,6 +7144,10 @@ export async function listCryptoOrdersByUser(userId: string, input?: { status?: 
 export async function updateCryptoOrderStatus(id: string, status: CryptoOrder['status']) {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE crypto_orders SET status = ?, fulfilled_at = CASE WHEN ? = 'fulfilled' THEN COALESCE(fulfilled_at, ?) ELSE fulfilled_at END, updated_at = ? WHERE id = ?`, [status, status, now, now, id])
+    return getCryptoOrderById(id)
+  }
   getDb().prepare(`
     UPDATE crypto_orders
     SET status = ?,
@@ -7097,6 +7171,19 @@ export async function updateCryptoOrderProviderState(input: {
 }) {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      UPDATE crypto_orders SET provider = COALESCE(?, provider), provider_order_id = COALESCE(?, provider_order_id),
+      provider_status = COALESCE(?, provider_status), provider_reference = COALESCE(?, provider_reference),
+      provider_payload = COALESCE(?, provider_payload), expires_at = COALESCE(?, expires_at),
+      webhook_received_at = COALESCE(?, webhook_received_at), status = COALESCE(?, status),
+      fulfilled_at = CASE WHEN COALESCE(?, status) = 'fulfilled' THEN COALESCE(fulfilled_at, ?) ELSE fulfilled_at END,
+      updated_at = ? WHERE id = ?
+    `, [input.provider ?? null, input.providerOrderId ?? null, input.providerStatus ?? null,
+      input.providerReference ?? null, input.providerPayload === undefined ? null : JSON.stringify(input.providerPayload),
+      input.expiresAt ?? null, input.webhookReceivedAt ?? null, input.status ?? null, input.status ?? null, now, now, input.id])
+    return getCryptoOrderById(input.id)
+  }
   getDb().prepare(`
     UPDATE crypto_orders
     SET provider = COALESCE(?, provider),
@@ -7129,6 +7216,23 @@ export async function updateCryptoOrderProviderState(input: {
 
 export async function consumeCryptoQuote(userId: string, quoteId: string, side: 'buy' | 'sell') {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    return withPostgresTransaction(async client => {
+      const result = await queryPostgresClient<CryptoQuoteRow>(client, `
+        SELECT * FROM crypto_quotes WHERE id = ? AND user_id = ? AND side = ? LIMIT 1 FOR UPDATE
+      `, [quoteId, userId, side])
+      const row = result.rows[0]
+      if (!row) throw new Error('Quote not found.')
+      const quote = mapCryptoQuoteRow(row)
+      if (quote.usedAt) throw new Error('Quote has already been used.')
+      if (new Date(quote.expiresAt).getTime() <= Date.now()) throw new Error('Quote has expired.')
+      const usedAt = new Date().toISOString()
+      await queryPostgresClient(client, 'UPDATE crypto_quotes SET used_at = ? WHERE id = ?', [usedAt, quoteId])
+      const asset = await getCryptoAssetById(quote.pairId)
+      if (!asset) throw new Error('Crypto pair no longer exists.')
+      return { asset, quote: { ...quote, usedAt } }
+    })
+  }
   const row = getDb().prepare(`
     SELECT * FROM crypto_quotes
     WHERE id = ? AND user_id = ? AND side = ?
