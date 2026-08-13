@@ -6051,6 +6051,14 @@ export async function requeuePayoutRequest(reference: string): Promise<PayoutReq
 
 export async function listBeneficiaries(userId: string, kind?: Beneficiary['kind'], includeArchived = false): Promise<Beneficiary[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<BeneficiaryRow>(`
+      SELECT * FROM beneficiaries WHERE user_id = ?
+      ${kind ? 'AND kind = ?' : ''} ${includeArchived ? '' : 'AND archived_at IS NULL'}
+      ORDER BY is_default DESC, updated_at DESC
+    `, kind ? [userId, kind] : [userId])
+    return result.rows.map(mapBeneficiaryRow)
+  }
   const rows = ((kind && includeArchived)
     ? getDb().prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND kind = ? ORDER BY is_default DESC, updated_at DESC').all(userId, kind)
     : kind
@@ -6080,6 +6088,37 @@ export async function upsertBeneficiary(input: {
   verificationReason?: string
 }): Promise<Beneficiary> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    const existingResult = input.kind === 'bank' && input.accountNumber
+      ? await queryPostgres<BeneficiaryRow>(`SELECT * FROM beneficiaries WHERE user_id = ? AND kind = 'bank' AND account_number = ? AND COALESCE(bank_code, '') = COALESCE(?, '') LIMIT 1`, [input.userId, input.accountNumber, input.bankCode ?? null])
+      : input.kind === 'internal' && input.internalUserId
+        ? await queryPostgres<BeneficiaryRow>(`SELECT * FROM beneficiaries WHERE user_id = ? AND kind = 'internal' AND internal_user_id = ? LIMIT 1`, [input.userId, input.internalUserId])
+        : { rows: [] as BeneficiaryRow[] }
+    const existing = existingResult.rows[0]
+    const values = [input.label, input.bankCode ?? null, input.bankName ?? null, input.accountNumber ?? null,
+      input.accountName ?? null, input.internalUserId ?? null, input.handle ?? null, input.verifiedAt ?? null,
+      input.verificationProvider ?? null, input.verificationStatus ?? null, input.verificationReference ?? null,
+      input.verificationCheckedAt ?? null, input.verificationReason ?? null, now]
+    if (existing) {
+      const result = await queryPostgres<BeneficiaryRow>(`
+        UPDATE beneficiaries SET label = ?, bank_code = ?, bank_name = ?, account_number = ?, account_name = ?, internal_user_id = ?, handle = ?, verified_at = COALESCE(?, verified_at), verification_provider = COALESCE(?, verification_provider), verification_status = COALESCE(?, verification_status), verification_reference = COALESCE(?, verification_reference), verification_checked_at = COALESCE(?, verification_checked_at), verification_reason = ?, last_used_at = ?, archived_at = NULL, updated_at = ? WHERE id = ? RETURNING *
+      `, [...values, now, existing.id])
+      if (!result.rows[0]) throw new Error('Unable to update beneficiary')
+      return mapBeneficiaryRow(result.rows[0])
+    }
+    const id = `ben_${randomBytes(6).toString('hex')}`
+    const result = await queryPostgres<BeneficiaryRow>(`
+      INSERT INTO beneficiaries (id, user_id, kind, label, bank_code, bank_name, account_number, account_name, internal_user_id, handle, verified_at, is_default, verification_provider, verification_status, verification_reference, verification_checked_at, verification_reason, last_used_at, archived_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.userId, input.kind, input.label, input.bankCode ?? null, input.bankName ?? null,
+      input.accountNumber ?? null, input.accountName ?? null, input.internalUserId ?? null, input.handle ?? null,
+      input.verifiedAt ?? null, false, input.verificationProvider ?? null, input.verificationStatus ?? null,
+      input.verificationReference ?? null, input.verificationCheckedAt ?? null, input.verificationReason ?? null,
+      now, null, now, now])
+    if (!result.rows[0]) throw new Error('Unable to create beneficiary')
+    return mapBeneficiaryRow(result.rows[0])
+  }
   const db = getDb()
   const now = new Date().toISOString()
 
@@ -6163,12 +6202,26 @@ export async function upsertBeneficiary(input: {
 
 export async function getBeneficiaryById(userId: string, id: string): Promise<Beneficiary | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<BeneficiaryRow>('SELECT * FROM beneficiaries WHERE user_id = ? AND id = ? LIMIT 1', [userId, id])
+    return result.rows[0] ? mapBeneficiaryRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND id = ? LIMIT 1').get(userId, id) as BeneficiaryRow | undefined
   return row ? mapBeneficiaryRow(row) : null
 }
 
 export async function setDefaultBeneficiary(userId: string, id: string): Promise<Beneficiary | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    return withPostgresTransaction(async client => {
+      const target = await queryPostgresClient<BeneficiaryRow>(client, 'SELECT * FROM beneficiaries WHERE user_id = ? AND id = ? AND archived_at IS NULL LIMIT 1 FOR UPDATE', [userId, id])
+      if (!target.rows[0]) return null
+      const now = new Date().toISOString()
+      await queryPostgresClient(client, 'UPDATE beneficiaries SET is_default = ?, updated_at = ? WHERE user_id = ? AND kind = ?', [false, now, userId, target.rows[0].kind])
+      const updated = await queryPostgresClient<BeneficiaryRow>(client, 'UPDATE beneficiaries SET is_default = ?, updated_at = ? WHERE user_id = ? AND id = ? RETURNING *', [true, now, userId, id])
+      return updated.rows[0] ? mapBeneficiaryRow(updated.rows[0]) : null
+    })
+  }
   const db = getDb()
   const target = db.prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND id = ? AND archived_at IS NULL LIMIT 1').get(userId, id) as BeneficiaryRow | undefined
   if (!target) return null
@@ -6187,6 +6240,10 @@ export async function setDefaultBeneficiary(userId: string, id: string): Promise
 export async function archiveBeneficiary(userId: string, id: string): Promise<Beneficiary | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE beneficiaries SET archived_at = ?, is_default = ?, updated_at = ? WHERE user_id = ? AND id = ? AND archived_at IS NULL', [now, false, now, userId, id])
+    return getBeneficiaryById(userId, id)
+  }
   getDb().prepare(`
     UPDATE beneficiaries
     SET archived_at = ?, is_default = 0, updated_at = ?
@@ -6198,6 +6255,10 @@ export async function archiveBeneficiary(userId: string, id: string): Promise<Be
 export async function restoreBeneficiary(userId: string, id: string): Promise<Beneficiary | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE beneficiaries SET archived_at = NULL, updated_at = ? WHERE user_id = ? AND id = ?', [now, userId, id])
+    return getBeneficiaryById(userId, id)
+  }
   getDb().prepare(`
     UPDATE beneficiaries
     SET archived_at = NULL, updated_at = ?
@@ -6208,6 +6269,10 @@ export async function restoreBeneficiary(userId: string, id: string): Promise<Be
 
 export async function deleteBeneficiary(userId: string, id: string): Promise<boolean> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres('DELETE FROM beneficiaries WHERE user_id = ? AND id = ?', [userId, id])
+    return (result.rowCount ?? 0) > 0
+  }
   const result = getDb().prepare('DELETE FROM beneficiaries WHERE user_id = ? AND id = ?').run(userId, id)
   return Number(result.changes ?? 0) > 0
 }
@@ -6231,6 +6296,17 @@ export async function recordBeneficiaryVerification(input: {
   await ensureDbReady()
   const id = `benver_${randomBytes(6).toString('hex')}`
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<BeneficiaryVerificationRow>(`
+      INSERT INTO beneficiary_verifications (id, beneficiary_id, user_id, kind, provider, status, reference, bank_code, account_number, account_name, bank_name, handle, error_code, payload, reason, checked_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.beneficiaryId, input.userId, input.kind, input.provider, input.status,
+      input.reference ?? null, input.bankCode ?? null, input.accountNumber ?? null, input.accountName ?? null,
+      input.bankName ?? null, input.handle ?? null, input.errorCode ?? null,
+      input.payload ? JSON.stringify(input.payload) : null, input.reason ?? null, now, now])
+    if (!result.rows[0]) throw new Error('Unable to record beneficiary verification')
+    return mapBeneficiaryVerificationRow(result.rows[0])
+  }
   getDb().prepare(`
     INSERT INTO beneficiary_verifications (
       id, beneficiary_id, user_id, kind, provider, status, reference, bank_code, account_number, account_name, bank_name, handle, error_code, payload, reason, checked_at, created_at
