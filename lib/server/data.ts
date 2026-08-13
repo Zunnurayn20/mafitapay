@@ -8084,6 +8084,44 @@ export async function upsertRewardRules(rules: RewardRule[]) {
 
 export async function getRewardRuleReport(limit = 20): Promise<RewardRuleReport> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const [ruleResult, rewardResult, userResult, requestResult, pendingResult] = await Promise.all([
+      queryPostgres<RewardRuleRow>('SELECT * FROM reward_rules ORDER BY created_at DESC, id ASC'),
+      queryPostgres<TransactionRow>(`SELECT * FROM transactions WHERE type IN ('referral_bonus', 'reward_bonus') ORDER BY created_at DESC`),
+      queryPostgres<UserRow>('SELECT * FROM users'),
+      queryPostgres<RewardAwardRequestRow>('SELECT * FROM reward_award_requests ORDER BY created_at DESC LIMIT ?', [limit]),
+      queryPostgres<{ count: string }>(`SELECT COUNT(*) AS count FROM reward_award_requests WHERE status = 'pending'`),
+    ])
+    const rules = ruleResult.rows.map(mapRewardRuleRow)
+    const userNameById = new Map(userResult.rows.map(user => [user.id, user.name] as const))
+    const summaries = new Map<string, RewardRuleSummary>()
+    for (const rule of rules) summaries.set(rule.id, { ruleId: rule.id, ruleName: rule.name, isActive: rule.isActive !== false, totalAwards: 0, totalPayoutNgn: 0, pendingManualCount: 0, lastAwardAt: undefined })
+    const pendingByRule = await queryPostgres<{ reward_rule_id: string; reward_rule_name: string; count: string }>(`SELECT reward_rule_id, reward_rule_name, COUNT(*) AS count FROM reward_award_requests WHERE status = 'pending' GROUP BY reward_rule_id, reward_rule_name`)
+    for (const row of pendingByRule.rows) {
+      const summary = summaries.get(row.reward_rule_id) ?? { ruleId: row.reward_rule_id, ruleName: row.reward_rule_name, isActive: false, totalAwards: 0, totalPayoutNgn: 0, pendingManualCount: 0, lastAwardAt: undefined }
+      summary.pendingManualCount = Number(row.count)
+      summaries.set(row.reward_rule_id, summary)
+    }
+    let totalAwards = 0
+    let totalPayoutNgn = 0
+    const recentAwards: RewardAwardRecord[] = []
+    for (const row of rewardResult.rows) {
+      const metadata = parseJson(row.metadata, {} as Record<string, unknown>)
+      const ruleId = typeof metadata.rewardRuleId === 'string' ? metadata.rewardRuleId : 'legacy_reward'
+      const ruleName = typeof metadata.rewardRuleName === 'string' ? metadata.rewardRuleName : (row.type === 'referral_bonus' ? 'Legacy Referral Reward' : 'Legacy Reward')
+      const summary = summaries.get(ruleId) ?? { ruleId, ruleName, isActive: false, totalAwards: 0, totalPayoutNgn: 0, pendingManualCount: 0, lastAwardAt: undefined }
+      summary.totalAwards += 1
+      if (row.status === 'success') { summary.totalPayoutNgn += Number(row.amount); totalPayoutNgn += Number(row.amount) }
+      if (!summary.lastAwardAt || row.created_at > summary.lastAwardAt) summary.lastAwardAt = row.created_at
+      summaries.set(ruleId, summary)
+      totalAwards += 1
+      if (recentAwards.length < limit) {
+        const sourceUserId = typeof metadata.sourceUserId === 'string' ? metadata.sourceUserId : undefined
+        recentAwards.push({ transactionId: row.id, rewardRuleId: ruleId, rewardRuleName: ruleName, rewardType: row.type as RewardAwardRecord['rewardType'], beneficiaryUserId: row.user_id, beneficiaryName: userNameById.get(row.user_id) ?? row.user_id, sourceUserId, sourceUserName: sourceUserId ? userNameById.get(sourceUserId) ?? sourceUserId : undefined, amountNgn: Number(row.amount), status: row.status, createdAt: row.created_at, reference: row.reference })
+      }
+    }
+    return { totalAwards, totalPayoutNgn, pendingApprovalCount: Number(pendingResult.rows[0]?.count ?? 0), byRule: Array.from(summaries.values()).sort((a, b) => b.totalPayoutNgn - a.totalPayoutNgn || a.ruleName.localeCompare(b.ruleName)), recentAwards, recentRequests: requestResult.rows.map(row => mapRewardAwardRequestRow(row, userNameById)) }
+  }
   const db = getDb()
   const ruleRows = db
     .prepare('SELECT * FROM reward_rules ORDER BY created_at DESC, id ASC')
