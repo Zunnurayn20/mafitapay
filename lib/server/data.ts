@@ -3388,6 +3388,10 @@ export type ProfitMarginRecord = {
  */
 export async function getProfitMargins(): Promise<ProfitMarginRecord[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ key: string; value_ngn: number; updated_at: string; updated_by: string | null }>('SELECT key, value_ngn, updated_at, updated_by FROM profit_margins ORDER BY key ASC')
+    return result.rows.map(row => ({ key: row.key, valueNgn: Number(row.value_ngn), updatedAt: row.updated_at, updatedBy: row.updated_by ?? undefined }))
+  }
   const rows = getDb()
     .prepare('SELECT key, value_ngn, updated_at, updated_by FROM profit_margins ORDER BY key ASC')
     .all() as Array<{ key: string; value_ngn: number; updated_at: string; updated_by: string | null }>
@@ -3403,6 +3407,12 @@ export async function getProfitMargins(): Promise<ProfitMarginRecord[]> {
 /** One margin by key, or null when the admin has never set it. */
 export async function getProfitMargin(key: string): Promise<number | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ value_ngn: number }>('SELECT value_ngn FROM profit_margins WHERE key = ? LIMIT 1', [key])
+    if (!result.rows[0]) return null
+    const value = Number(result.rows[0].value_ngn)
+    return Number.isFinite(value) ? value : null
+  }
   const row = getDb()
     .prepare('SELECT value_ngn FROM profit_margins WHERE key = ? LIMIT 1')
     .get(key) as { value_ngn: number } | undefined
@@ -3420,6 +3430,10 @@ export async function upsertProfitMargin(input: {
   await ensureDbReady()
   const updatedAt = new Date().toISOString()
   const value = Math.round(input.valueNgn * 100) / 100
+  if (isPostgresEnabled()) {
+    await queryPostgres(`INSERT INTO profit_margins (key, value_ngn, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_ngn = excluded.value_ngn, updated_at = excluded.updated_at, updated_by = excluded.updated_by`, [input.key, value, updatedAt, input.updatedBy ?? null])
+    return { key: input.key, valueNgn: value, updatedAt, updatedBy: input.updatedBy }
+  }
 
   getDb().prepare(`
     INSERT INTO profit_margins (key, value_ngn, updated_at, updated_by)
@@ -3496,7 +3510,7 @@ function mapPricingRuleRow(row: PricingRuleRow): PricingRuleRecord {
     minMarginKobo: Number(row.min_margin_kobo) || 0,
     maxMarginKobo: row.max_margin_kobo == null ? null : Number(row.max_margin_kobo),
     roundToKobo: Number(row.round_to_kobo) || 0,
-    active: Number(row.active) === 1,
+  active: Boolean(row.active) || Number(row.active) === 1,
     note: row.note,
     createdBy: row.created_by ?? undefined,
     updatedBy: row.updated_by ?? undefined,
@@ -3507,6 +3521,10 @@ function mapPricingRuleRow(row: PricingRuleRow): PricingRuleRecord {
 
 export async function getPricingRules(options?: { activeOnly?: boolean }): Promise<PricingRuleRecord[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PricingRuleRow>(options?.activeOnly ? 'SELECT * FROM pricing_rules WHERE active = ? ORDER BY updated_at DESC' : 'SELECT * FROM pricing_rules ORDER BY scope ASC, updated_at DESC', options?.activeOnly ? [true] : [])
+    return result.rows.map(mapPricingRuleRow)
+  }
   const rows = options?.activeOnly
     ? getDb()
       .prepare('SELECT * FROM pricing_rules WHERE active = 1 ORDER BY updated_at DESC')
@@ -3520,6 +3538,10 @@ export async function getPricingRules(options?: { activeOnly?: boolean }): Promi
 
 export async function getPricingRuleById(id: string): Promise<PricingRuleRecord | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PricingRuleRow>('SELECT * FROM pricing_rules WHERE id = ? LIMIT 1', [id])
+    return result.rows[0] ? mapPricingRuleRow(result.rows[0]) : null
+  }
   const row = getDb()
     .prepare('SELECT * FROM pricing_rules WHERE id = ? LIMIT 1')
     .get(id) as PricingRuleRow | undefined
@@ -3534,6 +3556,10 @@ export async function findPricingRuleByTarget(input: {
   variationCode?: string | null
 }): Promise<PricingRuleRecord | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PricingRuleRow>('SELECT * FROM pricing_rules WHERE scope = ? AND vendor = ? AND network = ? AND plan_type = ? AND variation_code = ? LIMIT 1', [input.scope, nullToEmpty(input.vendor), nullToEmpty(input.network), nullToEmpty(input.planType), nullToEmpty(input.variationCode)])
+    return result.rows[0] ? mapPricingRuleRow(result.rows[0]) : null
+  }
   const row = getDb()
     .prepare(`
       SELECT * FROM pricing_rules
@@ -3571,6 +3597,15 @@ export async function createPricingRule(input: {
   await ensureDbReady()
   const id = `prule_${randomBytes(8).toString('hex')}`
   const now = new Date().toISOString()
+
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PricingRuleRow>(`
+      INSERT INTO pricing_rules (id, scope, vendor, network, plan_type, variation_code, margin_bps, margin_kobo, min_margin_kobo, max_margin_kobo, round_to_kobo, active, note, created_by, updated_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.scope, nullToEmpty(input.vendor), nullToEmpty(input.network), nullToEmpty(input.planType), nullToEmpty(input.variationCode), Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), true, input.note?.trim() || null, input.createdBy ?? null, input.createdBy ?? null, now, now])
+    if (!result.rows[0]) throw new Error('Failed to create pricing rule.')
+    return mapPricingRuleRow(result.rows[0])
+  }
 
   getDb().prepare(`
     INSERT INTO pricing_rules (
@@ -3619,6 +3654,10 @@ export async function updatePricingRule(
   if (!existing) return null
 
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE pricing_rules SET margin_bps = ?, margin_kobo = ?, min_margin_kobo = ?, max_margin_kobo = ?, round_to_kobo = ?, note = ?, updated_by = ?, updated_at = ? WHERE id = ?`, [Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), input.note?.trim() || null, input.updatedBy ?? null, now, id])
+    return getPricingRuleById(id)
+  }
   getDb().prepare(`
     UPDATE pricing_rules SET
       margin_bps = ?,
@@ -3655,6 +3694,10 @@ export async function setPricingRuleActive(
   if (!existing) return null
 
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE pricing_rules SET active = ?, updated_by = ?, updated_at = ? WHERE id = ?', [active, updatedBy ?? null, now, id])
+    return getPricingRuleById(id)
+  }
   getDb().prepare(`
     UPDATE pricing_rules SET active = ?, updated_by = ?, updated_at = ? WHERE id = ?
   `).run(active ? 1 : 0, updatedBy ?? null, now, id)
@@ -3664,6 +3707,7 @@ export async function setPricingRuleActive(
 
 export async function deletePricingRule(id: string): Promise<boolean> {
   await ensureDbReady()
+  if (isPostgresEnabled()) return ((await queryPostgres('DELETE FROM pricing_rules WHERE id = ?', [id])).rowCount ?? 0) > 0
   const result = getDb().prepare('DELETE FROM pricing_rules WHERE id = ?').run(id)
   return Number(result.changes ?? 0) > 0
 }
