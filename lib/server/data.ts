@@ -6380,6 +6380,11 @@ export async function recordBeneficiaryVerification(input: {
 
 export async function getSessionsForUser(userId: string): Promise<SessionRecord[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM sessions WHERE expires_at <= ?', [new Date().toISOString()])
+    const result = await queryPostgres<SessionRow>('SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC', [userId])
+    return result.rows.map(mapSessionRow)
+  }
   const db = getDb()
   db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString())
   const rows = db
@@ -6439,6 +6444,14 @@ export async function createPasswordResetToken(userId: string, metadata?: { user
   const rawToken = randomBytes(24).toString('hex')
   const tokenHash = hashPasswordResetToken(rawToken)
   const id = `prt_${randomBytes(6).toString('hex')}`
+  if (isPostgresEnabled()) {
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM password_reset_tokens WHERE user_id = ?', [userId])
+      await queryPostgresClient(client, `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at, used_at, user_agent, ip_address) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`, [id, userId, tokenHash, expiresAt, nowIso, metadata?.userAgent ?? null, metadata?.ipAddress ?? null])
+    })
+    await insertAuditLog({ userId, action: 'auth.password_reset_requested', entityType: 'user', entityId: userId, metadata: { expiresAt } })
+    return { id, token: rawToken, expiresAt, createdAt: nowIso }
+  }
   const db = getDb()
 
   db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(userId)
@@ -6481,6 +6494,14 @@ export async function createEmailVerificationToken(userId: string, metadata?: { 
   const rawToken = randomBytes(24).toString('hex')
   const tokenHash = hashEmailVerificationToken(rawToken)
   const id = `evt_${randomBytes(6).toString('hex')}`
+  if (isPostgresEnabled()) {
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM email_verification_tokens WHERE user_id = ?', [userId])
+      await queryPostgresClient(client, `INSERT INTO email_verification_tokens (id, user_id, token_hash, expires_at, created_at, used_at, user_agent, ip_address) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`, [id, userId, tokenHash, expiresAt, nowIso, metadata?.userAgent ?? null, metadata?.ipAddress ?? null])
+    })
+    await insertAuditLog({ userId, action: 'auth.email_verification_requested', entityType: 'user', entityId: userId, metadata: { expiresAt } })
+    return { id, token: rawToken, expiresAt, createdAt: nowIso }
+  }
   const db = getDb()
 
   db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(userId)
@@ -6520,6 +6541,18 @@ export async function consumePasswordResetToken(token: string) {
   const trimmed = token.trim()
   if (!trimmed) return null
   const tokenHash = hashPasswordResetToken(trimmed)
+  if (isPostgresEnabled()) {
+    const consumed = await withPostgresTransaction(async client => {
+      const result = await queryPostgresClient<{ id: string; user_id: string; expires_at: string; used_at: string | null }>(client, 'SELECT * FROM password_reset_tokens WHERE token_hash = ? LIMIT 1 FOR UPDATE', [tokenHash])
+      const row = result.rows[0]
+      if (!row || row.used_at || new Date(row.expires_at).getTime() <= Date.now()) return null
+      await queryPostgresClient(client, 'UPDATE password_reset_tokens SET used_at = ? WHERE id = ?', [new Date().toISOString(), row.id])
+      return { id: row.id, userId: row.user_id }
+    })
+    if (!consumed) return null
+    await insertAuditLog({ userId: consumed.userId, action: 'auth.password_reset_consumed', entityType: 'user', entityId: consumed.userId })
+    return consumed
+  }
   const row = getDb()
     .prepare('SELECT * FROM password_reset_tokens WHERE token_hash = ? LIMIT 1')
     .get(tokenHash) as {
@@ -6559,6 +6592,18 @@ export async function consumeEmailVerificationToken(token: string) {
   const trimmed = token.trim()
   if (!trimmed) return null
   const tokenHash = hashEmailVerificationToken(trimmed)
+  if (isPostgresEnabled()) {
+    const consumed = await withPostgresTransaction(async client => {
+      const result = await queryPostgresClient<{ id: string; user_id: string; expires_at: string; used_at: string | null }>(client, 'SELECT * FROM email_verification_tokens WHERE token_hash = ? LIMIT 1 FOR UPDATE', [tokenHash])
+      const row = result.rows[0]
+      if (!row || row.used_at || new Date(row.expires_at).getTime() <= Date.now()) return null
+      await queryPostgresClient(client, 'UPDATE email_verification_tokens SET used_at = ? WHERE id = ?', [new Date().toISOString(), row.id])
+      return { id: row.id, userId: row.user_id }
+    })
+    if (!consumed) return null
+    await insertAuditLog({ userId: consumed.userId, action: 'auth.email_verification_consumed', entityType: 'user', entityId: consumed.userId })
+    return consumed
+  }
   const row = getDb()
     .prepare('SELECT * FROM email_verification_tokens WHERE token_hash = ? LIMIT 1')
     .get(tokenHash) as {
@@ -6595,6 +6640,11 @@ export async function consumeEmailVerificationToken(token: string) {
 
 export async function activateUserAccount(userId: string) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE users SET "accountStatus" = ? WHERE id = ?', ['active', userId])
+    await insertAuditLog({ userId, action: 'auth.email_verified', entityType: 'user', entityId: userId })
+    return getUserById(userId)
+  }
   getDb().prepare('UPDATE users SET accountStatus = ? WHERE id = ?').run('active', userId)
   await insertAuditLog({
     userId,
