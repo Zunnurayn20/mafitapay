@@ -8747,6 +8747,30 @@ export async function upsertSecuritySettings(
   updates: Partial<Pick<SecuritySettingsRecord, 'transactionPinEnabled' | 'twoFactorEnabled' | 'biometricEnabled'>>
 ): Promise<SecuritySettingsRecord> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      const selected = await queryPostgresClient<SecuritySettingsRow>(client, 'SELECT * FROM security_settings WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+      const row = selected.rows[0]
+      const existing = row ? mapSecuritySettingsRow(row) : null
+      const count = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM biometric_credentials WHERE user_id = ?', [userId])
+      const hasPin = Boolean(row?.transaction_pin_hash && row?.transaction_pin_salt)
+      const credentialCount = Number(count.rows[0]?.count ?? 0)
+      const next = {
+        transactionPinEnabled: hasPin ? (typeof updates.transactionPinEnabled === 'boolean' ? updates.transactionPinEnabled : existing?.transactionPinEnabled ?? false) : false,
+        twoFactorEnabled: updates.twoFactorEnabled ?? existing?.twoFactorEnabled ?? false,
+        biometricEnabled: credentialCount > 0 ? (updates.biometricEnabled ?? existing?.biometricEnabled ?? true) : false,
+      }
+      await queryPostgresClient(client, `
+        INSERT INTO security_settings (user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET transaction_pin_enabled = excluded.transaction_pin_enabled, two_factor_enabled = excluded.two_factor_enabled, biometric_enabled = excluded.biometric_enabled, updated_at = excluded.updated_at
+      `, [userId, next.transactionPinEnabled, row?.transaction_pin_hash ?? null, row?.transaction_pin_salt ?? null, Number(row?.transaction_pin_failed_attempts ?? 0), row?.transaction_pin_locked_until ?? null, next.twoFactorEnabled, next.biometricEnabled, existing?.createdAt ?? now, now])
+    })
+    const record = await getSecuritySettingsByUserId(userId)
+    if (!record) throw new Error('Unable to persist security settings')
+    return record
+  }
   const db = getDb()
   const row = db
     .prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1')
@@ -8796,6 +8820,23 @@ export async function upsertSecuritySettings(
 export async function upsertTransactionPin(userId: string, nextPin: string, currentPin?: string) {
   await ensureDbReady()
   assertValidTransactionPin(nextPin)
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      const selected = await queryPostgresClient<SecuritySettingsRow>(client, 'SELECT * FROM security_settings WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+      const row = selected.rows[0]
+      if (row?.transaction_pin_hash && row.transaction_pin_salt) {
+        if (!currentPin) throw new Error('Current transaction PIN is required.')
+        assertValidTransactionPin(currentPin)
+        if (hashTransactionPin(currentPin, row.transaction_pin_salt) !== row.transaction_pin_hash) throw new Error('Current transaction PIN is incorrect.')
+      }
+      const pin = createTransactionPinRecord(nextPin)
+      await queryPostgresClient(client, `INSERT INTO security_settings (user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET transaction_pin_enabled = excluded.transaction_pin_enabled, transaction_pin_hash = excluded.transaction_pin_hash, transaction_pin_salt = excluded.transaction_pin_salt, transaction_pin_failed_attempts = excluded.transaction_pin_failed_attempts, transaction_pin_locked_until = excluded.transaction_pin_locked_until, updated_at = excluded.updated_at`, [userId, true, pin.transactionPinHash, pin.transactionPinSalt, 0, null, row?.two_factor_enabled ?? false, row?.biometric_enabled ?? true, row?.created_at ?? now, now])
+    })
+    const record = await getSecuritySettingsByUserId(userId)
+    if (!record) throw new Error('Unable to save transaction PIN.')
+    return record
+  }
   const db = getDb()
   const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
   const now = new Date().toISOString()
@@ -8844,6 +8885,18 @@ export async function upsertTransactionPin(userId: string, nextPin: string, curr
 export async function resetTransactionPin(userId: string, nextPin: string) {
   await ensureDbReady()
   assertValidTransactionPin(nextPin)
+  if (isPostgresEnabled()) {
+    const now = new Date().toISOString()
+    await withPostgresTransaction(async client => {
+      const selected = await queryPostgresClient<SecuritySettingsRow>(client, 'SELECT * FROM security_settings WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+      const row = selected.rows[0]
+      const pin = createTransactionPinRecord(nextPin)
+      await queryPostgresClient(client, `INSERT INTO security_settings (user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET transaction_pin_enabled = excluded.transaction_pin_enabled, transaction_pin_hash = excluded.transaction_pin_hash, transaction_pin_salt = excluded.transaction_pin_salt, transaction_pin_failed_attempts = excluded.transaction_pin_failed_attempts, transaction_pin_locked_until = excluded.transaction_pin_locked_until, updated_at = excluded.updated_at`, [userId, true, pin.transactionPinHash, pin.transactionPinSalt, 0, null, row?.two_factor_enabled ?? false, row?.biometric_enabled ?? true, row?.created_at ?? now, now])
+    })
+    const record = await getSecuritySettingsByUserId(userId)
+    if (!record) throw new Error('Unable to reset transaction PIN.')
+    return record
+  }
   const db = getDb()
   const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
   const now = new Date().toISOString()
@@ -8881,6 +8934,16 @@ export async function resetTransactionPin(userId: string, nextPin: string) {
 export async function disableTransactionPin(userId: string, currentPin: string) {
   await ensureDbReady()
   assertValidTransactionPin(currentPin)
+  if (isPostgresEnabled()) {
+    const current = await queryPostgres<SecuritySettingsRow>('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1', [userId])
+    const row = current.rows[0]
+    if (!row?.transaction_pin_hash || !row.transaction_pin_salt) throw new Error('Transaction PIN is not set.')
+    if (hashTransactionPin(currentPin, row.transaction_pin_salt) !== row.transaction_pin_hash) throw new Error('Current transaction PIN is incorrect.')
+    await queryPostgres('UPDATE security_settings SET transaction_pin_enabled = ?, transaction_pin_hash = NULL, transaction_pin_salt = NULL, transaction_pin_failed_attempts = ?, transaction_pin_locked_until = NULL, updated_at = ? WHERE user_id = ?', [false, 0, new Date().toISOString(), userId])
+    const record = await getSecuritySettingsByUserId(userId)
+    if (!record) throw new Error('Unable to update transaction PIN.')
+    return record
+  }
   const db = getDb()
   const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
   if (!row?.transaction_pin_hash || !row.transaction_pin_salt) {
@@ -8911,6 +8974,23 @@ export async function disableTransactionPin(userId: string, currentPin: string) 
 export async function verifyTransactionPinForUser(userId: string, pin: string) {
   await ensureDbReady()
   assertValidTransactionPin(pin)
+  if (isPostgresEnabled()) return withPostgresTransaction(async client => {
+    const selected = await queryPostgresClient<SecuritySettingsRow>(client, 'SELECT * FROM security_settings WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+    const row = selected.rows[0]
+    if (!row?.transaction_pin_hash || !row.transaction_pin_salt) throw new Error('Set up a transaction PIN before continuing.')
+    if (row.transaction_pin_locked_until && new Date(row.transaction_pin_locked_until).getTime() > Date.now()) throw new Error(`Transaction PIN is temporarily locked until ${new Date(row.transaction_pin_locked_until).toLocaleString('en-NG')}.`)
+    const now = new Date().toISOString()
+    if (hashTransactionPin(pin, row.transaction_pin_salt) !== row.transaction_pin_hash) {
+      const failedAttempts = Number(row.transaction_pin_failed_attempts ?? 0) + 1
+      const lockedUntil = failedAttempts >= TRANSACTION_PIN_MAX_FAILED_ATTEMPTS ? new Date(Date.now() + TRANSACTION_PIN_LOCK_MINUTES * 60_000).toISOString() : null
+      await queryPostgresClient(client, 'UPDATE security_settings SET transaction_pin_failed_attempts = ?, transaction_pin_locked_until = ?, updated_at = ? WHERE user_id = ?', [failedAttempts, lockedUntil, now, userId])
+      if (lockedUntil) throw new Error(`Too many failed PIN attempts. Try again after ${new Date(lockedUntil).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}.`)
+      throw new Error('Transaction PIN is incorrect.')
+    }
+    const updated = await queryPostgresClient<SecuritySettingsRow>(client, 'UPDATE security_settings SET transaction_pin_failed_attempts = ?, transaction_pin_locked_until = NULL, transaction_pin_enabled = ?, updated_at = ? WHERE user_id = ? RETURNING *', [0, true, now, userId])
+    if (!updated.rows[0]) throw new Error('Unable to validate transaction PIN.')
+    return mapSecuritySettingsRow(updated.rows[0])
+  })
   const db = getDb()
   const row = db.prepare('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1').get(userId) as SecuritySettingsRow | undefined
   if (!row?.transaction_pin_hash || !row.transaction_pin_salt) {
