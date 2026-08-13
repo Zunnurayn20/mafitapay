@@ -5916,6 +5916,10 @@ export async function requeueDepositIntent(reference: string): Promise<DepositIn
     throw new Error(`Deposit intent is ${current.status} and cannot be requeued.`)
   }
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE deposit_intents SET status = 'pending', retry_count = COALESCE(retry_count, 0) + 1, failure_reason = NULL, updated_at = ? WHERE reference = ?`, [now, reference])
+    return getDepositIntentByReference(reference)
+  }
   getDb().prepare(`
     UPDATE deposit_intents
     SET status = 'pending', retry_count = COALESCE(retry_count, 0) + 1, failure_reason = NULL, updated_at = ?
@@ -5941,6 +5945,17 @@ export async function createPayoutRequest(input: {
   await ensureDbReady()
   const now = new Date().toISOString()
   const id = `po_${randomBytes(6).toString('hex')}`
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PayoutRequestRow>(`
+      INSERT INTO payout_requests (id, user_id, transaction_id, reference, amount, provider, merchant_id, beneficiary, provider_reference, provider_status, last_sync_at, last_sync_status, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.userId, input.transactionId, input.reference, input.amount, input.provider,
+      input.merchantId ?? null, input.beneficiary ?? null, input.providerReference ?? null,
+      input.providerStatus ?? null, input.lastSyncAt ?? null, input.lastSyncStatus ?? null,
+      input.status ?? 'pending', now, now])
+    if (!result.rows[0]) throw new Error('Unable to create payout request')
+    return mapPayoutRequestRow(result.rows[0])
+  }
   getDb().prepare(`
     INSERT INTO payout_requests (
       id, user_id, transaction_id, reference, amount, provider, merchant_id, beneficiary, provider_reference, provider_status, last_sync_at, last_sync_status, status, created_at, updated_at
@@ -5970,6 +5985,10 @@ export async function createPayoutRequest(input: {
 
 export async function getPayoutRequestByReference(reference: string): Promise<PayoutRequest | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PayoutRequestRow>('SELECT * FROM payout_requests WHERE reference = ? LIMIT 1', [reference])
+    return result.rows[0] ? mapPayoutRequestRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM payout_requests WHERE reference = ? LIMIT 1').get(reference) as PayoutRequestRow | undefined
   return row ? mapPayoutRequestRow(row) : null
 }
@@ -5995,6 +6014,14 @@ export async function listPayoutRequests(input?: { status?: PayoutRequest['statu
     args.push(`%${input.provider.trim()}%`)
   }
 
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PayoutRequestRow>(`
+      SELECT * FROM payout_requests ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC LIMIT ?
+    `, [...args, limit] as Array<string | number>)
+    return result.rows.map(mapPayoutRequestRow)
+  }
+
   const rows = getDb().prepare(`
     SELECT * FROM payout_requests
     ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
@@ -6007,6 +6034,10 @@ export async function listPayoutRequests(input?: { status?: PayoutRequest['statu
 
 export async function getPayoutRequestByTransactionId(transactionId: string): Promise<PayoutRequest | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<PayoutRequestRow>('SELECT * FROM payout_requests WHERE transaction_id = ? LIMIT 1', [transactionId])
+    return result.rows[0] ? mapPayoutRequestRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM payout_requests WHERE transaction_id = ? LIMIT 1').get(transactionId) as PayoutRequestRow | undefined
   return row ? mapPayoutRequestRow(row) : null
 }
@@ -6014,6 +6045,10 @@ export async function getPayoutRequestByTransactionId(transactionId: string): Pr
 export async function updatePayoutRequestStatus(reference: string, status: PayoutRequest['status'], providerReference?: string, providerStatus?: string, failureReason?: string, lastSyncAt?: string, lastSyncStatus?: string): Promise<PayoutRequest | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE payout_requests SET status = ?, provider_reference = COALESCE(?, provider_reference), provider_status = COALESCE(?, provider_status), last_sync_at = COALESCE(?, last_sync_at), last_sync_status = COALESCE(?, last_sync_status), failure_reason = CASE WHEN ? = 'failed' THEN COALESCE(?, failure_reason, 'Settlement failed') ELSE NULL END, updated_at = ? WHERE reference = ?`, [status, providerReference ?? null, providerStatus ?? null, lastSyncAt ?? null, lastSyncStatus ?? null, status, failureReason ?? null, now, reference])
+    return getPayoutRequestByReference(reference)
+  }
   getDb().prepare(`
     UPDATE payout_requests
     SET status = ?, provider_reference = COALESCE(?, provider_reference), provider_status = COALESCE(?, provider_status), last_sync_at = COALESCE(?, last_sync_at), last_sync_status = COALESCE(?, last_sync_status), failure_reason = CASE WHEN ? = 'failed' THEN COALESCE(?, failure_reason, 'Settlement failed') ELSE NULL END, updated_at = ?
@@ -6025,6 +6060,10 @@ export async function updatePayoutRequestStatus(reference: string, status: Payou
 export async function markPayoutRequestSync(reference: string, providerStatus?: string, failureReason?: string): Promise<PayoutRequest | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE payout_requests SET last_sync_at = ?, last_sync_status = COALESCE(?, last_sync_status), provider_status = COALESCE(?, provider_status), failure_reason = COALESCE(?, failure_reason), updated_at = ? WHERE reference = ?`, [now, providerStatus ?? null, providerStatus ?? null, failureReason ?? null, now, reference])
+    return getPayoutRequestByReference(reference)
+  }
   getDb().prepare(`
     UPDATE payout_requests
     SET last_sync_at = ?, last_sync_status = COALESCE(?, last_sync_status), provider_status = COALESCE(?, provider_status), failure_reason = COALESCE(?, failure_reason), updated_at = ?
@@ -6041,6 +6080,10 @@ export async function requeuePayoutRequest(reference: string): Promise<PayoutReq
     throw new Error(`Payout request is ${current.status} and cannot be requeued.`)
   }
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE payout_requests SET status = 'pending', retry_count = COALESCE(retry_count, 0) + 1, failure_reason = NULL, updated_at = ? WHERE reference = ?`, [now, reference])
+    return getPayoutRequestByReference(reference)
+  }
   getDb().prepare(`
     UPDATE payout_requests
     SET status = 'pending', retry_count = COALESCE(retry_count, 0) + 1, failure_reason = NULL, updated_at = ?
