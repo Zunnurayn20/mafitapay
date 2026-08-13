@@ -3291,6 +3291,16 @@ export async function getUserByVirtualAccountNumber(accountNumber: string): Prom
   const normalized = accountNumber.trim()
   if (!normalized) return null
 
+  if (isPostgresEnabled()) {
+    const wallets = await queryPostgres<Pick<WalletRow, 'user_id' | 'virtual_accounts'>>('SELECT user_id, virtual_accounts FROM wallets')
+    for (const wallet of wallets.rows) {
+      const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
+      if (!accounts.some(item => typeof item.accountNumber === 'string' && item.accountNumber.trim() === normalized)) continue
+      return getUserById(wallet.user_id)
+    }
+    return null
+  }
+
   const rows = getDb()
     .prepare('SELECT user_id, virtual_accounts FROM wallets')
     .all() as Pick<WalletRow, 'user_id' | 'virtual_accounts'>[]
@@ -3313,6 +3323,16 @@ export async function getUserByVirtualAccountReference(reference: string): Promi
   await ensureDbReady()
   const normalized = reference.trim()
   if (!normalized) return null
+
+  if (isPostgresEnabled()) {
+    const wallets = await queryPostgres<Pick<WalletRow, 'user_id' | 'virtual_accounts'>>('SELECT user_id, virtual_accounts FROM wallets')
+    for (const wallet of wallets.rows) {
+      const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
+      if (!accounts.some(item => typeof item.reference === 'string' && item.reference.trim() === normalized)) continue
+      return getUserById(wallet.user_id)
+    }
+    return null
+  }
 
   const rows = getDb()
     .prepare('SELECT user_id, virtual_accounts FROM wallets')
@@ -9542,6 +9562,12 @@ export async function insertAuditLog(input: {
 export async function listAuditLogs(input?: { limit?: number; reference?: string }): Promise<AuditLog[]> {
   await ensureDbReady()
   const limit = Math.max(1, Math.min(100, input?.limit ?? 50))
+  if (isPostgresEnabled()) {
+    const result = input?.reference?.trim()
+      ? await queryPostgres<AuditLogRow>('SELECT * FROM audit_logs WHERE entity_id = ? OR metadata LIKE ? ORDER BY created_at DESC LIMIT ?', [input.reference.trim(), `%${input.reference.trim()}%`, limit])
+      : await queryPostgres<AuditLogRow>('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?', [limit])
+    return result.rows.map(mapAuditLogRow)
+  }
   const rows = input?.reference?.trim()
     ? getDb()
       .prepare(`
