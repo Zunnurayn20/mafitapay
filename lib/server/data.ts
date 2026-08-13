@@ -886,6 +886,23 @@ function mapSessionRow(row: SessionRow): SessionRecord {
   }
 }
 
+function mapTransactionRow(row: TransactionRow): Transaction {
+  return {
+    id: row.id,
+    type: row.type as Transaction['type'],
+    status: row.status as Transaction['status'],
+    amount: Number(row.amount),
+    fee: Number(row.fee),
+    description: row.description,
+    reference: row.reference,
+    recipient: row.recipient ?? undefined,
+    narration: row.narration ?? undefined,
+    createdAt: row.created_at,
+    icon: row.icon ?? undefined,
+    metadata: parseJson(row.metadata, undefined as Transaction['metadata']),
+  }
+}
+
 function mapNotificationRow(row: NotificationRow): NotificationRecord {
   return {
     id: row.id,
@@ -3898,6 +3915,11 @@ export async function getTransactionById(userId: string, transactionId: string):
 
 export async function getAnyTransactionById(transactionId: string): Promise<{ userId: string; transaction: Transaction } | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>('SELECT * FROM transactions WHERE id = ? LIMIT 1', [transactionId])
+    const row = result.rows[0]
+    return row ? { userId: row.user_id, transaction: mapTransactionRow(row) } : null
+  }
   const row = getDb()
     .prepare('SELECT * FROM transactions WHERE id = ? LIMIT 1')
     .get(transactionId) as TransactionRow | undefined
@@ -3925,6 +3947,11 @@ export async function getAnyTransactionById(transactionId: string): Promise<{ us
 
 export async function getTransactionByReference(reference: string): Promise<{ userId: string; transaction: Transaction } | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>('SELECT * FROM transactions WHERE reference = ? LIMIT 1', [reference])
+    const row = result.rows[0]
+    return row ? { userId: row.user_id, transaction: mapTransactionRow(row) } : null
+  }
   const row = getDb()
     .prepare('SELECT * FROM transactions WHERE reference = ? LIMIT 1')
     .get(reference) as TransactionRow | undefined
@@ -3952,6 +3979,13 @@ export async function getTransactionByReference(reference: string): Promise<{ us
 
 export async function createStandaloneTransaction(userId: string, transaction: Transaction): Promise<Transaction> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`INSERT INTO transactions (id, user_id, type, status, amount, fee, description, reference, recipient, narration, created_at, icon, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [transaction.id, userId, transaction.type, transaction.status, transaction.amount, transaction.fee, transaction.description, transaction.reference, transaction.recipient ?? null, transaction.narration ?? null, transaction.createdAt, transaction.icon ?? null, transaction.metadata ? JSON.stringify(transaction.metadata) : null])
+    const inserted = await getTransactionById(userId, transaction.id)
+    if (!inserted) throw new Error('Unable to persist transaction.')
+    await maybeApplyFirstSuccessfulTransactionRewards(userId, inserted)
+    return inserted
+  }
   const db = getDb()
   db.prepare(`
     INSERT INTO transactions (
@@ -3983,6 +4017,12 @@ export async function createStandaloneTransaction(userId: string, transaction: T
 
 export async function updateTransactionStatus(userId: string, transactionId: string, status: Transaction['status']) {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE transactions SET status = ? WHERE id = ? AND user_id = ?', [status, transactionId, userId])
+    const updated = await getTransactionById(userId, transactionId)
+    if (updated) await maybeApplyFirstSuccessfulTransactionRewards(userId, updated)
+    return updated
+  }
   getDb().prepare('UPDATE transactions SET status = ? WHERE id = ? AND user_id = ?').run(status, transactionId, userId)
   const updated = await getTransactionById(userId, transactionId)
   if (updated) {
@@ -3993,6 +4033,10 @@ export async function updateTransactionStatus(userId: string, transactionId: str
 
 export async function listRecentTransactions(limit = 40): Promise<Array<{ userId: string; transaction: Transaction }>> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>('SELECT * FROM transactions ORDER BY created_at DESC LIMIT ?', [limit])
+    return result.rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
+  }
   const rows = getDb()
     .prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT ?')
     .all(limit) as TransactionRow[]
@@ -4018,6 +4062,14 @@ export async function listRecentTransactions(limit = 40): Promise<Array<{ userId
 
 export async function listPendingBillTransactions(limit = 50): Promise<Array<{ userId: string; transaction: Transaction }>> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>(`
+      SELECT * FROM transactions WHERE status = 'pending'
+      AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+      ORDER BY created_at DESC LIMIT ?
+    `, [limit])
+    return result.rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
+  }
   const rows = getDb()
     .prepare(`
       SELECT * FROM transactions
@@ -4051,6 +4103,10 @@ export async function listPendingBillTransactions(limit = 50): Promise<Array<{ u
 
 export async function getLedgerEntriesForTransaction(userId: string, transactionId: string): Promise<LedgerEntry[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<LedgerEntryRow>('SELECT * FROM ledger_entries WHERE user_id = ? AND transaction_id = ? ORDER BY created_at ASC', [userId, transactionId])
+    return result.rows.map(mapLedgerEntryRow)
+  }
   const rows = getDb()
     .prepare('SELECT * FROM ledger_entries WHERE user_id = ? AND transaction_id = ? ORDER BY created_at ASC')
     .all(userId, transactionId) as LedgerEntryRow[]
@@ -4059,6 +4115,7 @@ export async function getLedgerEntriesForTransaction(userId: string, transaction
 
 export async function listLedgerEntries(limit = 100): Promise<LedgerEntry[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) return (await queryPostgres<LedgerEntryRow>('SELECT * FROM ledger_entries ORDER BY created_at DESC LIMIT ?', [limit])).rows.map(mapLedgerEntryRow)
   const rows = getDb()
     .prepare('SELECT * FROM ledger_entries ORDER BY created_at DESC LIMIT ?')
     .all(limit) as LedgerEntryRow[]
