@@ -114,6 +114,7 @@ export async function getFlutterwaveBalance(currency = 'NGN'): Promise<Flutterwa
         Accept: 'application/json',
       },
       cache: 'no-store',
+      signal: AbortSignal.timeout(12_000),
     })
 
     const payload = await response.json().catch(() => null)
@@ -159,7 +160,9 @@ export async function getFlutterwaveBalance(currency = 'NGN'): Promise<Flutterwa
       configured: true,
       success: false,
       currency: normalizedCurrency,
-      message: error instanceof Error ? error.message : 'Flutterwave balance request failed.',
+      message: error instanceof Error && error.name === 'TimeoutError'
+        ? 'Flutterwave balance request timed out. Try again shortly.'
+        : error instanceof Error ? error.message : 'Flutterwave balance request failed.',
     }
   }
 }
