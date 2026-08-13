@@ -4,17 +4,19 @@ import { useState } from 'react'
 import { AdminButton, AdminError, AdminInput, AdminSelect, AdminTable, AdminThead } from '@/components/admin/AdminUi'
 
 type DisabledPlan = { vendor: 'amigo' | 'asbdata' | 'bardetech'; networkId: number; planId: string; reason?: string; disabledAt: string; disabledBy?: string }
-type CatalogPlan = { vendor: DisabledPlan['vendor']; networkId: number; network: string; planId: string; label: string }
+type CatalogPlan = { vendor: DisabledPlan['vendor']; networkId: number; network: string; planId: string; category: string; label: string }
 const VENDOR_LABELS = { amigo: 'Amigo', asbdata: 'ASBDATA', bardetech: 'Bardetech' } as const
 
 export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: DisabledPlan[]; catalog: CatalogPlan[] }) {
   const [plans, setPlans] = useState(initialPlans)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState<{ vendor: DisabledPlan['vendor']; networkId: string; planId: string; reason: string }>({ vendor: 'asbdata', networkId: '', planId: '', reason: '' })
+  const [form, setForm] = useState<{ vendor: DisabledPlan['vendor']; networkId: string; category: string; planId: string; reason: string }>({ vendor: 'asbdata', networkId: '', category: '', planId: '', reason: '' })
   const vendorPlans = catalog.filter(plan => plan.vendor === form.vendor)
   const networks = Array.from(new Map(vendorPlans.map(plan => [plan.networkId, plan.network])).entries())
-  const availablePlans = vendorPlans.filter(plan => String(plan.networkId) === form.networkId)
+  const networkPlans = vendorPlans.filter(plan => String(plan.networkId) === form.networkId)
+  const categories = Array.from(new Set(networkPlans.map(plan => plan.category).filter(Boolean))).sort()
+  const availablePlans = networkPlans.filter(plan => !form.category || plan.category === form.category)
 
   async function update(payload: Record<string, unknown>) {
     setBusy(true); setError('')
@@ -34,13 +36,17 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
   }
 
   return <div className="space-y-6 p-4">
-    <form onSubmit={disable} className="grid gap-3 md:grid-cols-4">
-      <AdminSelect value={form.vendor} onChange={event => setForm({ vendor: event.target.value as DisabledPlan['vendor'], networkId: '', planId: '', reason: '' })}>
+    <form onSubmit={disable} className="grid gap-3 md:grid-cols-5">
+      <AdminSelect value={form.vendor} onChange={event => setForm({ vendor: event.target.value as DisabledPlan['vendor'], networkId: '', category: '', planId: '', reason: '' })}>
         {Object.entries(VENDOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </AdminSelect>
-      <AdminSelect required value={form.networkId} onChange={event => setForm(current => ({ ...current, networkId: event.target.value, planId: '' }))}>
+      <AdminSelect required value={form.networkId} onChange={event => setForm(current => ({ ...current, networkId: event.target.value, category: '', planId: '' }))}>
         <option value="">Choose network</option>
         {networks.map(([id, network]) => <option key={id} value={id}>{network}</option>)}
+      </AdminSelect>
+      <AdminSelect disabled={!form.networkId} value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value, planId: '' }))}>
+        <option value="">All categories</option>
+        {categories.map(category => <option key={category} value={category}>{category}</option>)}
       </AdminSelect>
       <AdminSelect required disabled={!form.networkId} value={form.planId} onChange={event => setForm(current => ({ ...current, planId: event.target.value }))}>
         <option value="">Choose data plan</option>
