@@ -4942,6 +4942,13 @@ export async function updateWalletVirtualAccounts(userId: string, virtualAccount
 
 export async function listCryptoDepositAddressesByUserId(userId: string): Promise<CryptoDepositAddress[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositAddressRow>(`
+      SELECT * FROM crypto_deposit_addresses WHERE user_id = ? AND is_active = ?
+      ORDER BY CASE address_family WHEN 'evm' THEN 1 WHEN 'solana' THEN 2 WHEN 'ton' THEN 3 WHEN 'near' THEN 4 WHEN 'sui' THEN 5 ELSE 9 END, created_at ASC
+    `, [userId, true])
+    return result.rows.map(mapCryptoDepositAddressRow)
+  }
   const rows = getDb().prepare(`
     SELECT * FROM crypto_deposit_addresses
     WHERE user_id = ? AND is_active = 1
@@ -4961,6 +4968,12 @@ export async function listCryptoDepositAddressesByUserId(userId: string): Promis
 
 export async function listCryptoDepositAddressesByFamily(addressFamily: CryptoDepositAddress['addressFamily']): Promise<CryptoDepositAddress[]> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositAddressRow>(
+      'SELECT * FROM crypto_deposit_addresses WHERE address_family = ? AND is_active = ? ORDER BY created_at ASC', [addressFamily, true]
+    )
+    return result.rows.map(mapCryptoDepositAddressRow)
+  }
   const rows = getDb().prepare(`
     SELECT * FROM crypto_deposit_addresses
     WHERE address_family = ? AND is_active = 1
@@ -4974,6 +4987,12 @@ export async function getCryptoDepositAddressByUserAndFamily(
   addressFamily: CryptoDepositAddress['addressFamily'],
 ): Promise<CryptoDepositAddress | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositAddressRow>(`
+      SELECT * FROM crypto_deposit_addresses WHERE user_id = ? AND address_family = ? AND is_active = ? LIMIT 1
+    `, [userId, addressFamily, true])
+    return result.rows[0] ? mapCryptoDepositAddressRow(result.rows[0]) : null
+  }
   const row = getDb().prepare(`
     SELECT * FROM crypto_deposit_addresses
     WHERE user_id = ? AND address_family = ? AND is_active = 1
@@ -4988,6 +5007,14 @@ export async function getCryptoDepositAddressSecretById(id: string): Promise<{
   keyVersion: string
 } | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositAddressRow>(
+      'SELECT * FROM crypto_deposit_addresses WHERE id = ? AND is_active = ? LIMIT 1', [id, true]
+    )
+    const row = result.rows[0]
+    if (!row) return null
+    return { record: mapCryptoDepositAddressRow(row), secret: decryptSensitiveValue(row.encrypted_secret), keyVersion: row.key_version }
+  }
   const row = getDb().prepare(`
     SELECT * FROM crypto_deposit_addresses
     WHERE id = ? AND is_active = 1
@@ -5018,6 +5045,17 @@ export async function createCryptoDepositAddress(input: {
   const encrypted = encryptSensitiveValue(input.secret)
   const id = `cda_${randomBytes(6).toString('hex')}`
 
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO crypto_deposit_addresses (id, user_id, address_family, network_label, address, encrypted_secret, key_version, derivation_path, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, address_family) DO NOTHING
+    `, [id, input.userId, input.addressFamily, input.networkLabel, input.address, encrypted.payload,
+      encrypted.keyVersion, input.derivationPath ?? null, true, now, now])
+    const record = await getCryptoDepositAddressByUserAndFamily(input.userId, input.addressFamily)
+    if (!record) throw new Error('Unable to create crypto deposit address.')
+    return record
+  }
+
   getDb().prepare(`
     INSERT INTO crypto_deposit_addresses (
       id, user_id, address_family, network_label, address, encrypted_secret, key_version, derivation_path, is_active, created_at, updated_at
@@ -5044,6 +5082,12 @@ export async function createCryptoDepositAddress(input: {
 
 export async function getCryptoDepositEventByExternalId(externalEventId: string): Promise<CryptoDepositEvent | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositEventRow>(
+      'SELECT * FROM crypto_deposit_events WHERE external_event_id = ? LIMIT 1', [externalEventId]
+    )
+    return result.rows[0] ? mapCryptoDepositEventRow(result.rows[0]) : null
+  }
   const row = getDb().prepare(`
     SELECT * FROM crypto_deposit_events
     WHERE external_event_id = ?
@@ -5062,7 +5106,7 @@ export async function listCryptoDepositEvents(input: {
 } = {}): Promise<CryptoDepositEvent[]> {
   await ensureDbReady()
   let sql = `SELECT * FROM crypto_deposit_events WHERE 1=1`
-  const params: any[] = []
+  const params: Array<string | number> = []
   if (input.userId) {
     sql += ` AND user_id = ?`
     params.push(input.userId)
@@ -5086,6 +5130,10 @@ export async function listCryptoDepositEvents(input: {
   }
   sql += ` ORDER BY created_at DESC LIMIT ?`
   params.push(Math.min(200, input.limit ?? 50))
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositEventRow>(sql, params)
+    return result.rows.map(mapCryptoDepositEventRow)
+  }
   const rows = getDb().prepare(sql).all(...params) as CryptoDepositEventRow[]
   return rows.map(mapCryptoDepositEventRow)
 }
@@ -5093,6 +5141,12 @@ export async function listCryptoDepositEvents(input: {
 export async function getCryptoDepositAddressByAddress(address: string): Promise<CryptoDepositAddress | null> {
   await ensureDbReady()
   const normalized = address.toLowerCase()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositAddressRow>(`
+      SELECT * FROM crypto_deposit_addresses WHERE lower(address) = ? AND is_active = ? LIMIT 1
+    `, [normalized, true])
+    return result.rows[0] ? mapCryptoDepositAddressRow(result.rows[0]) : null
+  }
   const row = getDb().prepare(`
     SELECT * FROM crypto_deposit_addresses
     WHERE lower(address) = ? AND is_active = 1
@@ -5132,6 +5186,21 @@ export async function createCryptoDepositEvent(input: {
   const now = new Date().toISOString()
   const id = `cde_${randomBytes(6).toString('hex')}`
   const source = input.source ?? 'onchain'
+
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO crypto_deposit_events (id, external_event_id, user_id, address_id, address_family, pair_id, network, asset_symbol, amount_crypto, amount_units, tx_hash, block_number, log_index, status, sweep_status, crypto_order_id, transaction_id, payload, source, cex_exchange, cex_uid, cex_tx_id, memo, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(external_event_id) DO NOTHING
+    `, [id, input.externalEventId, input.userId, input.addressId ?? null, input.addressFamily ?? null,
+      input.pairId, input.network ?? null, input.assetSymbol, input.amountCrypto, input.amountUnits,
+      input.txHash ?? null, input.blockNumber ?? null, input.logIndex ?? null, input.status, 'pending',
+      input.cryptoOrderId ?? null, input.transactionId ?? null, input.payload ? JSON.stringify(input.payload) : null,
+      source, input.cexExchange ?? null, input.cexUid ?? null, input.cexTxId ?? null, input.memo ?? null, now, now])
+    const event = await getCryptoDepositEventByExternalId(input.externalEventId)
+    if (!event) throw new Error('Unable to create crypto deposit event.')
+    return event
+  }
 
   getDb().prepare(`
     INSERT INTO crypto_deposit_events (
