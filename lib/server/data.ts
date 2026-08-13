@@ -4847,6 +4847,15 @@ export async function createDepositIntent(input: {
   await ensureDbReady()
   const now = new Date().toISOString()
   const id = `di_${randomBytes(6).toString('hex')}`
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<DepositIntentRow>(`
+      INSERT INTO deposit_intents (id, user_id, transaction_id, reference, gross_amount, net_amount, fee, funding_method, provider, provider_reference, provider_status, account_number, bank_name, account_name, expires_at, note, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.userId, input.transactionId, input.reference, input.grossAmount, input.netAmount, input.fee, input.fundingMethod, input.provider, input.providerReference ?? null, input.providerStatus ?? null, input.accountNumber ?? null, input.bankName ?? null, input.accountName ?? null, input.expiresAt ?? null, input.note ?? null, input.status ?? 'pending', now, now])
+    const row = result.rows[0]
+    if (!row) throw new Error('Unable to create deposit intent')
+    return mapDepositIntentRow(row)
+  }
   getDb().prepare(`
     INSERT INTO deposit_intents (
       id, user_id, transaction_id, reference, gross_amount, net_amount, fee, funding_method, provider, provider_reference, provider_status, account_number, bank_name, account_name, expires_at, note, status, created_at, updated_at
@@ -4880,6 +4889,10 @@ export async function createDepositIntent(input: {
 
 export async function getDepositIntentByReference(reference: string): Promise<DepositIntent | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<DepositIntentRow>('SELECT * FROM deposit_intents WHERE reference = ? LIMIT 1', [reference])
+    return result.rows[0] ? mapDepositIntentRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM deposit_intents WHERE reference = ? LIMIT 1').get(reference) as DepositIntentRow | undefined
   return row ? mapDepositIntentRow(row) : null
 }
@@ -4905,6 +4918,14 @@ export async function listDepositIntents(input?: { status?: DepositIntent['statu
     args.push(`%${input.provider.trim()}%`)
   }
 
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<DepositIntentRow>(`
+      SELECT * FROM deposit_intents ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC LIMIT ?
+    `, [...args, limit] as Array<string | number>)
+    return result.rows.map(mapDepositIntentRow)
+  }
+
   const rows = getDb().prepare(`
     SELECT * FROM deposit_intents
     ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
@@ -4917,6 +4938,10 @@ export async function listDepositIntents(input?: { status?: DepositIntent['statu
 
 export async function getDepositIntentByTransactionId(transactionId: string): Promise<DepositIntent | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<DepositIntentRow>('SELECT * FROM deposit_intents WHERE transaction_id = ? LIMIT 1', [transactionId])
+    return result.rows[0] ? mapDepositIntentRow(result.rows[0]) : null
+  }
   const row = getDb().prepare('SELECT * FROM deposit_intents WHERE transaction_id = ? LIMIT 1').get(transactionId) as DepositIntentRow | undefined
   return row ? mapDepositIntentRow(row) : null
 }
@@ -4924,6 +4949,10 @@ export async function getDepositIntentByTransactionId(transactionId: string): Pr
 export async function updateDepositIntentStatus(reference: string, status: DepositIntent['status'], providerReference?: string, providerStatus?: string, failureReason?: string): Promise<DepositIntent | null> {
   await ensureDbReady()
   const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`UPDATE deposit_intents SET status = ?, provider_reference = COALESCE(?, provider_reference), provider_status = COALESCE(?, provider_status), failure_reason = CASE WHEN ? = 'failed' THEN COALESCE(?, failure_reason, 'Settlement failed') ELSE NULL END, updated_at = ? WHERE reference = ?`, [status, providerReference ?? null, providerStatus ?? null, status, failureReason ?? null, now, reference])
+    return getDepositIntentByReference(reference)
+  }
   getDb().prepare(`
     UPDATE deposit_intents
     SET status = ?, provider_reference = COALESCE(?, provider_reference), provider_status = COALESCE(?, provider_status), failure_reason = CASE WHEN ? = 'failed' THEN COALESCE(?, failure_reason, 'Settlement failed') ELSE NULL END, updated_at = ?
@@ -4934,6 +4963,10 @@ export async function updateDepositIntentStatus(reference: string, status: Depos
 
 export async function updateWalletVirtualAccounts(userId: string, virtualAccounts: Wallet['virtualAccounts']): Promise<Wallet | null> {
   await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?', [JSON.stringify(virtualAccounts), userId])
+    return getWalletByUserId(userId)
+  }
   const db = getDb()
   db.prepare('UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?')
     .run(JSON.stringify(virtualAccounts), userId)
