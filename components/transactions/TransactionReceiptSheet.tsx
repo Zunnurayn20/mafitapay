@@ -26,8 +26,13 @@ export function TransactionReceiptSheet({
   const status = receiptStatus(transaction.status)
   const StatusIcon = status.Icon
   const amountIsCredit = transaction.amount > 0
+  const recipientLabel = transaction.type === 'airtime' || transaction.type === 'data'
+    ? 'Recipient phone'
+    : transaction.type === 'crypto_buy' || transaction.type === 'crypto_sell'
+      ? 'Wallet address'
+      : 'Recipient'
   const supportingDetails: ReceiptDetail[] = [
-    ...(transaction.recipient ? [{ label: 'Recipient', value: transaction.recipient }] : []),
+    ...(transaction.recipient ? [{ label: recipientLabel, value: transaction.recipient }] : []),
     ...(transaction.narration ? [{ label: 'Narration', value: transaction.narration }] : []),
     ...details,
   ]

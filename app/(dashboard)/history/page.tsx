@@ -191,6 +191,17 @@ function buildReceiptShareText(detail: {
   ].join('\n')
 }
 
+function buildReceiptDetails(detail: { transaction: Transaction; cryptoOrder: CryptoOrder | null }) {
+  const recipientPhone = (detail.transaction.type === 'airtime' || detail.transaction.type === 'data')
+    && typeof detail.transaction.metadata?.account === 'string'
+    ? detail.transaction.metadata.account
+    : null
+  return [
+    ...(recipientPhone ? [{ label: 'Recipient phone', value: recipientPhone }] : []),
+    ...(detail.cryptoOrder?.walletAddress ? [{ label: 'Wallet address', value: detail.cryptoOrder.walletAddress, mono: true }] : []),
+  ]
+}
+
 export default function HistoryPage() {
   const { refreshSession, showToast, transactions } = useAppStore()
   const cryptoAssets = useCryptoAssets()
@@ -607,6 +618,7 @@ export default function HistoryPage() {
             <TransactionReceiptSheet
               id="history-receipt-sheet"
               transaction={detail.transaction}
+              details={buildReceiptDetails(detail)}
               title={formatHistoryTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
                 ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
                 : undefined)}
@@ -770,6 +782,7 @@ export default function HistoryPage() {
                 <TransactionReceiptSheet
                   id="history-receipt-sheet"
                   transaction={detail.transaction}
+                  details={buildReceiptDetails(detail)}
                   title={formatHistoryTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
                     ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
                     : undefined)}
