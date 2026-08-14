@@ -112,7 +112,9 @@ export default async function AdminOverviewPage() {
     amber: 'text-amber-700',
     red: 'text-red-700',
   }[liquidityTone]
-  const cryptoTreasuryItems = (liquidity.cryptoTreasury?.conversions ?? []).filter((item: any) => item.ready || item.skipped === 'below_threshold')
+  // Keep every configured crypto treasury visible, including an empty BNB/POL balance. Hiding a
+  // zero balance makes it look as though one network was accidentally merged into another.
+  const cryptoTreasuryItems = liquidity.cryptoTreasury?.conversions ?? []
 
   return (
     <div className="space-y-4">
@@ -223,7 +225,7 @@ export default async function AdminOverviewPage() {
                 <div key={item.pairId} className="rounded-md bg-white p-2">
                   <div className="text-[11px] font-bold text-slate-700">{item.pairId}</div>
                   <div className="mt-1 font-mono text-xs font-bold text-slate-900">≈ ${(Number(item.quotedUsdcUnits || 0) / 1_000_000).toFixed(4)} USDC</div>
-                  <div className="mt-1 text-[10px] text-slate-500">{Number(item.quotedUsdcUnits || 0) < 20_000_000 ? 'Below auto threshold' : 'Eligible for auto conversion'}</div>
+                  <div className="mt-1 text-[10px] text-slate-500">{item.skipped === 'empty' ? 'No balance' : item.error ? 'Balance unavailable' : Number(item.quotedUsdcUnits || 0) < 20_000_000 ? 'Below auto threshold' : 'Eligible for auto conversion'}</div>
                 </div>
               ))}
             </div>
