@@ -1,8 +1,16 @@
 'use client'
 
-import { Badge } from '@/components/ui/Badge'
+import { CheckCircle2, Clock3, ReceiptText, ShieldCheck, XCircle } from 'lucide-react'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import type { Transaction } from '@/types'
+
+type ReceiptDetail = { label: string; value: string; mono?: boolean }
+
+function receiptStatus(status: Transaction['status']) {
+  if (status === 'success') return { label: 'Successful', Icon: CheckCircle2, className: 'bg-[#e9f8ee] text-[#178343] ring-[#b9e6c7]' }
+  if (status === 'failed') return { label: 'Failed', Icon: XCircle, className: 'bg-[#fff0ed] text-[#c33b25] ring-[#f3c6bc]' }
+  return { label: 'Processing', Icon: Clock3, className: 'bg-[#fff7e7] text-[#9b6c19] ring-[#f0d59b]' }
+}
 
 export function TransactionReceiptSheet({
   id,
@@ -13,84 +21,82 @@ export function TransactionReceiptSheet({
   id: string
   transaction: Transaction
   title: string
-  details?: Array<{ label: string; value: string; mono?: boolean }>
+  details?: ReceiptDetail[]
 }) {
+  const status = receiptStatus(transaction.status)
+  const StatusIcon = status.Icon
+  const amountIsCredit = transaction.amount > 0
+  const supportingDetails: ReceiptDetail[] = [
+    ...(transaction.recipient ? [{ label: 'Recipient', value: transaction.recipient }] : []),
+    ...(transaction.narration ? [{ label: 'Narration', value: transaction.narration }] : []),
+    ...details,
+  ]
+
   return (
-    <div
-      id={id}
-      className="relative mt-3 overflow-hidden border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-5 text-[#2c2418] shadow-[0_18px_40px_rgba(0,0,0,.18)]"
-    >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
-        style={{ backgroundImage: "url('/mafitapay-logo.png')", backgroundSize: 'contain' }}
-      />
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
-      <div className="relative">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[2px] text-[#8c6b31]">MafitaPay Receipt</div>
-            <div className="mt-2 text-[18px] font-bold text-[#1f1a12]">
-              {title}
+    <article id={id} className="relative overflow-hidden rounded-[26px] border border-[#e6d7b9] bg-[#fffdf8] text-[#292114] shadow-[0_22px_55px_rgba(53,39,17,.2)]">
+      <div className="absolute inset-x-0 top-0 h-1.5 bg-[linear-gradient(90deg,#9b7131_0%,#d4b46f_45%,#7e5723_100%)]" />
+      <div aria-hidden="true" className="pointer-events-none absolute right-[-4.25rem] top-14 h-52 w-52 rounded-full border-[18px] border-[#b99650]/[.055]" />
+      <div aria-hidden="true" className="pointer-events-none absolute right-[-1.25rem] top-[7.25rem] h-24 w-24 rounded-full border-[8px] border-[#b99650]/[.055]" />
+
+      <div className="relative px-5 pb-5 pt-6 sm:px-6">
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2b2113] shadow-[0_6px_14px_rgba(43,33,19,.22)]">
+              <ReceiptText size={21} className="text-[#f1d491]" strokeWidth={1.8} />
             </div>
-            <div className="mt-1 text-[11px] font-mono text-[#7c6a4b]">{transaction.reference}</div>
-          </div>
-          <div className="rounded-full border border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.7)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[1px] text-[#8c6b31]">
-            Official Copy
-          </div>
-        </div>
-
-        <div className="mt-5 border-y border-dashed border-[rgba(140,107,49,.3)] py-4">
-          <div className="text-[10px] font-bold uppercase tracking-[1.5px] text-[#8c6b31]">Amount</div>
-          <div className={`mt-1 text-[28px] font-black tracking-[-0.02em] ${transaction.amount > 0 ? 'text-[#227a45]' : 'text-[#1f1a12]'}`}>
-            {transaction.amount > 0 ? '+' : ''}{formatNGN(transaction.amount)}
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
-            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Recorded</div>
-            <div className="mt-1 text-[11px] font-mono text-[#3a3123]">{fmtDate(transaction.createdAt)}</div>
-          </div>
-          <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
-            <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Status</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Badge variant="pending">{transaction.type.replace(/_/g, ' ')}</Badge>
-              <Badge variant={transaction.status === 'success' ? 'success' : transaction.status === 'failed' ? 'failed' : 'pending'}>
-                {transaction.status}
-              </Badge>
+            <div>
+              <div className="text-[10px] font-extrabold uppercase tracking-[.19em] text-[#9b7131]">MafitaPay</div>
+              <div className="mt-0.5 text-[11px] font-medium text-[#75664d]">Official transaction receipt</div>
             </div>
           </div>
+          <div className="flex items-center gap-1.5 rounded-full border border-[#e6d7b9] bg-white/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-[.1em] text-[#7d6333]">
+            <ShieldCheck size={13} /> Verified record
+          </div>
+        </header>
+
+        <section className="mt-6 text-center">
+          <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ring-1 ${status.className}`}>
+            <StatusIcon size={25} strokeWidth={2} />
+          </div>
+          <div className="mt-3 text-[11px] font-extrabold uppercase tracking-[.15em] text-[#8f7040]">{status.label}</div>
+          <h2 className="mt-1 text-[18px] font-extrabold tracking-tight text-[#251c10]">{title}</h2>
+          <div className={`mt-3 text-[32px] font-black tracking-[-.045em] ${amountIsCredit ? 'text-[#188447]' : 'text-[#251c10]'}`}>
+            {amountIsCredit ? '+' : ''}{formatNGN(transaction.amount)}
+          </div>
+        </section>
+
+        <div className="relative my-5 border-t border-dashed border-[#d9c6a3]">
+          <span aria-hidden="true" className="absolute -left-8 -top-3 h-6 w-6 rounded-full bg-[var(--clay)]" />
+          <span aria-hidden="true" className="absolute -right-8 -top-3 h-6 w-6 rounded-full bg-[var(--clay)]" />
         </div>
 
-        {(transaction.recipient || transaction.narration) && (
-          <div className="mt-4 grid gap-3">
-            {transaction.recipient && (
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Recipient</div>
-                <div className="mt-1 text-[11px] text-[#3a3123]">{transaction.recipient}</div>
-              </div>
-            )}
-            {transaction.narration && (
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Narration</div>
-                <div className="mt-1 text-[11px] text-[#3a3123]">{transaction.narration}</div>
-              </div>
-            )}
-          </div>
-        )}
+        <section className="rounded-2xl border border-[#ecdfc7] bg-[#fffcf5] p-4">
+          <ReceiptRow label="Reference" value={transaction.reference} mono />
+          <ReceiptRow label="Transaction type" value={transaction.type.replace(/_/g, ' ')} />
+          <ReceiptRow label="Date & time" value={fmtDate(transaction.createdAt)} mono last />
+        </section>
 
-        {details.length > 0 && (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {details.map(detail => (
-              <div key={detail.label} className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">{detail.label}</div>
-                <div className={`mt-1 break-all text-[11px] text-[#3a3123] ${detail.mono ? 'font-mono' : ''}`}>{detail.value}</div>
-              </div>
+        {supportingDetails.length > 0 && (
+          <section className="mt-3 rounded-2xl border border-[#ecdfc7] bg-[#fffcf5] p-4">
+            {supportingDetails.map((detail, index) => (
+              <ReceiptRow key={`${detail.label}-${index}`} {...detail} last={index === supportingDetails.length - 1} />
             ))}
-          </div>
+          </section>
         )}
+
+        <footer className="mt-5 flex items-center justify-center gap-1.5 text-center text-[10px] font-medium text-[#8b795c]">
+          <ShieldCheck size={13} className="text-[#9b7131]" /> This receipt was generated by MafitaPay.
+        </footer>
       </div>
+    </article>
+  )
+}
+
+function ReceiptRow({ label, value, mono = false, last = false }: ReceiptDetail & { last?: boolean }) {
+  return (
+    <div className={`flex items-start justify-between gap-4 py-2.5 ${last ? '' : 'border-b border-[#ecdfc7]'}`}>
+      <span className="shrink-0 text-[9px] font-extrabold uppercase tracking-[.1em] text-[#927649]">{label}</span>
+      <span className={`break-all text-right text-[11px] font-semibold text-[#3b2f1d] ${mono ? 'font-mono text-[10px]' : ''}`}>{value}</span>
     </div>
   )
 }
