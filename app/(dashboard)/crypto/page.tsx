@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
+import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { useCryptoAssets, useCryptoAssetsRefreshing } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN, formatPercentChange, formatUSDAdaptive, fmtDate } from '@/lib/utils'
@@ -350,76 +351,21 @@ export default function CryptoPage() {
 
         {!loadingDetail && detail && (
           <div className="p-6 space-y-4">
-            <div className="relative overflow-hidden border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-5 text-[#2c2418] shadow-[0_18px_40px_rgba(0,0,0,.18)]">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 right-[-2.5rem] w-40 bg-center bg-no-repeat opacity-[0.07]"
-                style={{ backgroundImage: "url('/mafitapay-logo.png')", backgroundSize: 'contain' }}
-              />
-              <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]" />
-              <div className="relative flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-[2px] text-[#8c6b31]">MafitaPay Crypto Receipt</div>
-                  <div className="mt-2 text-[22px] font-black text-[#1f1a12]">
-                    {formatNGN(detail.transaction.amount)}
-                  </div>
-                  <div className="mt-2 text-[11px] font-mono text-[#7c6a4b]">{fmtDate(detail.transaction.createdAt)}</div>
-                </div>
-                <div className={`rounded-full border px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.8px] ${
-                  detail.transaction.status === 'success'
-                    ? 'border-[rgba(34,122,69,.18)] bg-[rgba(255,255,255,.72)] text-[#227a45]'
-                    : detail.transaction.status === 'failed'
-                      ? 'border-[rgba(196,52,26,.18)] bg-[rgba(255,255,255,.72)] text-[#b54027]'
-                      : 'border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.72)] text-[#8c6b31]'
-                }`}>
-                  {detail.transaction.status}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Reference</div>
-                <div className="mt-2 text-[12px] font-mono text-[#7c5f2a]">{detail.transaction.reference}</div>
-              </div>
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Wallet Address</div>
-                <div className="mt-2 break-all text-[12px] font-mono text-[#3a3123]">
-                  {detail.cryptoOrder?.walletAddress || 'Not available'}
-                </div>
-              </div>
-            </div>
-
-            {detail.cryptoOrder && (
-              <div className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-4">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Asset</div>
-                    <div className="mt-2 text-[12px] text-[#3a3123]">
-                      {formatCryptoQuantity(detail.cryptoOrder.cryptoAmount)} {String(detail.cryptoOrder.pairId).split('_')[0]}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Rate</div>
-                    <div className="mt-2 text-[12px] text-[#3a3123]">{formatNGN(detail.cryptoOrder.unitRate)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Network</div>
-                    <div className="mt-2 text-[12px] text-[#3a3123]">{getDetailNetwork()}</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Execution</div>
-                    <div className="mt-2 text-[12px] text-[#3a3123]">{detail.cryptoOrder.executionStatus || 'Pending'}</div>
-                  </div>
-                </div>
-                {detail.cryptoOrder.destinationTxHash && (
-                  <div className="mt-4">
-                    <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Destination Tx</div>
-                    <div className="mt-2 break-all text-[12px] font-mono text-[#7c5f2a]">{detail.cryptoOrder.destinationTxHash}</div>
-                  </div>
-                )}
-              </div>
-            )}
+            <TransactionReceiptSheet
+              id="crypto-trade-receipt"
+              transaction={detail.transaction}
+              title={formatTradeTitle(detail.transaction)}
+              details={[
+                { label: 'Wallet address', value: detail.cryptoOrder?.walletAddress || 'Not available', mono: true },
+                ...(detail.cryptoOrder ? [
+                  { label: 'Asset', value: `${formatCryptoQuantity(detail.cryptoOrder.cryptoAmount)} ${String(detail.cryptoOrder.pairId).split('_')[0]}` },
+                  { label: 'Rate', value: formatNGN(detail.cryptoOrder.unitRate) },
+                  { label: 'Network', value: getDetailNetwork() },
+                  { label: 'Execution', value: detail.cryptoOrder.executionStatus || 'Pending' },
+                  ...(detail.cryptoOrder.destinationTxHash ? [{ label: 'Destination transaction', value: detail.cryptoOrder.destinationTxHash, mono: true }] : []),
+                ] : []),
+              ]}
+            />
           </div>
         )}
       </Modal>

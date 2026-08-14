@@ -8,10 +8,12 @@ export function TransactionReceiptSheet({
   id,
   transaction,
   title,
+  details = [],
 }: {
   id: string
   transaction: Transaction
   title: string
+  details?: Array<{ label: string; value: string; mono?: boolean }>
 }) {
   return (
     <div
@@ -75,6 +77,17 @@ export function TransactionReceiptSheet({
                 <div className="mt-1 text-[11px] text-[#3a3123]">{transaction.narration}</div>
               </div>
             )}
+          </div>
+        )}
+
+        {details.length > 0 && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {details.map(detail => (
+              <div key={detail.label} className="border border-[rgba(140,107,49,.2)] bg-[rgba(255,255,255,.55)] p-3">
+                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[#8c6b31]">{detail.label}</div>
+                <div className={`mt-1 break-all text-[11px] text-[#3a3123] ${detail.mono ? 'font-mono' : ''}`}>{detail.value}</div>
+              </div>
+            ))}
           </div>
         )}
       </div>
