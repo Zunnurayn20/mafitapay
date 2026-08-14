@@ -123,7 +123,7 @@ export default function ConfirmTransactionPage() {
   const stateCopy = phase === 'processing' ? 'Do not close this page while we complete your transaction.' : phase === 'success' ? 'Your transaction was completed and your wallet has been updated.' : phase === 'failed' ? 'Nothing was completed successfully. You can try again.' : ''
 
   return (
-    <main className="flex h-[100dvh] max-w-md flex-col overflow-hidden bg-[var(--bg)] px-5 pb-5 pt-5 sm:mx-auto">
+    <main className="flex h-[100dvh] max-w-lg flex-col overflow-hidden bg-[var(--bg)] px-3 pb-5 pt-5 sm:mx-auto sm:px-4">
       <div className="shrink-0">
         {phase === 'review' ? <button type="button" onClick={() => { clearPendingConfirmation(); router.back() }} className="mb-5 flex items-center gap-1.5 text-xs text-[var(--muted)]"><ArrowLeft size={14} /> Cancel</button> : <div className="mb-5 h-5" />}
         {phase !== 'review' && <div className="mb-5">

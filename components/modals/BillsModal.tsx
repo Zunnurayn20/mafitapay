@@ -557,6 +557,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         details: [
           { label: 'Service', value: serviceName },
           ...(needsProvider ? [{ label: 'Network', value: provider }] : []),
+          ...(nextSelectedDataBundle ? [{ label: 'Plan', value: `${nextSelectedDataBundle.label}${nextSelectedDataBundle.validity ? ` · ${nextSelectedDataBundle.validity}` : ''}` }] : []),
           ...(needsAccount ? [{ label: 'Recipient', value: normalizedAccount }] : []),
         ],
         request: {
