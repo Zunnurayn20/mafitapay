@@ -207,7 +207,14 @@ export default async function AdminOverviewPage() {
         )}
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
           <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Crypto treasury balances</div>
-          <p className="mt-1 text-xs text-slate-500">Local BSC and Polygon inventory, separate from the NGN liquidity-match calculation. The quote shows estimated Base USDC if manually converted now.</p>
+          <p className="mt-1 text-xs text-slate-500">Base USDC is MafitaPay’s primary crypto liquidity. Local BSC and Polygon inventory is shown separately with its estimated Base-USDC conversion value. Crypto is not included in the NGN coverage total until we deliberately convert it.</p>
+          <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Primary Base USDC treasury</div>
+            <div className="mt-1 font-mono text-xl font-bold text-emerald-800">
+              {liquidity.baseTreasury ? `${(Number(liquidity.baseTreasury.usdcUnits) / 1_000_000).toFixed(6)} USDC` : 'Unavailable'}
+            </div>
+            <div className="mt-1 text-[10px] text-emerald-700">Live balance in the Base executor wallet</div>
+          </div>
           {cryptoTreasuryItems.length === 0 ? (
             <div className="mt-2 text-xs text-slate-500">No readable BSC or Polygon treasury balance.</div>
           ) : (
