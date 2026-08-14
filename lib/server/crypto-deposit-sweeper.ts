@@ -76,6 +76,11 @@ const SUI_GAS_BUFFER_MIST = BigInt(process.env.MAFITAPAY_SWEEP_SUI_GAS_BUFFER ??
 const NEAR_GAS_BUFFER_YOCTO = BigInt(process.env.MAFITAPAY_SWEEP_NEAR_GAS_BUFFER ?? '50000000000000000000000')
 
 const MIN_EVM_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_MIN_EVM_GAS ?? '0.00001', 18)
+// Do not pay a swap + bridge for every small customer deposit. Funds first land in their
+// chain's MafitaPay treasury; when one asset can deliver at least this much USDC to Base, it is
+// converted in one treasury transaction. The value is USDC, so "20" means approximately $20.
+const EVM_TREASURY_BATCH_MIN_USDC_UNITS = parseUnits(process.env.MAFITAPAY_EVM_BATCH_CONVERSION_MIN_USDC ?? '20', 6)
+const EVM_TREASURY_BATCH_ENABLED = (process.env.MAFITAPAY_EVM_BATCH_CONVERSION ?? 'on').trim().toLowerCase() !== 'off'
 
 export interface SweepGasStat {
   timestamp: string
@@ -110,6 +115,10 @@ type SweepAsset = {
   tokenAddress?: Address
   gasBufferWei: bigint
   tokenGasTopupWei: bigint
+}
+
+declare global {
+  var __mafitapayEvmTreasuryBatchRunning: boolean | undefined
 }
 
 function createBaseClientsFromPrivateKey(privateKey: Hex) {
@@ -897,6 +906,108 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
   return bridgeTxHash
 }
 
+/**
+ * Converts accumulated BSC/Polygon treasury inventory to Base USDC only when the *quoted net*
+ * destination amount reaches the configured threshold. This avoids burning a customer's small
+ * deposit on individual bridge and swap fees.
+ */
+export async function runEvmTreasuryBatchConversion(input?: { chain?: 'bsc' | 'polygon' }) {
+  if (!EVM_TREASURY_BATCH_ENABLED) return { skipped: true, reason: 'disabled', conversions: [] as unknown[] }
+  if (globalThis.__mafitapayEvmTreasuryBatchRunning) return { skipped: true, reason: 'already_running', conversions: [] as unknown[] }
+
+  globalThis.__mafitapayEvmTreasuryBatchRunning = true
+  try {
+    const bscConfig = getBscExecutorConfig()
+    const polygonPrivateKey = process.env.MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined
+    const targets: Array<{ chain: 'bsc' | 'polygon'; asset: SweepAsset; privateKey?: Hex; address?: Address }> = [
+      {
+        chain: 'bsc',
+        asset: { chain: 'bsc', pairId: 'BNB_BSC', kind: 'native', gasBufferWei: BSC_GAS_BUFFER_WEI, tokenGasTopupWei: BSC_TOKEN_GAS_TOPUP_WEI },
+        privateKey: bscConfig.privateKey,
+        address: bscConfig.configuredAddress ?? (bscConfig.privateKey ? privateKeyToAccount(bscConfig.privateKey).address : undefined),
+      },
+      {
+        chain: 'bsc',
+        asset: { chain: 'bsc', pairId: 'USDT_BSC', kind: 'erc20', tokenAddress: bscConfig.usdtAddress, gasBufferWei: BSC_GAS_BUFFER_WEI, tokenGasTopupWei: BSC_TOKEN_GAS_TOPUP_WEI },
+        privateKey: bscConfig.privateKey,
+        address: bscConfig.configuredAddress ?? (bscConfig.privateKey ? privateKeyToAccount(bscConfig.privateKey).address : undefined),
+      },
+      {
+        chain: 'polygon',
+        asset: { chain: 'polygon', pairId: 'POL_POLYGON', kind: 'native', gasBufferWei: POL_GAS_BUFFER_WEI, tokenGasTopupWei: BigInt(0) },
+        privateKey: polygonPrivateKey,
+        address: process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS?.trim() ? getAddress(process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS.trim()) : (polygonPrivateKey ? privateKeyToAccount(polygonPrivateKey).address : undefined),
+      },
+      {
+        chain: 'polygon',
+        asset: { chain: 'polygon', pairId: 'USDC_POLYGON', kind: 'erc20', tokenAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', gasBufferWei: POL_GAS_BUFFER_WEI, tokenGasTopupWei: POLYGON_TOKEN_GAS_TOPUP_WEI },
+        privateKey: polygonPrivateKey,
+        address: process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS?.trim() ? getAddress(process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS.trim()) : (polygonPrivateKey ? privateKeyToAccount(polygonPrivateKey).address : undefined),
+      },
+      {
+        chain: 'polygon',
+        asset: { chain: 'polygon', pairId: 'USDT_POLYGON', kind: 'erc20', tokenAddress: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', gasBufferWei: POL_GAS_BUFFER_WEI, tokenGasTopupWei: POLYGON_TOKEN_GAS_TOPUP_WEI },
+        privateKey: polygonPrivateKey,
+        address: process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS?.trim() ? getAddress(process.env.MAFITAPAY_POLYGON_EXECUTOR_ADDRESS.trim()) : (polygonPrivateKey ? privateKeyToAccount(polygonPrivateKey).address : undefined),
+      },
+    ]
+
+    const conversions: Array<Record<string, unknown>> = []
+    for (const target of targets) {
+      if (input?.chain && target.chain !== input.chain) continue
+      if (!target.privateKey || !target.address) {
+        conversions.push({ pairId: target.asset.pairId, skipped: 'treasury_not_configured' })
+        continue
+      }
+      try {
+        const clients = target.chain === 'bsc'
+          ? createBscClientsFromPrivateKey(target.privateKey)
+          : createPolygonClientsFromPrivateKey(target.privateKey)
+        const amountUnits = target.asset.kind === 'native'
+          ? await clients.publicClient.getBalance({ address: target.address }) as bigint
+          : await clients.publicClient.readContract({ address: target.asset.tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [target.address] }) as bigint
+        if (amountUnits <= BigInt(0)) {
+          conversions.push({ pairId: target.asset.pairId, skipped: 'empty' })
+          continue
+        }
+
+        const fromChain = target.chain === 'bsc' ? 56 : 137
+        const fromToken = target.asset.tokenAddress || '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+        const quote = await getLifiQuoteForConversion({
+          fromChain,
+          fromToken,
+          toChain: 8453,
+          toToken: getBaseExecutorConfig().usdcAddress,
+          fromAmount: amountUnits.toString(),
+          fromAddress: target.address,
+          toAddress: getBaseExecutorConfig().configuredAddress,
+          dataSuffix: getBaseBuilderDataSuffix(),
+        })
+        const quotedNet = BigInt(quote?.estimate?.toAmountMin || quote?.estimate?.toAmount || '0')
+        if (quotedNet < EVM_TREASURY_BATCH_MIN_USDC_UNITS) {
+          conversions.push({ pairId: target.asset.pairId, skipped: 'below_threshold', quotedUsdcUnits: quotedNet.toString() })
+          continue
+        }
+
+        const txHash = await sweepEvmDepositViaBridgeToBaseUsdc({
+          privateKey: target.privateKey,
+          depositAddress: target.address,
+          asset: target.asset,
+          amountUnits,
+          externalEventId: `treasury_batch:${target.chain}:${target.asset.pairId}:${Date.now()}`,
+        })
+        conversions.push({ pairId: target.asset.pairId, converted: true, txHash, quotedUsdcUnits: quotedNet.toString() })
+      } catch (error) {
+        conversions.push({ pairId: target.asset.pairId, error: error instanceof Error ? error.message : 'conversion failed' })
+      }
+    }
+    console.log('[crypto-deposit-sweeper] EVM treasury batch completed', { thresholdUsdcUnits: EVM_TREASURY_BATCH_MIN_USDC_UNITS.toString(), conversions })
+    return { skipped: false, thresholdUsdcUnits: EVM_TREASURY_BATCH_MIN_USDC_UNITS.toString(), conversions }
+  } finally {
+    globalThis.__mafitapayEvmTreasuryBatchRunning = false
+  }
+}
+
 async function sweepSuiNative(input: {
   secret: string
   treasuryAddress: string
@@ -1205,7 +1316,7 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     }
     const amountUnits = BigInt(event.amountUnits)
     let hash: any
-    if (privateKeyForEvm && ['base', 'bsc', 'polygon'].includes(asset.chain) && event.pairId !== 'USDC_BASE') {
+    if (privateKeyForEvm && asset.chain === 'base' && event.pairId !== 'USDC_BASE') {
       // For EVM family deposits (except USDC on Base), sweep by directly bridging/converting from the user's deposit address
       // to USDC on Base. This makes the user's deposit address the originator on the source chain, so the bridge
       // records link the inflow on Base back to this specific deposit address for dashboard tracing.
@@ -1262,6 +1373,14 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       txHash: hash,
       treasuryAddress,
     }))
+
+    // BSC and Polygon now sweep directly into their local MafitaPay treasuries. A background
+    // batch conversion checks whether a full asset balance can economically reach Base USDC.
+    if (asset.chain === 'bsc' || asset.chain === 'polygon') {
+      void runEvmTreasuryBatchConversion({ chain: asset.chain }).catch(error => {
+        console.warn('[crypto-deposit-sweeper] EVM treasury batch trigger failed:', error instanceof Error ? error.message : String(error))
+      })
+    }
 
     return { swept: true, txHash: hash }
   } catch (error) {
