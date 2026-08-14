@@ -5,7 +5,7 @@ import {
   kickCryptoDepositScanner,
   syncCryptoDepositEventsOnce,
 } from '@/lib/server/crypto-deposit-scanner'
-import { getRecentSweepGasStats } from '@/lib/server/crypto-deposit-sweeper'
+import { getRecentSweepGasStats, runEvmTreasuryBatchConversion, sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import {
   listCryptoDepositEvents,
   getCryptoDepositEventByExternalId,
@@ -15,7 +15,6 @@ import {
   syncBinanceCexDeposits,
   listCexDepositIntents,
 } from '@/lib/server/data'
-import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 
 export async function GET(req: Request) {
   const admin = await requireAdminUser()
@@ -80,6 +79,21 @@ export async function POST(req: Request) {
   if (intent === 'sync' || intent === 'full-scan') {
     const res = await kickCryptoDepositScanner()
     return NextResponse.json({ data: res, success: true })
+  }
+
+  if (intent === 'treasury-batch-preview') {
+    const chain = body.chain === 'bsc' || body.chain === 'polygon' ? body.chain : undefined
+    const result = await runEvmTreasuryBatchConversion({ chain, dryRun: true, allowBelowThreshold: true })
+    return NextResponse.json({ data: result, success: true })
+  }
+
+  if (intent === 'treasury-batch-convert') {
+    if (body.confirm !== 'CONVERT') {
+      return NextResponse.json({ error: 'Explicit conversion confirmation is required.', success: false }, { status: 400 })
+    }
+    const chain = body.chain === 'bsc' || body.chain === 'polygon' ? body.chain : undefined
+    const result = await runEvmTreasuryBatchConversion({ chain, allowBelowThreshold: true })
+    return NextResponse.json({ data: result, success: true })
   }
 
   // Record a Binance internal transfer (CEX deposit). No on-chain tx. Triggers NGN credit.

@@ -62,6 +62,9 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const [depositPage, setDepositPage] = useState(0)
   const [syncingBinanceCex, setSyncingBinanceCex] = useState(false)
   const [recordingCex, setRecordingCex] = useState(false)
+  const [batchPreview, setBatchPreview] = useState<any | null>(null)
+  const [loadingBatchPreview, setLoadingBatchPreview] = useState(false)
+  const [runningBatchConversion, setRunningBatchConversion] = useState(false)
   const DEPOSIT_PAGE_SIZE = 20
   const {
     cryptoOrders,
@@ -254,6 +257,21 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           <div className="text-[10px] text-[var(--text2)]">On-chain detections from user deposit addresses • auto NGN credit at live sell rate • auto-sweep to treasury</div>
         </div>
         <div className="flex gap-2">
+          <Button variant="secondary" disabled={loadingBatchPreview} onClick={async () => {
+            setLoadingBatchPreview(true)
+            try {
+              const response = await fetch('/api/admin/crypto-deposits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intent: 'treasury-batch-preview' }) })
+              const json = await response.json()
+              if (!response.ok) throw new Error(json?.error || 'Unable to quote treasury conversion.')
+              setBatchPreview(json.data)
+            } catch (error) {
+              alert(error instanceof Error ? error.message : 'Unable to quote treasury conversion.')
+            } finally {
+              setLoadingBatchPreview(false)
+            }
+          }}>
+            {loadingBatchPreview ? 'Quoting…' : 'Review Treasury Conversion'}
+          </Button>
           <Button variant="secondary" disabled={refreshingCryptoDepositEvents} onClick={() => void triggerCryptoDepositSync?.()}>
             {refreshingCryptoDepositEvents ? 'Scanning…' : 'Trigger Full Scan'}
           </Button>
@@ -265,6 +283,38 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           </Button>
         </div>
       </div>
+
+      <Modal open={Boolean(batchPreview)} onClose={() => { if (!runningBatchConversion) setBatchPreview(null) }} title="Manual treasury conversion">
+        <div className="space-y-3 text-sm">
+          <p className="text-[var(--muted)]">This quote is live. It may convert a balance below the automatic $20 rule, so review the expected Base USDC carefully.</p>
+          <div className="space-y-2">
+            {(batchPreview?.conversions || []).map((item: any) => (
+              <div key={item.pairId} className="border border-[var(--border)] bg-[var(--clay)] p-3 text-xs">
+                <div className="font-bold text-[var(--text)]">{item.pairId}</div>
+                {item.ready ? <div className="mt-1 text-[var(--green2)]">Estimated Base USDC: {(Number(item.quotedUsdcUnits || 0) / 1_000_000).toFixed(6)}{item.belowThreshold ? ' (below automatic $20 threshold)' : ''}</div> : <div className="mt-1 text-[var(--muted)]">{item.skipped || item.error || 'No convertible balance'}</div>}
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setBatchPreview(null)} disabled={runningBatchConversion}>Cancel</Button>
+            <Button disabled={runningBatchConversion || !(batchPreview?.conversions || []).some((item: any) => item.ready)} onClick={async () => {
+              if (!window.confirm('Convert the quoted treasury balances to Base USDC now? This cannot be undone.')) return
+              setRunningBatchConversion(true)
+              try {
+                const response = await fetch('/api/admin/crypto-deposits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intent: 'treasury-batch-convert', confirm: 'CONVERT' }) })
+                const json = await response.json()
+                if (!response.ok) throw new Error(json?.error || 'Conversion could not be started.')
+                setBatchPreview(json.data)
+                await reloadCryptoDepositEvents?.()
+              } catch (error) {
+                alert(error instanceof Error ? error.message : 'Conversion failed.')
+              } finally {
+                setRunningBatchConversion(false)
+              }
+            }}>{runningBatchConversion ? 'Converting…' : 'Convert anyway'}</Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">

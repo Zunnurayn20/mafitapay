@@ -112,6 +112,7 @@ export default async function AdminOverviewPage() {
     amber: 'text-amber-700',
     red: 'text-red-700',
   }[liquidityTone]
+  const cryptoTreasuryItems = (liquidity.cryptoTreasury?.conversions ?? []).filter((item: any) => item.ready || item.skipped === 'below_threshold')
 
   return (
     <div className="space-y-4">
@@ -204,6 +205,23 @@ export default async function AdminOverviewPage() {
             coverage may read lower than reality. Hover a provider marked <strong>Error</strong> for the reason.
           </div>
         )}
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Crypto treasury balances</div>
+          <p className="mt-1 text-xs text-slate-500">Local BSC and Polygon inventory, separate from the NGN liquidity-match calculation. The quote shows estimated Base USDC if manually converted now.</p>
+          {cryptoTreasuryItems.length === 0 ? (
+            <div className="mt-2 text-xs text-slate-500">No readable BSC or Polygon treasury balance.</div>
+          ) : (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              {cryptoTreasuryItems.map((item: any) => (
+                <div key={item.pairId} className="rounded-md bg-white p-2">
+                  <div className="text-[11px] font-bold text-slate-700">{item.pairId}</div>
+                  <div className="mt-1 font-mono text-xs font-bold text-slate-900">≈ ${(Number(item.quotedUsdcUnits || 0) / 1_000_000).toFixed(4)} USDC</div>
+                  <div className="mt-1 text-[10px] text-slate-500">{Number(item.quotedUsdcUnits || 0) < 20_000_000 ? 'Below auto threshold' : 'Eligible for auto conversion'}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <section className="grid gap-3 md:grid-cols-3">

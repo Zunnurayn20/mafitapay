@@ -911,7 +911,7 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
  * destination amount reaches the configured threshold. This avoids burning a customer's small
  * deposit on individual bridge and swap fees.
  */
-export async function runEvmTreasuryBatchConversion(input?: { chain?: 'bsc' | 'polygon' }) {
+export async function runEvmTreasuryBatchConversion(input?: { chain?: 'bsc' | 'polygon'; dryRun?: boolean; allowBelowThreshold?: boolean }) {
   if (!EVM_TREASURY_BATCH_ENABLED) return { skipped: true, reason: 'disabled', conversions: [] as unknown[] }
   if (globalThis.__mafitapayEvmTreasuryBatchRunning) return { skipped: true, reason: 'already_running', conversions: [] as unknown[] }
 
@@ -984,8 +984,13 @@ export async function runEvmTreasuryBatchConversion(input?: { chain?: 'bsc' | 'p
           dataSuffix: getBaseBuilderDataSuffix(),
         })
         const quotedNet = BigInt(quote?.estimate?.toAmountMin || quote?.estimate?.toAmount || '0')
-        if (quotedNet < EVM_TREASURY_BATCH_MIN_USDC_UNITS) {
-          conversions.push({ pairId: target.asset.pairId, skipped: 'below_threshold', quotedUsdcUnits: quotedNet.toString() })
+        const belowThreshold = quotedNet < EVM_TREASURY_BATCH_MIN_USDC_UNITS
+        if (belowThreshold && !input?.allowBelowThreshold) {
+          conversions.push({ pairId: target.asset.pairId, skipped: 'below_threshold', sourceAmountUnits: amountUnits.toString(), quotedUsdcUnits: quotedNet.toString() })
+          continue
+        }
+        if (input?.dryRun) {
+          conversions.push({ pairId: target.asset.pairId, ready: true, belowThreshold, sourceAmountUnits: amountUnits.toString(), quotedUsdcUnits: quotedNet.toString(), quotedUsdcMinUnits: quote?.estimate?.toAmountMin ?? null, tool: quote?.tool ?? null })
           continue
         }
 
@@ -1002,7 +1007,7 @@ export async function runEvmTreasuryBatchConversion(input?: { chain?: 'bsc' | 'p
       }
     }
     console.log('[crypto-deposit-sweeper] EVM treasury batch completed', { thresholdUsdcUnits: EVM_TREASURY_BATCH_MIN_USDC_UNITS.toString(), conversions })
-    return { skipped: false, thresholdUsdcUnits: EVM_TREASURY_BATCH_MIN_USDC_UNITS.toString(), conversions }
+    return { skipped: false, dryRun: Boolean(input?.dryRun), thresholdUsdcUnits: EVM_TREASURY_BATCH_MIN_USDC_UNITS.toString(), conversions }
   } finally {
     globalThis.__mafitapayEvmTreasuryBatchRunning = false
   }
