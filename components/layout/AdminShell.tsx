@@ -1,5 +1,6 @@
 import { ShieldCheck } from 'lucide-react'
 import { AdminNav } from '@/components/admin/AdminNav'
+import { AdminBreadcrumbs } from '@/components/admin/AdminBreadcrumbs'
 import { AdminShellActions } from '@/components/layout/AdminShellActions'
 
 export function AdminShell({
@@ -36,6 +37,7 @@ export function AdminShell({
               <p className="mt-1 max-w-full truncate text-sm text-slate-500">
                 {email || name || 'Administrator'}
               </p>
+              <AdminBreadcrumbs />
             </div>
 
             <AdminShellActions />
