@@ -140,7 +140,7 @@ export default function ConfirmTransactionPage() {
         </section>
       </div>
 
-      {phase === 'review' && <section className="mt-auto shrink-0 px-1 pt-5 text-center">
+      {phase === 'review' && <section className="shrink-0 px-1 pt-5 text-center">
         <p className="text-[13px] font-semibold text-[var(--text)]">{nativeBiometric ? 'PIN or biometrics to confirm' : 'Enter PIN to confirm'}</p>
         <div className="my-4 flex justify-center gap-3.5">{[0, 1, 2, 3].map(index => <span key={index} className={`h-3 w-3 rounded-full transition-all ${index < pin.length ? 'scale-110 bg-[var(--gold)] shadow-[0_0_0_4px_rgba(202,165,96,.13)]' : 'bg-[var(--clay2)]'}`} />)}</div>
         {nativeBiometric && <p className="mb-2 text-[10px] text-[var(--muted)]">Enter your PIN, or tap the fingerprint icon.</p>}
