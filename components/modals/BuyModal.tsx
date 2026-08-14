@@ -12,7 +12,7 @@ import { readClipboardText } from '@/lib/clipboard'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { getCryptoNetworkFeeNgn, getMinimumBuyNgn } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
-import { fmtDate, formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
+import { formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
 import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
 
 type Step = 'form' | 'pin' | 'processing' | 'success'
@@ -26,13 +26,6 @@ function getApproxUsdNgnRate(asset?: CryptoAsset) {
     return asset.marketRate / asset.marketPriceUsd
   }
   return 0
-}
-
-function getPricingSourceLabel(source?: CryptoAsset['pricingSource']) {
-  if (source === 'live') return 'Live market'
-  if (source === 'backup') return 'Backup market'
-  if (source === 'safe') return 'Safe market'
-  return 'Market source'
 }
 
 function truncateAddress(value: string) {
@@ -495,48 +488,23 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       )}
 
       {asset && step === 'pin' && (
-        <div className="p-5 space-y-4">
-          <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Execution Summary</div>
-                <div className="mt-2 text-[16px] font-display font-black text-[var(--text)]">
-                  {formatCrypto(crypto, asset.symbol)} <span className="text-[var(--gold2)]">·</span> {asset.network}
-                </div>
-                <div className="mt-1 text-[11px] text-[var(--text2)]">
-                  {formatNGN(totalDebit)} will be reserved from your wallet after PIN confirmation
-                  {fee > 0 ? ` (includes ${formatNGN(fee)} network fee)` : ''}.
-                </div>
-                <div className="mt-3 inline-flex items-center border px-2.5 py-1 text-[8px] font-bold uppercase tracking-[.8px] text-[var(--text)]">
-                  <span className={`mr-2 inline-block h-1.5 w-1.5 rounded-full ${asset.pricingSource === 'live' ? 'bg-[var(--green2)]' : asset.pricingSource === 'backup' ? 'bg-[var(--gold2)]' : 'bg-[var(--red2)]'}`} />
-                  {getPricingSourceLabel(asset.pricingSource)}
-                </div>
-              </div>
-              <div className="border border-[rgba(99,102,241,.25)] bg-[rgba(79,70,229,.08)] px-3 py-2 text-right">
-                <div className="text-[8px] uppercase tracking-[1px] text-[var(--muted)]">Quote Timer</div>
-                <div className="mt-1 font-mono text-[14px] font-bold text-[var(--gold2)]">
-                  {String(Math.floor(quoteTimeLeft / 60)).padStart(2, '0')}:{String(quoteTimeLeft % 60).padStart(2, '0')}
-                </div>
-              </div>
-            </div>
-            {quote && (
-              <div className="mt-3 text-[10px] text-[var(--muted)]">
-                Quote locked until {fmtDate(quote.expiresAt)}. Source: {getPricingSourceLabel(asset.pricingSource)}.
-              </div>
-            )}
-          </div>
-          <PinPad
-            key={pinVersion}
-            onComplete={handlePin}
-            title={submittingOrder ? 'Submitting Order…' : nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Buy Order'}
-            subtitle={`Buying ${formatCrypto(crypto, asset.symbol)} on ${asset.network} for ${formatNGN(totalDebit)} from your NGN balance`}
-            secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
-            secondaryActionIconOnly
-            onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
-            onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
-            biometricBusy={nativeBiometricBusy}
-          />
-        </div>
+        <PinPad
+          key={pinVersion}
+          onComplete={handlePin}
+          title={`Buy ${asset.symbol}`}
+          subtitle={nativeTransactionBiometricEnabled ? 'PIN or biometrics to confirm your order.' : 'Enter your PIN to confirm your order.'}
+          details={[
+            { label: 'Asset', value: `${asset.symbol} · ${asset.network}` },
+            { label: 'Receive', value: formatCrypto(crypto, asset.symbol) },
+            { label: 'Total debit', value: formatNGN(totalDebit), emphasis: true },
+            ...(fee > 0 ? [{ label: 'Network fee', value: formatNGN(fee) }] : []),
+          ]}
+          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
+          secondaryActionIconOnly
+          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
+          biometricBusy={nativeBiometricBusy}
+        />
       )}
 
       {asset && step === 'processing' && (

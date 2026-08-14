@@ -63,49 +63,34 @@ export function PinPad({
   ]
 
   return (
-    <div className="p-5">
-      <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--clay)]">
-        <div className="border-b border-[var(--border)] bg-[linear-gradient(135deg,rgba(202,165,96,.12),rgba(79,70,229,.06))] px-5 py-5 text-center">
-          <div className="mb-2 text-[9px] uppercase tracking-[1.4px] text-[var(--muted)]">{title}</div>
-          {subtitle && (
-            <div className="mx-auto max-w-[24rem] text-[13px] leading-relaxed text-[var(--text2)]">{subtitle}</div>
-          )}
-          <div className="mt-5 flex justify-center gap-3">
-            {Array.from({ length }).map((_, i) => (
-              <div key={i} className={cn('pin-dot', i < pin.length && 'filled')} />
-            ))}
-          </div>
-          <div className="mt-3 text-[10px] text-[var(--muted)]">
-            {onBiometric
-              ? pin.length === 0
-                ? 'Enter your PIN, or use fingerprint / face.'
-                : `${pin.length}/${length} digits entered`
-              : pin.length === 0
-                ? 'Enter your 4-digit transaction PIN.'
-                : `${pin.length}/${length} digits entered`}
-          </div>
+    <div className="px-3 pb-5 sm:px-5">
+      {details && details.length > 0 && (
+        <section className="mb-5 rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
+          <div className="mb-3 text-sm font-bold text-[var(--text)]">{title}</div>
+          {details.map(row => (
+            <div key={row.label} className="flex items-baseline justify-between gap-3 border-b border-[var(--border)] py-2.5 text-[11px] last:border-0">
+              <span className="shrink-0 font-semibold uppercase tracking-wide text-[var(--muted)]">{row.label}</span>
+              <span className={cn('break-all text-right', row.emphasis ? 'font-bold text-[var(--gold2)]' : 'font-medium text-[var(--text)]')}>
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="text-center">
+        {!details?.length && <>
+          <div className="text-[13px] font-semibold text-[var(--text)]">{title}</div>
+          {subtitle && <div className="mx-auto mt-1 max-w-[26rem] text-[11px] leading-relaxed text-[var(--muted)]">{subtitle}</div>}
+        </>}
+        {details?.length && subtitle && <div className="mx-auto mb-1 max-w-[26rem] text-[11px] leading-relaxed text-[var(--muted)]">{subtitle}</div>}
+        <div className="my-4 flex justify-center gap-3.5">
+          {Array.from({ length }).map((_, i) => (
+            <span key={i} className={cn('h-3 w-3 rounded-full transition-all', i < pin.length ? 'scale-110 bg-[var(--gold)] shadow-[0_0_0_4px_rgba(202,165,96,.13)]' : 'bg-[var(--clay2)]')} />
+          ))}
         </div>
-
-        {details && details.length > 0 && (
-          <div className="border-b border-[var(--border)]">
-            {details.map(row => (
-              <div
-                key={row.label}
-                className="flex items-baseline justify-between gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[11px] last:border-0"
-              >
-                <span className="shrink-0 text-[var(--muted)]">{row.label}</span>
-                <span className={cn(
-                  'truncate text-right font-mono',
-                  row.emphasis ? 'font-bold text-[var(--gold2)]' : 'text-[var(--text)]',
-                )}>
-                  {row.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="grid grid-cols-3 gap-2 p-3">
+        {onBiometric && <div className="mb-3 text-[10px] text-[var(--muted)]">Enter your PIN, or tap the fingerprint icon.</div>}
+        <div className="grid grid-cols-3 gap-2.5 px-1 sm:px-4">
           {keys.map((k, i) => {
             if (k === '') return <div key={i} className="h-14" />
 
@@ -116,7 +101,7 @@ export function PinPad({
                   type="button"
                   onClick={onBiometric}
                   disabled={biometricBusy}
-                  className="flex h-14 items-center justify-center rounded-2xl border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.12)] text-[var(--gold2)] transition-all active:scale-95 disabled:opacity-60"
+                  className="flex h-12 items-center justify-center rounded-2xl border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.12)] text-[var(--gold2)] transition-all active:scale-95 disabled:opacity-60"
                   aria-label="Confirm with fingerprint or face"
                 >
                   <Fingerprint size={24} strokeWidth={1.75} className={biometricBusy ? 'animate-pulse' : ''} />
@@ -131,7 +116,7 @@ export function PinPad({
                   type="button"
                   onClick={del}
                   disabled={pin.length === 0 || biometricBusy}
-                  className="flex h-14 items-center justify-center rounded-2xl text-[var(--muted)] transition-colors active:bg-[var(--clay2)] disabled:opacity-40"
+                  className="flex h-12 items-center justify-center rounded-2xl text-[var(--muted)] transition-colors active:bg-[var(--clay2)] disabled:opacity-40"
                   aria-label="Backspace"
                 >
                   <Delete size={20} strokeWidth={1.75} />
@@ -145,17 +130,15 @@ export function PinPad({
                 type="button"
                 onClick={() => addDigit(Number(k))}
                 disabled={biometricBusy}
-                className="h-14 rounded-2xl border border-[var(--border)] bg-[var(--coal)] font-display text-xl font-semibold text-[var(--text)] shadow-[0_2px_8px_rgba(0,0,0,.12)] transition-all active:scale-95 active:bg-[rgba(202,165,96,.1)] disabled:opacity-60"
+                className="h-12 rounded-2xl border border-[var(--border)] bg-[var(--coal)] font-display text-lg font-semibold text-[var(--text)] shadow-[0_2px_8px_rgba(0,0,0,.12)] transition-all active:scale-95 active:bg-[rgba(202,165,96,.1)] disabled:opacity-60"
               >
                 {k}
               </button>
             )
           })}
         </div>
-      </div>
-      <div className="mt-3 px-1 text-center text-[10px] text-[var(--muted)]">
-        Submission continues automatically after the last digit.
-      </div>
+        <div className="mt-3 px-1 text-[10px] text-[var(--muted)]">Submission continues automatically after the last digit.</div>
+      </section>
       {footer && <div className="mt-3 flex justify-center">{footer}</div>}
       {secondaryActionLabel && onSecondaryAction && (
         <div className="mt-3 flex justify-center">
