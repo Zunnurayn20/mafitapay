@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { ChevronRight, Home } from 'lucide-react'
 import { usePathname } from 'next/navigation'
+import { useState } from 'react'
 
 const LABELS: Record<string, string> = {
   admin: 'Admin',
@@ -44,12 +45,24 @@ function labelFor(segment: string) {
 
 export function AdminBreadcrumbs() {
   const pathname = usePathname()
+  const [expanded, setExpanded] = useState(false)
   const segments = pathname.split('/').filter(Boolean)
   if (segments[0] !== 'admin') return null
 
   return (
     <nav aria-label="Breadcrumb" className="mt-3 flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-xs scrollbar-none">
       {segments.map((segment, index) => {
+        const hiddenMiddle = index > 0 && index < segments.length - 1 && !expanded
+        if (hiddenMiddle) {
+          // Render one compact expansion control in place of all intermediate levels.
+          if (index !== 1) return null
+          return (
+            <div key="collapsed" className="flex shrink-0 items-center gap-1">
+              <ChevronRight size={13} className="text-slate-300" />
+              <button type="button" onClick={() => setExpanded(true)} className="rounded-md px-2 py-1 font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-900" aria-label="Show full breadcrumb path">…</button>
+            </div>
+          )
+        }
         const href = `/${segments.slice(0, index + 1).join('/')}`
         const current = index === segments.length - 1
         return (
