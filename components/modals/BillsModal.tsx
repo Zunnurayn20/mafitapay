@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
@@ -17,6 +18,7 @@ import {
 import { useAppStore } from '@/store'
 import { readClipboardText } from '@/lib/clipboard'
 import { generateRef } from '@/lib/utils'
+import { savePendingConfirmation } from '@/lib/client/transaction-confirmation'
 
 interface BillsModalProps { open: boolean; onClose: () => void }
 type TouchedState = { amount: boolean; account: boolean; provider: boolean }
@@ -242,6 +244,7 @@ function formatPlanCategoryLabel(category: string) {
 }
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
+  const router = useRouter()
   const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions, securitySettings } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
@@ -547,9 +550,25 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     }
 
     if (!transactionPin && !biometricApprovalToken && !confirmWithBiometric) {
-      setPendingRequest(nextRequest)
-      setPinVersion(current => current + 1)
-      setStep('pin')
+      savePendingConfirmation({
+        kind: 'bill',
+        title: `${serviceName} payment`,
+        amountNgn: amt,
+        details: [
+          { label: 'Service', value: serviceName },
+          ...(needsProvider ? [{ label: 'Network', value: provider }] : []),
+          ...(needsAccount ? [{ label: 'Recipient', value: normalizedAccount }] : []),
+        ],
+        request: {
+          service: serviceName, provider, account: normalizedAccount, amount: amt,
+          billerCode: nextRequest.billerCode, itemCode: nextRequest.itemCode,
+          providerPlanId: nextRequest.providerPlanId, providerNetworkId: nextRequest.providerNetworkId,
+          providerName: nextRequest.providerName,
+        },
+        returnPath: '/dashboard',
+      })
+      onClose()
+      router.push('/confirm')
       return
     }
 
