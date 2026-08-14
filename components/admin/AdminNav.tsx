@@ -24,7 +24,9 @@ import {
   Wallet,
   Wrench,
   ChevronRight,
+  ChevronDown,
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 export const ADMIN_NAV_GROUPS = [
   {
@@ -102,18 +104,41 @@ function isActive(pathname: string, href: string, exact?: boolean) {
 
 export function AdminNav() {
   const pathname = usePathname()
+  const activeGroup = ADMIN_NAV_GROUPS.find(group => group.items.some(item => isActive(pathname, item.href, 'exact' in item ? item.exact : false)))?.label
+  const [openGroups, setOpenGroups] = useState<string[]>(() => activeGroup ? [activeGroup] : [])
+
+  // Navigating directly to a deep URL must reveal its parent group automatically.
+  useEffect(() => {
+    if (activeGroup) setOpenGroups(current => current.includes(activeGroup) ? current : [...current, activeGroup])
+  }, [activeGroup])
+
+  function toggleGroup(label: string) {
+    setOpenGroups(current => current.includes(label) ? current.filter(item => item !== label) : [...current, label])
+  }
 
   return (
     <nav
-      className="flex gap-2 overflow-x-auto overscroll-x-contain px-3 py-3 scrollbar-none [-webkit-overflow-scrolling:touch] xl:min-h-0 xl:flex-1 xl:flex-col xl:overflow-y-auto xl:overflow-x-hidden xl:px-0 xl:py-2"
+      className="min-h-0 space-y-1 overflow-y-auto overscroll-contain px-3 py-3 scrollbar-none [-webkit-overflow-scrolling:touch] xl:flex-1 xl:px-0 xl:py-2"
       style={{ scrollbarWidth: 'thin' }}
     >
       {ADMIN_NAV_GROUPS.map(group => (
-        <div key={group.label} className="flex gap-2 xl:flex-col">
-          <div className="hidden px-5 pb-1.5 pt-4 text-[8px] font-bold uppercase tracking-[1.6px] text-[var(--muted)] xl:block">
-            {group.label}
-          </div>
-          {group.items.map(item => {
+        <div key={group.label} className="border-b border-[var(--border)] last:border-b-0 xl:border-b-0">
+          <button
+            type="button"
+            onClick={() => toggleGroup(group.label)}
+            aria-expanded={openGroups.includes(group.label)}
+            className={`flex h-10 w-full items-center justify-between rounded-lg px-3 text-left text-sm font-bold transition-colors xl:rounded-none xl:px-5 xl:text-[12px] ${
+              activeGroup === group.label
+                ? 'bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'
+                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 xl:text-[var(--text2)] xl:hover:bg-[var(--clay)] xl:hover:text-[var(--text)]'
+            }`}
+          >
+            <span className="uppercase tracking-[.08em] xl:text-[9px] xl:tracking-[1.4px]">{group.label}</span>
+            {openGroups.includes(group.label) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </button>
+          {openGroups.includes(group.label) && (
+            <div className="space-y-1 pb-2 pl-2 xl:pl-0">
+              {group.items.map(item => {
             const Icon = item.icon
             const active = isActive(pathname, item.href, 'exact' in item ? item.exact : false)
 
@@ -122,7 +147,7 @@ export function AdminNav() {
                 key={item.href}
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
-                className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors xl:w-full xl:rounded-none xl:px-5 xl:py-2.5 xl:text-[13px] xl:transition-all xl:duration-150 xl:group ${
+                className={`inline-flex h-9 w-full items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors xl:rounded-none xl:px-7 xl:py-2 xl:text-[13px] xl:transition-all xl:duration-150 xl:group ${
                   active
                     ? 'bg-[var(--gold)] text-[var(--char)] shadow-[0_8px_20px_-10px_rgba(202,165,96,.55)] xl:border-r-[3px] xl:border-r-[var(--gold)] xl:bg-[rgba(79,70,229,.12)] xl:text-[var(--gold2)] xl:shadow-none'
                     : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 xl:text-[var(--text2)] xl:hover:bg-[var(--clay)] xl:hover:text-[var(--text)]'
@@ -137,7 +162,9 @@ export function AdminNav() {
                 {active ? <ChevronRight size={12} className="hidden opacity-60 xl:block xl:text-[var(--gold2)]" /> : null}
               </Link>
             )
-          })}
+              })}
+            </div>
+          )}
         </div>
       ))}
     </nav>
