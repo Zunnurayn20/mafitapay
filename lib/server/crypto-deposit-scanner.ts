@@ -76,12 +76,34 @@ const ASSET_SCAN_TIMEOUT_MS = Math.max(
   45_000,
   Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_ASSET_TIMEOUT_MS ?? 120_000) || 120_000
 )
+// The scanner runs inside the same web process as transfers and bill vending. Bound a full pass
+// so a cluster of unhealthy RPCs cannot monopolise that process for minutes at a time.
+const MAX_SCAN_CYCLE_MS = Math.max(
+  15_000,
+  Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_MAX_CYCLE_MS ?? 45_000) || 45_000
+)
 // Per-chain timeout overrides. A chain that *stalls* rather than erroring will hold the cycle for
 // the full timeout, so a 120s leash on a 120s cadence lets one chain consume the entire interval
 // and leave the HTTP server no idle time. NEAR is the observed offender: its public RPCs sit on
 // "Block either has never been observed on the node or has been garbage collected" until the
 // timeout fires, burning ~2 minutes every cycle. Keep such chains well under the cadence.
 const CHAIN_SCAN_TIMEOUT_OVERRIDES_MS: Partial<Record<ScanChain, number>> = {
+  base: Math.max(
+    8_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_BASE_TIMEOUT_MS ?? 15_000) || 15_000
+  ),
+  bsc: Math.max(
+    10_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_BSC_TIMEOUT_MS ?? 25_000) || 25_000
+  ),
+  polygon: Math.max(
+    8_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_POLYGON_TIMEOUT_MS ?? 15_000) || 15_000
+  ),
+  ton: Math.max(
+    8_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_TON_TIMEOUT_MS ?? 15_000) || 15_000
+  ),
   near: Math.max(
     10_000,
     Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_NEAR_TIMEOUT_MS ?? 25_000) || 25_000
@@ -1545,8 +1567,18 @@ export async function syncCryptoDepositEventsOnce() {
     const assetResults: Array<{ detected: number; settled: number; error: string | null }> = []
     const skippedChains = new Set<ScanChain>()
     const parkedChains = new Set<ScanChain>()
+    const failedChainsThisCycle = new Set<ScanChain>()
+    let cycleBudgetExhausted = false
     for (const asset of getSupportedAssets()) {
+      if (Date.now() - startedAt >= MAX_SCAN_CYCLE_MS) {
+        cycleBudgetExhausted = true
+        break
+      }
       if (!isChainEnabled(asset.chain)) {
+        skippedChains.add(asset.chain)
+        continue
+      }
+      if (failedChainsThisCycle.has(asset.chain)) {
         skippedChains.add(asset.chain)
         continue
       }
@@ -1585,6 +1617,9 @@ export async function syncCryptoDepositEventsOnce() {
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'scan failed'
         console.error(`[crypto-deposit-scanner] error for ${asset.pairId}:`, sanitizeErrorForLogs(error))
+        // A chain-level RPC outage will make every asset on that chain fail. Trying its token
+        // assets immediately afterwards only repeats the same network calls and delays payments.
+        failedChainsThisCycle.add(asset.chain)
         recordChainFailure(state, asset.chain, Date.now())
         if (asset.chain === 'polygon' && !warnedOnce.has('polygon-rpc')) {
           warnedOnce.add('polygon-rpc')
@@ -1601,7 +1636,7 @@ export async function syncCryptoDepositEventsOnce() {
     }
 
     const durationMs = Date.now() - startedAt
-    console.log(`[crypto-deposit-scanner] sync complete in ${Math.round(durationMs / 1000)}s: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}${parkedChains.size > 0 ? ` parkedChains=${[...parkedChains].join(',')}` : ''}`)
+    console.log(`[crypto-deposit-scanner] sync complete in ${Math.round(durationMs / 1000)}s: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}${cycleBudgetExhausted ? ' cycleBudgetExhausted=true' : ''}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}${parkedChains.size > 0 ? ` parkedChains=${[...parkedChains].join(',')}` : ''}`)
     return { skipped: false, detected, settled, errors }
   } finally {
     state.running = false
