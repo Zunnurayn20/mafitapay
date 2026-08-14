@@ -624,20 +624,6 @@ export default function HistoryPage() {
                 : undefined)}
             />
 
-            {detail.timeline.length > 1 && (
-            <div>
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Timeline</div>
-              <div className="grid gap-2">
-                {detail.timeline.map((item, index) => (
-                  <div key={`${item.label}-${index}`} className="flex items-center justify-between gap-3 border border-[var(--border)] bg-[var(--clay)] p-3">
-                    <div className="text-[11px] font-bold text-[var(--text)]">{item.label}</div>
-                    <div className="text-[10px] text-[var(--muted)]">{fmtDate(item.at)}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            )}
-
             {(detail.depositIntent || detail.payoutRequest) && (
               <div>
                 <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Settlement Record</div>
@@ -787,20 +773,6 @@ export default function HistoryPage() {
                     ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
                     : undefined)}
                 />
-
-                {detail.timeline.length > 1 && (
-                  <div>
-                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Timeline</div>
-                    <div className="grid gap-2">
-                      {detail.timeline.map((item, index) => (
-                        <div key={`${item.label}-${index}`} className="flex items-center justify-between gap-3 border border-[var(--border)] bg-[var(--clay)] p-3">
-                          <div className="text-[11px] font-bold text-[var(--text)]">{item.label}</div>
-                          <div className="text-[10px] text-[var(--muted)]">{fmtDate(item.at)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {(detail.depositIntent || detail.payoutRequest) && (
                   <div>
