@@ -1,7 +1,6 @@
 'use client'
 import { BankAccountPicker } from '@/components/ui/BankAccountPicker'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -13,13 +12,11 @@ import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/htt
 import { useAppStore } from '@/store'
 import { quoteTransferFee } from '@/lib/transfer-fees'
 import { formatNGN, generateRef } from '@/lib/utils'
-import { savePendingConfirmation } from '@/lib/client/transaction-confirmation'
 import type { Beneficiary } from '@/types'
 
 type Step = 'form' | 'pin'
 
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter()
   const openModal = useAppStore(state => state.openModal)
   const refreshSession = useAppStore(state => state.refreshSession)
   const setModalData = useAppStore(state => state.setModalData)
@@ -82,8 +79,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       const response = await fetch('/api/beneficiaries/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ kind: 'bank', bankCode, bankName, accountNumber, accountName }) })
       const data = await readJsonResponse<{ verification: { bankCode: string; bankName: string; accountNumber: string; accountName: string } }>(response)
       const verified = data.verification
-      savePendingConfirmation({ kind: 'withdrawal', title: 'Bank withdrawal', amountNgn: amt, details: [{ label: 'Recipient', value: verified.accountName }, { label: 'Bank', value: `${verified.bankName} · ${verified.accountNumber}` }, { label: 'Fee', value: formatNGN(quote.fee) }, { label: 'Total debit', value: formatNGN(quote.total) }], request: { amount: amt, ...verified }, returnPath: '/dashboard' })
-      onClose(); router.push('/confirm')
+      setPinVersion(current => current + 1)
+      setStep('pin')
     } catch (error) { showToast(toUserMessage(error, 'Beneficiary verification failed.'), 'error') }
   }
 
@@ -176,7 +173,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Withdraw Funds">
+    <Modal open={open} onClose={onClose} title="Withdraw Funds" bottomSheet={step === 'pin'}>
       {step === 'form' ? (
       <div className="flex flex-col gap-4 p-6">
         <div className="border border-[rgba(67,56,202,.2)] border-l-4 border-l-[var(--terra)] bg-[rgba(67,56,202,.07)] p-4">
