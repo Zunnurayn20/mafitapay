@@ -118,21 +118,21 @@ export default function ConfirmTransactionPage() {
   if (!payload) return <main className="flex h-[100dvh] items-center justify-center bg-[var(--bg)] px-5"><section className="w-full max-w-sm border border-[var(--border)] bg-[var(--coal)] p-7 text-center"><p className="text-sm text-[var(--text2)]">No transaction waiting for confirmation.</p><button onClick={() => router.push('/dashboard')} className="mt-6 text-xs font-bold text-[var(--gold2)]">Go to dashboard</button></section></main>
 
   const Icon = payload.kind === 'bill' ? ReceiptText : payload.kind === 'crypto_buy' ? ShoppingBag : Landmark
-  const stateLabel = phase === 'review' ? 'Review transaction' : phase === 'processing' ? 'Processing' : phase === 'success' ? 'Successful' : 'Failed'
+  const stateLabel = phase === 'processing' ? 'Processing' : phase === 'success' ? 'Successful' : 'Failed'
   const stateTitle = phase === 'processing' ? 'Please wait…' : payload.title
   const stateCopy = phase === 'processing' ? 'Do not close this page while we complete your transaction.' : phase === 'success' ? 'Your transaction was completed and your wallet has been updated.' : phase === 'failed' ? 'Nothing was completed successfully. You can try again.' : ''
 
   return (
     <main className="flex h-[100dvh] max-w-md flex-col overflow-hidden bg-[var(--bg)] px-5 pb-5 pt-5 sm:mx-auto">
       <div className="shrink-0">
-        {phase === 'review' ? <button type="button" onClick={() => { clearPendingConfirmation(); router.back() }} className="mb-4 flex items-center gap-1.5 text-xs text-[var(--muted)]"><ArrowLeft size={14} /> Cancel</button> : <div className="mb-4 h-5" />}
-        <div className="mb-4">
+        {phase === 'review' ? <button type="button" onClick={() => { clearPendingConfirmation(); router.back() }} className="mb-5 flex items-center gap-1.5 text-xs text-[var(--muted)]"><ArrowLeft size={14} /> Cancel</button> : <div className="mb-5 h-5" />}
+        {phase !== 'review' && <div className="mb-5">
           <div className="text-[10px] font-bold uppercase tracking-[.14em] text-[var(--gold2)]">{stateLabel}</div>
           <h1 className="mt-1 text-[26px] font-black tracking-tight text-[var(--text)]">{stateTitle}</h1>
           {stateCopy && <p className="mt-1.5 text-sm text-[var(--muted)]">{stateCopy}</p>}
-        </div>
-        <section className="border border-[var(--border)] bg-[var(--coal)] p-4">
-          <div className="mb-3 flex items-center gap-3">
+        </div>}
+        <section className={`rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-5 ${phase === 'review' ? 'mt-1' : ''}`}>
+          <div className="mb-4 flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[rgba(202,165,96,.14)] text-[var(--gold2)]"><Icon size={19} /></div>
             <div className="min-w-0"><div className="truncate text-sm font-bold text-[var(--text)]">{payload.title}</div><div className="mt-0.5 text-2xl font-black tracking-tight text-[var(--gold2)]">{formatNGN(payload.amountNgn)}</div></div>
           </div>
@@ -140,7 +140,7 @@ export default function ConfirmTransactionPage() {
         </section>
       </div>
 
-      {phase === 'review' && <section className="mt-auto shrink-0 border border-[var(--border)] bg-[var(--clay)] px-4 py-4 text-center">
+      {phase === 'review' && <section className="mt-auto shrink-0 px-1 pt-5 text-center">
         <p className="text-[13px] font-semibold text-[var(--text)]">{nativeBiometric ? 'PIN or biometrics to confirm' : 'Enter PIN to confirm'}</p>
         <div className="my-4 flex justify-center gap-3.5">{[0, 1, 2, 3].map(index => <span key={index} className={`h-3 w-3 rounded-full transition-all ${index < pin.length ? 'scale-110 bg-[var(--gold)] shadow-[0_0_0_4px_rgba(202,165,96,.13)]' : 'bg-[var(--clay2)]'}`} />)}</div>
         {nativeBiometric && <p className="mb-2 text-[10px] text-[var(--muted)]">Enter your PIN, or tap the fingerprint icon.</p>}
