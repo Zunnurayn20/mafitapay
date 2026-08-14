@@ -13,6 +13,7 @@ import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { sanitizeEvmRpcUrls } from '@/lib/server/evm-rpc'
+import { getRobinhoodRpcUrls, robinhoodChain } from '@/lib/server/robinhood-chain'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
@@ -99,6 +100,10 @@ const CHAIN_SCAN_TIMEOUT_OVERRIDES_MS: Partial<Record<ScanChain, number>> = {
   polygon: Math.max(
     8_000,
     Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_POLYGON_TIMEOUT_MS ?? 15_000) || 15_000
+  ),
+  robinhood: Math.max(
+    8_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_ROBINHOOD_TIMEOUT_MS ?? 15_000) || 15_000
   ),
   ton: Math.max(
     8_000,
@@ -256,7 +261,7 @@ async function getLogsChunked(
   return { logs, coveredTo }
 }
 
-type ScanChain = 'base' | 'bsc' | 'polygon' | 'solana' | 'ton' | 'sui' | 'near'
+type ScanChain = 'base' | 'bsc' | 'polygon' | 'robinhood' | 'solana' | 'ton' | 'sui' | 'near'
 type ScanState = {
   lastBlockByKey: Partial<Record<string, bigint>>
   running: boolean
@@ -274,7 +279,7 @@ type SupportedDepositAsset = {
   tokenAddress?: Address | string
 }
 
-type AnyClient = ReturnType<typeof createBaseClient> | ReturnType<typeof createBscClient> | ReturnType<typeof createPolygonClient>
+type AnyClient = ReturnType<typeof createBaseClient> | ReturnType<typeof createBscClient> | ReturnType<typeof createPolygonClient> | ReturnType<typeof createRobinhoodClient>
 
 declare global {
   var __mafitapayCryptoDepositScanner: ScanState | undefined
@@ -368,6 +373,17 @@ function createPolygonClient() {
 
   console.log(`[crypto-deposit-scanner] polygon RPCs configured (after removing dead endpoints incl. Blast): ${rpcUrls.map(sanitizeUrlForLogs).join(' | ')}`)
   return createPublicClient({ chain: polygon, transport })
+}
+
+function createRobinhoodClient() {
+  const { rpcUrls, dropped } = getRobinhoodRpcUrls()
+  if (dropped.length > 0) {
+    console.warn('[crypto-deposit-scanner] dropped invalid Robinhood RPC URLs:', dropped.map(url => sanitizeUrlForLogs(url)))
+  }
+  const transport = rpcUrls.length > 1
+    ? fallback(rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
+    : http(rpcUrls[0], { retryCount: 1, timeout: 10_000 })
+  return createPublicClient({ chain: robinhoodChain, transport })
 }
 
 function createTonClient() {
@@ -481,6 +497,14 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       kind: 'erc20',
       tokenAddress: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F' as any,
     },
+    {
+      chain: 'robinhood',
+      pairId: 'ETH_ROBINHOOD',
+      network: 'Robinhood',
+      symbol: 'ETH',
+      decimals: 18,
+      kind: 'native',
+    },
     // Additional Polygon ERC20s and non-EVM fully supported for deposits + sweeps
     {
       chain: 'solana',
@@ -525,7 +549,7 @@ function getSupportedAssets(): SupportedDepositAsset[] {
     },
   ]
 
-  const chainOrder = ['base', 'bsc', 'polygon', 'solana', 'ton', 'sui', 'near'] as const
+  const chainOrder = ['base', 'bsc', 'polygon', 'robinhood', 'solana', 'ton', 'sui', 'near'] as const
   const kindOrder: Record<SupportedDepositAsset['kind'], number> = {
     native: 0,
     spl: 0,
@@ -1541,6 +1565,7 @@ export async function syncCryptoDepositEventsOnce() {
     const baseClient = createBaseClient()
     const bscClient = createBscClient()
     const polygonClient = createPolygonClient()
+    const robinhoodClient = createRobinhoodClient()
     const tonClient = createTonClient()
     const solanaConnection = createSolanaConnection()
     const suiClient = createSuiScannerClient()
@@ -1589,9 +1614,9 @@ export async function syncCryptoDepositEventsOnce() {
       try {
         console.log(`[crypto-deposit-scanner] scanning ${asset.pairId} on ${asset.chain} (${asset.kind})`)
         const result = await withAssetScanTimeout(asset.pairId, getAssetScanTimeoutMs(asset.chain), async () => {
-          const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon'
+          const isEvm = asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon' || asset.chain === 'robinhood'
           if (isEvm) {
-            const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : polygonClient
+            const client: AnyClient = asset.chain === 'base' ? baseClient : asset.chain === 'bsc' ? bscClient : asset.chain === 'polygon' ? polygonClient : robinhoodClient
             return asset.kind === 'erc20'
               ? await scanErc20Deposits({ asset, client, lookup })
               : await scanNativeDeposits({ asset, client, lookup })
@@ -1689,7 +1714,7 @@ export async function forceScanDepositAddress(input: { address: string; pairId?:
   const family = record.addressFamily
   const assetsToScan = getSupportedAssets().filter((a) => {
     if (input.pairId) return a.pairId === input.pairId
-    if (family === 'evm' && (a.chain === 'base' || a.chain === 'bsc' || a.chain === 'polygon')) return true
+    if (family === 'evm' && (a.chain === 'base' || a.chain === 'bsc' || a.chain === 'polygon' || a.chain === 'robinhood')) return true
     if (family === 'solana' && a.chain === 'solana') return true
     if (family === 'ton' && a.chain === 'ton') return true
     if (family === 'sui' && a.chain === 'sui') return true
@@ -1704,8 +1729,8 @@ export async function forceScanDepositAddress(input: { address: string; pairId?:
   for (const asset of assetsToScan) {
     try {
       let result: { detected: number; settled: number }
-      if (asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon') {
-        const client: AnyClient = asset.chain === 'base' ? createBaseClient() : asset.chain === 'bsc' ? createBscClient() : createPolygonClient()
+      if (asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon' || asset.chain === 'robinhood') {
+        const client: AnyClient = asset.chain === 'base' ? createBaseClient() : asset.chain === 'bsc' ? createBscClient() : asset.chain === 'polygon' ? createPolygonClient() : createRobinhoodClient()
         result = asset.kind === 'erc20'
           ? await scanErc20Deposits({ asset, client, lookup })
           : await scanNativeDeposits({ asset, client, lookup })

@@ -23,6 +23,7 @@ import { Account, FailoverRpcProvider, JsonRpcProvider, KeyPair } from 'near-api
 import { NEAR } from 'near-api-js/tokens'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig, logBaseAttribution } from '@/lib/server/base-executor'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
+import { getRobinhoodRpcUrls, robinhoodChain } from '@/lib/server/robinhood-chain'
 import { getLifiQuoteForConversion } from './lifi'
 import { sanitizePolygonRpcUrls } from '@/lib/server/crypto-deposit-scanner'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
@@ -103,7 +104,7 @@ export function getRecentSweepGasStats(): SweepGasStat[] {
 }
 
 type SweepAsset = {
-  chain: 'base' | 'bsc' | 'polygon' | 'ton' | 'solana' | 'sui' | 'near'
+  chain: 'base' | 'bsc' | 'polygon' | 'robinhood' | 'ton' | 'solana' | 'sui' | 'near'
   pairId: CryptoOrder['pairId']
   kind: 'erc20' | 'native'
   tokenAddress?: Address
@@ -169,6 +170,19 @@ function createPolygonClientsFromPrivateKey(privateKey: Hex) {
     account,
     publicClient: createPublicClient({ chain: polygon, transport }) as any,
     walletClient: createWalletClient({ account, chain: polygon, transport }) as any,
+  }
+}
+
+function createRobinhoodClientsFromPrivateKey(privateKey: Hex) {
+  const { rpcUrls } = getRobinhoodRpcUrls()
+  const transport = rpcUrls.length > 1
+    ? fallback(rpcUrls.map(url => http(url, { retryCount: 1, timeout: 10_000 })))
+    : http(rpcUrls[0], { retryCount: 1, timeout: 10_000 })
+  const account = privateKeyToAccount(privateKey)
+  return {
+    account,
+    publicClient: createPublicClient({ chain: robinhoodChain, transport }) as any,
+    walletClient: createWalletClient({ account, chain: robinhoodChain, transport }) as any,
   }
 }
 
@@ -415,6 +429,16 @@ function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
     }
   }
 
+  if (pairId === 'ETH_ROBINHOOD') {
+    return {
+      chain: 'robinhood',
+      pairId,
+      kind: 'native',
+      gasBufferWei: BASE_GAS_BUFFER_WEI,
+      tokenGasTopupWei: BigInt(0),
+    }
+  }
+
   if (pairId === 'TON_TON') {
     return {
       chain: 'ton',
@@ -475,12 +499,14 @@ async function ensureTokenSweepGas(input: {
 }) {
   // For EVM chains we now use dynamic estimation (best practice)
   // but still respect a minimum top-up floor.
-  if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon') {
+  if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon' || input.asset.chain === 'robinhood') {
     const config = input.asset.chain === 'base'
       ? getBaseExecutorConfig()
       : input.asset.chain === 'bsc'
         ? getBscExecutorConfig()
-        : { privateKey: process.env.MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined }
+        : input.asset.chain === 'polygon'
+          ? { privateKey: process.env.MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined }
+          : { privateKey: process.env.MAFITAPAY_ROBINHOOD_EXECUTOR_PRIVATE_KEY?.trim() as Hex | undefined }
 
     if (!config.privateKey) {
       throw new Error(`MAFITAPAY_${input.asset.chain.toUpperCase()}_EXECUTOR_PRIVATE_KEY is required for token sweep gas top-up.`)
@@ -490,7 +516,9 @@ async function ensureTokenSweepGas(input: {
       ? createBaseClientsFromPrivateKey(config.privateKey)
       : input.asset.chain === 'bsc'
         ? createBscClientsFromPrivateKey(config.privateKey)
-        : createPolygonClientsFromPrivateKey(config.privateKey as Hex)
+        : input.asset.chain === 'polygon'
+          ? createPolygonClientsFromPrivateKey(config.privateKey as Hex)
+          : createRobinhoodClientsFromPrivateKey(config.privateKey as Hex)
 
     const balance = await clients.publicClient.getBalance({ address: input.depositAddress })
 
@@ -507,7 +535,7 @@ async function ensureTokenSweepGas(input: {
 
     const hash = await (clients.walletClient as any).sendTransaction({
       account: clients.account,
-      chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : polygon,
+      chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : input.asset.chain === 'polygon' ? polygon : robinhoodChain,
       to: input.depositAddress,
       value: neededTopup,
     })
@@ -535,12 +563,14 @@ async function sweepNative(input: {
   treasuryAddress: Address
   amountUnits: bigint
 }) {
-  if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon') {
+  if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon' || input.asset.chain === 'robinhood') {
     const clients = input.asset.chain === 'base'
       ? createBaseClientsFromPrivateKey(input.privateKey)
       : input.asset.chain === 'bsc'
         ? createBscClientsFromPrivateKey(input.privateKey)
-        : createPolygonClientsFromPrivateKey(input.privateKey)
+        : input.asset.chain === 'polygon'
+          ? createPolygonClientsFromPrivateKey(input.privateKey)
+          : createRobinhoodClientsFromPrivateKey(input.privateKey)
 
     // Best hybrid approach: use real estimation + safety margin, fall back to floor
     const dynamicReserve = await calculateEvmGasReserve(clients.publicClient, {
@@ -567,7 +597,7 @@ async function sweepNative(input: {
 
     const sweepHash = await (clients.walletClient as any).sendTransaction({
       account: clients.account,
-      chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : polygon,
+      chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : input.asset.chain === 'polygon' ? polygon : robinhoodChain,
       to: input.treasuryAddress,
       value,
     })
@@ -1101,7 +1131,7 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     let privateKeyForEvm: Hex | undefined
     let mnemonicForTon: string | undefined
 
-    if (family === 'evm' || asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon') {
+    if (family === 'evm' || asset.chain === 'base' || asset.chain === 'bsc' || asset.chain === 'polygon' || asset.chain === 'robinhood') {
       privateKeyForEvm = secret.secret.trim() as Hex
       const depositAccount = privateKeyToAccount(privateKeyForEvm)
       const depositAddress = getAddress(secret.record.address)
@@ -1138,6 +1168,10 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
         if (!pk) throw new Error('MAFITAPAY_POLYGON_EXECUTOR_PRIVATE_KEY or ADDRESS is required to resolve Polygon treasury address.')
         treasuryAddress = privateKeyToAccount(pk).address
       }
+    } else if (asset.chain === 'robinhood') {
+      const addr = process.env.MAFITAPAY_ROBINHOOD_EXECUTOR_ADDRESS?.trim()
+      if (!addr) throw new Error('MAFITAPAY_ROBINHOOD_EXECUTOR_ADDRESS is required to resolve Robinhood treasury address.')
+      treasuryAddress = getAddress(addr)
     } else if (asset.chain === 'ton') {
       const addr = process.env.MAFITAPAY_TON_EXECUTOR_ADDRESS?.trim()
       if (addr) {
