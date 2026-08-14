@@ -12,6 +12,7 @@ import {
   getSensitiveIdentityConfigState,
   listCryptoDepositAddressesByUserId,
 } from '@/lib/server/data'
+import { subscribeCryptoDepositAddressesToAlchemy } from '@/lib/server/alchemy-address-webhooks'
 
 const FAMILY_LABELS: Record<CryptoDepositAddressFamily, string> = {
   evm: 'EVM networks',
@@ -118,15 +119,27 @@ export async function provisionCryptoDepositAddressesForUser(userId: string): Pr
   const existing = await listCryptoDepositAddressesByUserId(userId)
   const existingFamilies = new Set(existing.map(item => item.addressFamily))
 
+  const created: CryptoDepositAddress[] = []
   for (const family of requiredFamilies) {
     if (existingFamilies.has(family)) continue
     const generated = await generateAddressForFamily(family)
-    await createCryptoDepositAddress({
+    const address = await createCryptoDepositAddress({
       userId,
       addressFamily: family,
       networkLabel: getNetworkLabel(family),
       ...generated,
     })
+    created.push(address)
+  }
+
+  // Subscriptions are deliberately best-effort: a temporary Alchemy dashboard/API outage must
+  // never stop a customer from receiving their deposit address. The normal scanner remains the
+  // reconciliation fallback, and the protected sync job can replay every address later.
+  if (created.length > 0) {
+    void subscribeCryptoDepositAddressesToAlchemy({
+      evmAddresses: created.filter(item => item.addressFamily === 'evm').map(item => item.address),
+      solanaAddresses: created.filter(item => item.addressFamily === 'solana').map(item => item.address),
+    }).catch(error => console.warn('[alchemy-webhook] could not subscribe new deposit address:', error instanceof Error ? error.message : String(error)))
   }
 
   return listCryptoDepositAddressesByUserId(userId)

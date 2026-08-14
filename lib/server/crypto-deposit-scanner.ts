@@ -1704,7 +1704,7 @@ export async function kickCryptoDepositScanner() {
   return syncCryptoDepositEventsOnce()
 }
 
-export async function forceScanDepositAddress(input: { address: string; pairId?: string }) {
+export async function forceScanDepositAddress(input: { address: string; pairId?: string; chain?: ScanChain; backgroundReconcile?: boolean }) {
   const addr = input.address.trim()
   if (!addr) throw new Error('address is required')
   const record = await getCryptoDepositAddressByAddress(addr)
@@ -1713,6 +1713,7 @@ export async function forceScanDepositAddress(input: { address: string; pairId?:
   }
   const family = record.addressFamily
   const assetsToScan = getSupportedAssets().filter((a) => {
+    if (input.chain && a.chain !== input.chain) return false
     if (input.pairId) return a.pairId === input.pairId
     if (family === 'evm' && (a.chain === 'base' || a.chain === 'bsc' || a.chain === 'polygon' || a.chain === 'robinhood')) return true
     if (family === 'solana' && a.chain === 'solana') return true
@@ -1750,7 +1751,8 @@ export async function forceScanDepositAddress(input: { address: string; pairId?:
       perAsset.push({ pairId: asset.pairId, detected: 0, settled: 0, error: error instanceof Error ? error.message : 'scan error' })
     }
   }
-  // Also kick a full background sync for good measure (covers any state advancement)
-  void syncCryptoDepositEventsOnce().catch(() => {})
+  // The dashboard force-scan also wakes the background reconciliation pass. A webhook has
+  // already selected its exact chain/address and must not trigger an expensive full scan.
+  if (input.backgroundReconcile !== false) void syncCryptoDepositEventsOnce().catch(() => {})
   return { record: { id: record.id, userId: record.userId, address: record.address, addressFamily: record.addressFamily }, scannedAssets: perAsset }
 }
