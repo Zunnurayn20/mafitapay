@@ -4,6 +4,7 @@ import { handleFlutterwaveWebhook } from '@/lib/server/flutterwave-webhook'
 export const runtime = 'nodejs'
 
 export async function POST(req: Request) {
+  const startedAt = Date.now()
   const rawBody = await req.text()
   const signature = req.headers.get('flutterwave-signature') ?? req.headers.get('verif-hash')
   if (process.env.MAFITAPAY_DEBUG_FLUTTERWAVE === '1') {
@@ -31,5 +32,10 @@ export async function POST(req: Request) {
     }))
   }
   const result = await handleFlutterwaveWebhook({ rawBody, signature, source: 'public_webhook' })
+  console.info('[flutterwave-webhook] route.completed', JSON.stringify({
+    status: result.status,
+    success: result.body.success,
+    elapsedMs: Date.now() - startedAt,
+  }))
   return NextResponse.json(result.body, { status: result.status })
 }

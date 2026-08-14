@@ -6258,12 +6258,12 @@ export async function createPayoutRequest(input: {
   const id = `po_${randomBytes(6).toString('hex')}`
   if (isPostgresEnabled()) {
     const result = await queryPostgres<PayoutRequestRow>(`
-      INSERT INTO payout_requests (id, user_id, transaction_id, reference, amount, provider, merchant_id, beneficiary, provider_reference, provider_status, last_sync_at, last_sync_status, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+      INSERT INTO payout_requests (id, user_id, transaction_id, reference, amount, provider, merchant_id, beneficiary, provider_reference, provider_status, last_sync_at, last_sync_status, status, retry_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
     `, [id, input.userId, input.transactionId, input.reference, input.amount, input.provider,
       input.merchantId ?? null, input.beneficiary ?? null, input.providerReference ?? null,
       input.providerStatus ?? null, input.lastSyncAt ?? null, input.lastSyncStatus ?? null,
-      input.status ?? 'pending', now, now])
+      input.status ?? 'pending', 0, now, now])
     if (!result.rows[0]) throw new Error('Unable to create payout request')
     return mapPayoutRequestRow(result.rows[0])
   }

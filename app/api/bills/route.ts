@@ -286,6 +286,7 @@ export async function POST(req: Request) {
     itemCode,
   }
 
+  const providerStartedAt = Date.now()
   let providerResult = resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
     ? await createAsbdataDataPayment({
       networkId: providerNetworkId,
@@ -345,6 +346,15 @@ export async function POST(req: Request) {
     })
     providerResult = await createFlutterwaveBillPayment(flutterwaveInput)
   }
+
+  console.info('[bills] provider.completed', JSON.stringify({
+    reference: ref,
+    type: selectedProvider.type,
+    provider: providerResult.provider,
+    status: providerResult.status,
+    providerStatus: providerResult.rawStatus ?? null,
+    elapsedMs: Date.now() - providerStartedAt,
+  }))
 
   const providerEventName = providerResult.provider === 'asbdata'
     ? (selectedProvider.type === 'airtime' ? 'asbdata_airtime' : 'asbdata_data')
