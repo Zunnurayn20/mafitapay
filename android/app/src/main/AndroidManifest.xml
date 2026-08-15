@@ -38,6 +38,7 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Push notifications: runtime-requested on Android 13 (API 33) and above -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
