@@ -45,8 +45,9 @@ export async function parseJsonBody<T = unknown>(response: Response): Promise<Ap
   const raw = await response.text().catch(() => '')
 
   if (!raw.trim()) {
-    if (response.ok) return {}
-    throw new Error(describeStatus(response.status))
+    throw new Error(response.ok
+      ? 'The service did not respond. Please try again.'
+      : describeStatus(response.status))
   }
 
   try {
@@ -81,6 +82,13 @@ export function toUserMessage(error: unknown, fallback: string) {
   // a browser-specific message like "Failed to fetch" or "Load failed". Say something useful.
   if (error instanceof TypeError) {
     return 'Could not reach the server. Check your connection and try again.'
+  }
+  // Empty or truncated bodies from a proxy timeout / crash: `response.json()` throws SyntaxError.
+  if (
+    error instanceof SyntaxError
+    || (error instanceof Error && /unexpected end of json|is not valid json|failed to execute ['"]json['"]/i.test(error.message))
+  ) {
+    return 'The service did not respond. Please try again.'
   }
   if (error instanceof Error && error.message.trim()) return error.message
   return fallback

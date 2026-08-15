@@ -79,6 +79,18 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  try {
+    return await handleBillPayment(req)
+  } catch (error) {
+    console.error('[bills] POST failed', error)
+    return NextResponse.json({
+      error: 'Bill payment failed. Please try again.',
+      success: false,
+    }, { status: 500 })
+  }
+}
+
+async function handleBillPayment(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()

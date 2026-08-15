@@ -15,6 +15,7 @@ import {
   normalizeNigerianPhoneNumber,
 } from '@/lib/bill-config'
 import { useAppStore } from '@/store'
+import { parseJsonBody, toUserMessage } from '@/lib/client/http'
 import { readClipboardText } from '@/lib/clipboard'
 import { generateRef } from '@/lib/utils'
 
@@ -588,30 +589,37 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           providerName: nextRequest.providerName,
         }),
       })
-      const payload = await response.json()
+      const payload = await parseJsonBody<{ transaction?: { reference?: string; status?: string } }>(response)
 
       if (!response.ok || payload.success === false) {
         // Server re-priced the plan; show the new figure and send the user back to review.
-        if (response.status === 409 && payload?.code === 'PRICE_CHANGED' && Number.isFinite(Number(payload.amount))) {
+        if (response.status === 409 && payload.code === 'PRICE_CHANGED' && Number.isFinite(Number(payload.amount))) {
           const nextAmount = Number(payload.amount)
           setAmount(String(nextAmount))
           setRetryReturnsToForm(true)
-          setConfirmError(payload.error || 'This plan\'s price changed. Please review and try again.')
+          setConfirmError(typeof payload.error === 'string' ? payload.error : 'This plan\'s price changed. Please review and try again.')
           setConfirmStatus('error')
           return
         }
-        throw new Error(payload.error || 'Bill payment failed.')
+        throw new Error(typeof payload.error === 'string' && payload.error.trim()
+          ? payload.error
+          : 'Bill payment failed.')
+      }
+
+      const transaction = payload.data?.transaction
+      if (!transaction) {
+        throw new Error('Bill payment failed. Please try again.')
       }
 
       await refreshSession()
-      const txStatus = payload.data.transaction?.status
-      setReference(payload.data.transaction.reference || generateRef())
+      const txStatus = transaction.status
+      setReference(transaction.reference || generateRef())
       setSuccessMessage(txStatus === 'success'
         ? `₦${amt.toLocaleString()} ${serviceName} payment was successful.`
         : `₦${amt.toLocaleString()} ${serviceName} payment is being processed. We will update your transaction status shortly.`)
       setConfirmStatus('success')
     } catch (error) {
-      setConfirmError(error instanceof Error ? error.message : 'Bill payment failed.')
+      setConfirmError(toUserMessage(error, 'Bill payment failed.'))
       setConfirmStatus('error')
     }
   }
