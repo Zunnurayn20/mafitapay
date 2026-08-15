@@ -13,6 +13,7 @@ import {
   listCryptoDepositAddressesByUserId,
 } from '@/lib/server/data'
 import { subscribeCryptoDepositAddressesToAlchemy } from '@/lib/server/alchemy-address-webhooks'
+import { subscribeCryptoDepositAddressesToTon } from '@/lib/server/ton-address-webhooks'
 
 const FAMILY_LABELS: Record<CryptoDepositAddressFamily, string> = {
   evm: 'EVM networks',
@@ -132,14 +133,17 @@ export async function provisionCryptoDepositAddressesForUser(userId: string): Pr
     created.push(address)
   }
 
-  // Subscriptions are deliberately best-effort: a temporary Alchemy dashboard/API outage must
-  // never stop a customer from receiving their deposit address. The normal scanner remains the
-  // reconciliation fallback, and the protected sync job can replay every address later.
+  // Subscriptions are deliberately best-effort: a temporary provider outage must never stop a
+  // customer from receiving their deposit address. The scanner remains the reconciliation
+  // fallback, and the protected sync jobs can replay every address later.
   if (created.length > 0) {
     void subscribeCryptoDepositAddressesToAlchemy({
       evmAddresses: created.filter(item => item.addressFamily === 'evm').map(item => item.address),
       solanaAddresses: created.filter(item => item.addressFamily === 'solana').map(item => item.address),
     }).catch(error => console.warn('[alchemy-webhook] could not subscribe new deposit address:', error instanceof Error ? error.message : String(error)))
+    void subscribeCryptoDepositAddressesToTon({
+      tonAddresses: created.filter(item => item.addressFamily === 'ton').map(item => item.address),
+    }).catch(error => console.warn('[ton-webhook] could not subscribe new deposit address:', error instanceof Error ? error.message : String(error)))
   }
 
   return listCryptoDepositAddressesByUserId(userId)
