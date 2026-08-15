@@ -17,8 +17,8 @@ export function AdminShell({
   const roleLabel = isAdmin ? 'Owner / Superuser' : 'Operator'
 
   return (
-    <main className="app-scroll min-h-0 flex-1 bg-[#f5f7fb] text-slate-900">
-      <div className="mx-auto flex w-full min-h-full flex-col px-3 py-3 sm:px-5 lg:px-6 lg:py-6">
+    <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f5f7fb] text-slate-900">
+      <div className="mx-auto flex h-full min-h-0 w-full flex-1 flex-col px-3 py-3 sm:px-5 lg:px-6 lg:py-6">
         <header className="shrink-0 rounded-lg border border-slate-200 bg-white shadow-[0_10px_30px_-18px_rgba(15,23,42,0.35)]">
           <div className="grid gap-4 px-4 py-4 sm:px-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
             <div className="min-w-0">
@@ -44,15 +44,15 @@ export function AdminShell({
           </div>
         </header>
 
-        <div className="grid flex-1 gap-4 py-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
-          <aside className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--coal)] xl:sticky xl:top-4 xl:flex xl:h-[calc(100vh-2rem)] xl:flex-col xl:self-start">
-            <div className="hidden border-b border-[var(--border)] px-5 py-4 xl:block">
+        <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto xl:grid xl:grid-cols-[16rem_minmax(0,1fr)] xl:gap-4 xl:overflow-hidden">
+          <aside className="min-h-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--coal)] xl:flex xl:h-full xl:flex-col">
+            <div className="hidden shrink-0 border-b border-[var(--border)] px-5 py-4 xl:block">
               <div className="text-[8px] font-bold uppercase tracking-[1.6px] text-[var(--muted)]">Admin navigation</div>
             </div>
             <AdminNav />
           </aside>
 
-          <section className="min-w-0 pb-6">{children}</section>
+          <section className="min-w-0 pb-6 xl:min-h-0 xl:overflow-y-auto">{children}</section>
         </div>
       </div>
     </main>

@@ -118,7 +118,7 @@ export function AdminNav() {
 
   return (
     <nav
-      className="min-h-0 space-y-1 overflow-y-auto overscroll-contain px-3 py-3 scrollbar-none [-webkit-overflow-scrolling:touch] xl:flex-1 xl:px-0 xl:py-2"
+      className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 py-3 [-webkit-overflow-scrolling:touch] xl:px-0 xl:py-2"
       style={{ scrollbarWidth: 'thin' }}
     >
       {ADMIN_NAV_GROUPS.map(group => (
