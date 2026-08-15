@@ -30,6 +30,8 @@
   --ank4: #0d0d14;
   --ank5: #c4341a;
   --page-bg: #0c0907;
+  --gold-soft: rgba(202, 165, 96, 0.28);
+  --gold-tint: rgba(202, 165, 96, 0.16);
 }
 
 [data-theme="light"] {
@@ -54,6 +56,8 @@
   --ank4: #f0f0f8;
   --ank5: #c4341a;
   --page-bg: #f4ede2;
+  --gold-soft: rgba(185, 138, 67, 0.34);
+  --gold-tint: rgba(185, 138, 67, 0.14);
 }
 
 * {
@@ -98,7 +102,14 @@ body {
 :root {
   --app-topbar-height: calc(4rem + env(safe-area-inset-top));
   --app-ticker-height: 2.25rem;
-  --app-mobile-nav-height: calc(5.5rem + env(safe-area-inset-bottom));
+  /* Bottom bar geometry. MobileNav renders from these same tokens, so the bar's
+     real height and the space DashboardLayout reserves for it cannot drift. */
+  --app-mobile-nav-pill: 3.75rem;
+  --app-mobile-nav-gap: 0.5rem;
+  --app-mobile-nav-inset: max(0.5rem, env(safe-area-inset-bottom));
+  --app-mobile-nav-height: calc(
+    var(--app-mobile-nav-pill) + var(--app-mobile-nav-gap) + var(--app-mobile-nav-inset)
+  );
   --admin-topbar-height: calc(7.5rem + env(safe-area-inset-top));
 }
 

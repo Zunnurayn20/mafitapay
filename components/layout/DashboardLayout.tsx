@@ -305,7 +305,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   <div className="fixed left-0 right-0 top-[var(--app-topbar-height)] z-30 lg:left-64">
                     <Ticker />
                   </div>
-                  <main className="app-scroll min-h-0 flex-1 px-4 pb-[var(--app-mobile-nav-height)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6">
+                  <main className="app-scroll min-h-0 flex-1 px-4 pb-[calc(var(--app-mobile-nav-height)+0.75rem)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6">
                     <div className="mx-auto w-full max-w-7xl">{children}</div>
                   </main>
                 </div>
