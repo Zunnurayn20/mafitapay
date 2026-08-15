@@ -70,7 +70,7 @@ function StatusPanel({
         : 'Nothing was completed. You can try again.')
 
   return (
-    <section className="px-1 pb-1 pt-1 text-center" aria-live="polite" aria-busy={status === 'processing'}>
+    <section className="px-1 pb-2 pt-1 text-center" aria-live="polite" aria-busy={status === 'processing'}>
       {status === 'processing' && (
         <>
           <div className="spinner mx-auto" />
@@ -196,7 +196,7 @@ export function PinPad({
   ]
 
   return (
-    <div className="px-3 pb-5 sm:px-5">
+    <div className="px-3 pb-[max(1.75rem,calc(env(safe-area-inset-bottom)+1.25rem))] sm:px-5">
       {details && details.length > 0 && (
         <section className="mb-5 rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
           <div className="mb-3 text-sm font-bold text-[var(--text)]">{title}</div>

@@ -31,10 +31,22 @@ export function Modal({ open, onClose, title, subtitle, children, className, siz
   return (
     <div
       ref={overlayRef}
-      className={cn('fixed inset-0 z-[500] flex bg-black/60 backdrop-blur-sm', bottomSheet ? 'items-end justify-center' : 'items-center justify-center')}
+      className={cn(
+        'fixed inset-0 z-[500] flex bg-black/60 backdrop-blur-sm',
+        bottomSheet
+          ? 'items-end justify-center pb-[max(1.75rem,calc(env(safe-area-inset-bottom)+1.5rem))]'
+          : 'items-center justify-center',
+      )}
       onClick={(e) => { if (dismissible && e.target === overlayRef.current) onClose() }}
     >
-      <div className={cn('w-full bg-[var(--coal)] border border-[var(--border)] max-h-[90dvh] overflow-y-auto scrollbar-none', sizes[size], bottomSheet && 'max-w-xl rounded-t-3xl border-b-0 animate-[fadeUp_.2s_ease-out] sm:rounded-t-3xl', className)}>
+      <div className={cn(
+        'w-full bg-[var(--coal)] border border-[var(--border)] overflow-y-auto scrollbar-none',
+        sizes[size],
+        bottomSheet
+          ? 'max-h-[calc(100dvh-env(safe-area-inset-top)-6.5rem)] max-w-xl rounded-3xl animate-[fadeUp_.2s_ease-out]'
+          : 'max-h-[90dvh]',
+        className,
+      )}>
         <div className="ank-strip" />
         {bottomSheet && (
           <div className="relative flex h-8 items-center justify-center">
