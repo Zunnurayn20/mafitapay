@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
-import { PinPad } from '@/components/ui/PinPad'
+import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
@@ -17,11 +17,7 @@ import type { Beneficiary } from '@/types'
 type Step = 'form' | 'pin'
 
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const openModal = useAppStore(state => state.openModal)
   const refreshSession = useAppStore(state => state.refreshSession)
-  const setModalData = useAppStore(state => state.setModalData)
-  const closeModal = useAppStore(state => state.closeModal)
-  const showToast = useAppStore(state => state.showToast)
   const securitySettings = useAppStore(state => state.securitySettings)
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
@@ -38,6 +34,10 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const [accountName, setAccountName] = useState('')
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
+  const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [confirmError, setConfirmError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [reference, setReference] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -68,20 +68,30 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
     if (!open) {
       setStep('form')
       setPinVersion(0)
+      setConfirmStatus('pin')
+      setConfirmError('')
+      setFormError('')
+      setReference('')
     }
   }
 
   async function confirm() {
     const amt = parseFloat(amount) || 0
-    if (!amt) { showToast('Enter a valid amount', 'error'); return }
-    if (!bankCode || !bankName || !accountNumber) { showToast('Fill in all required bank details', 'error'); return }
+    if (!amt) { setFormError('Enter a valid amount'); return }
+    if (!bankCode || !bankName || !accountNumber) { setFormError('Fill in all required bank details'); return }
+    setFormError('')
     try {
       const response = await fetch('/api/beneficiaries/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ kind: 'bank', bankCode, bankName, accountNumber, accountName }) })
       const data = await readJsonResponse<{ verification: { bankCode: string; bankName: string; accountNumber: string; accountName: string } }>(response)
-      const verified = data.verification
+      setBankCode(data.verification.bankCode)
+      setBankName(data.verification.bankName)
+      setAccountNumber(data.verification.accountNumber)
+      setAccountName(data.verification.accountName)
       setPinVersion(current => current + 1)
+      setConfirmStatus('pin')
+      setConfirmError('')
       setStep('pin')
-    } catch (error) { showToast(toUserMessage(error, 'Beneficiary verification failed.'), 'error') }
+    } catch (error) { setFormError(toUserMessage(error, 'Beneficiary verification failed.')) }
   }
 
   async function submitWithdrawal(input: {
@@ -90,8 +100,15 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
     confirmWithBiometric?: boolean
   }) {
     const amt = parseFloat(amount) || 0
-    if (!amt) { showToast('Enter a valid amount', 'error'); return }
+    if (!amt) {
+      setConfirmError('Enter a valid amount')
+      setConfirmStatus('error')
+      return
+    }
 
+    if (confirmStatus === 'processing') return
+    setConfirmError('')
+    setConfirmStatus('processing')
     try {
       const lookupResponse = await fetch('/api/beneficiaries/lookup', {
         method: 'POST',
@@ -132,19 +149,11 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       const withdrawal = await readJsonResponse<{ transaction: { reference?: string } }>(response)
 
       await refreshSession()
-      closeModal()
-      setTimeout(() => {
-        setModalData({
-          headline: 'Withdrawal Submitted!',
-          body: `₦${amt.toLocaleString()} bank withdrawal to ${resolvedAccountName} is pending payout settlement.`,
-          ref: withdrawal.transaction.reference || generateRef(),
-        })
-        openModal('success')
-      }, 100)
+      setReference(withdrawal.transaction.reference || generateRef())
+      setConfirmStatus('success')
     } catch (error) {
-      showToast(toUserMessage(error, 'Withdrawal failed.'), 'error')
-      setPinVersion(current => current + 1)
-      setStep('pin')
+      setConfirmError(toUserMessage(error, 'Withdrawal failed.'))
+      setConfirmStatus('error')
     }
   }
 
@@ -153,8 +162,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       const approval = await createBiometricApproval()
       await submitWithdrawal({ biometricApprovalToken: approval.token })
     } catch (error) {
-      showToast(toUserMessage(error, 'Biometric approval failed.'), 'error')
-      setPinVersion(current => current + 1)
+      setConfirmError(toUserMessage(error, 'Biometric approval failed.'))
+      setConfirmStatus('error')
     }
   }
 
@@ -165,7 +174,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
     })
     if (!result.verified) {
       if (!result.cancelled) {
-        showToast(result.message || 'Biometric verification failed.', 'error')
+        setConfirmError(result.message || 'Biometric verification failed.')
+        setConfirmStatus('error')
       }
       return
     }
@@ -173,7 +183,16 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Withdraw Funds" bottomSheet={step === 'pin'}>
+    <Modal
+      open={open}
+      onClose={() => {
+        if (confirmStatus === 'processing') return
+        onClose()
+      }}
+      title={confirmStatus === 'processing' ? 'Processing…' : confirmStatus === 'success' ? 'Withdrawal submitted' : confirmStatus === 'error' ? 'Transaction failed' : 'Withdraw Funds'}
+      bottomSheet={step === 'pin'}
+      dismissible={confirmStatus !== 'processing'}
+    >
       {step === 'form' ? (
       <div className="flex flex-col gap-4 p-6">
         <div className="border border-[rgba(67,56,202,.2)] border-l-4 border-l-[var(--terra)] bg-[rgba(67,56,202,.07)] p-4">
@@ -213,6 +232,11 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
             }}
           />
         </div>
+        {formError ? (
+          <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[11px] font-medium text-[var(--red2)]">
+            {formError}
+          </div>
+        ) : null}
         <Button onClick={confirm} className="w-full py-3.5">Proceed to Withdraw →</Button>
       </div>
       ) : (
@@ -242,6 +266,20 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
           onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
           biometricBusy={nativeBiometricBusy}
+          status={confirmStatus}
+          statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Withdrawal submitted!' : undefined}
+          statusMessage={confirmStatus === 'processing'
+            ? 'Submitting your bank payout. Funds stay locked until it settles.'
+            : confirmStatus === 'success'
+              ? `₦${(parseFloat(amount) || 0).toLocaleString()} bank withdrawal to ${accountName} is pending payout settlement.`
+              : confirmError}
+          statusReference={reference}
+          onRetry={() => {
+            setConfirmError('')
+            setConfirmStatus('pin')
+            setPinVersion(current => current + 1)
+          }}
+          onDone={onClose}
         />
       )}
     </Modal>

@@ -4,7 +4,7 @@ import Image from 'next/image'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
-import { PinPad } from '@/components/ui/PinPad'
+import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { refreshBillCatalog, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
@@ -242,7 +242,7 @@ function formatPlanCategoryLabel(category: string) {
 }
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
-  const { modalData, openModal, refreshSession, setModalData, closeModal, showToast, transactions, securitySettings } = useAppStore()
+  const { modalData, refreshSession, showToast, transactions, securitySettings } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
@@ -265,6 +265,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const phoneAccountInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
+  const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [confirmError, setConfirmError] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
+  const [reference, setReference] = useState('')
+  const [retryReturnsToForm, setRetryReturnsToForm] = useState(false)
   const [pendingRequest, setPendingRequest] = useState<{
     amount: number
     billerCode?: string
@@ -375,6 +380,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setStep('form')
     setPinVersion(0)
     setPendingRequest(null)
+    setConfirmStatus('pin')
+    setConfirmError('')
+    setSuccessMessage('')
+    setReference('')
+    setRetryReturnsToForm(false)
   }, [defaultNetworkProviderName, open, service])
 
   useEffect(() => {
@@ -523,7 +533,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setTouched({ amount: true, account: true, provider: true })
 
     if (nextAmountError || accountError || providerError) {
-      showToast(nextAmountError || accountError || providerError || 'Complete the required fields.', 'error')
       return
     }
 
@@ -549,10 +558,16 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     if (!transactionPin && !biometricApprovalToken && !confirmWithBiometric) {
       setPendingRequest(nextRequest)
       setPinVersion(current => current + 1)
+      setConfirmStatus('pin')
+      setConfirmError('')
+      setRetryReturnsToForm(false)
       setStep('pin')
       return
     }
 
+    if (confirmStatus === 'processing') return
+    setConfirmError('')
+    setConfirmStatus('processing')
     try {
       const response = await fetch('/api/bills', {
         method: 'POST',
@@ -580,31 +595,24 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         if (response.status === 409 && payload?.code === 'PRICE_CHANGED' && Number.isFinite(Number(payload.amount))) {
           const nextAmount = Number(payload.amount)
           setAmount(String(nextAmount))
-          showToast(payload.error || 'This plan\'s price changed. Please review and try again.', 'error')
-          setPinVersion(current => current + 1)
-          setStep('form')
+          setRetryReturnsToForm(true)
+          setConfirmError(payload.error || 'This plan\'s price changed. Please review and try again.')
+          setConfirmStatus('error')
           return
         }
         throw new Error(payload.error || 'Bill payment failed.')
       }
 
       await refreshSession()
-      closeModal()
-      setTimeout(() => {
-        const txStatus = payload.data.transaction?.status
-        setModalData({
-          headline: txStatus === 'success' ? `${serviceName} Purchased!` : `${serviceName} Submitted`,
-          body: txStatus === 'success'
-            ? `₦${amt.toLocaleString()} ${serviceName} payment was successful.`
-            : `₦${amt.toLocaleString()} ${serviceName} payment is being processed. We will update your transaction status shortly.`,
-          ref: payload.data.transaction.reference || generateRef(),
-        })
-        openModal('success')
-      }, 100)
+      const txStatus = payload.data.transaction?.status
+      setReference(payload.data.transaction.reference || generateRef())
+      setSuccessMessage(txStatus === 'success'
+        ? `₦${amt.toLocaleString()} ${serviceName} payment was successful.`
+        : `₦${amt.toLocaleString()} ${serviceName} payment is being processed. We will update your transaction status shortly.`)
+      setConfirmStatus('success')
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Bill payment failed.', 'error')
-      setPinVersion(current => current + 1)
-      setStep('pin')
+      setConfirmError(error instanceof Error ? error.message : 'Bill payment failed.')
+      setConfirmStatus('error')
     }
   }
 
@@ -616,8 +624,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         biometricApprovalToken: approval.token,
       })
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
-      setPinVersion(current => current + 1)
+      setConfirmError(error instanceof Error ? error.message : 'Biometric approval failed.')
+      setConfirmStatus('error')
     }
   }
 
@@ -628,7 +636,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     })
     if (!result.verified) {
       if (!result.cancelled) {
-        showToast(result.message || 'Biometric verification failed.', 'error')
+        setConfirmError(result.message || 'Biometric verification failed.')
+        setConfirmStatus('error')
       }
       return
     }
@@ -639,7 +648,16 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={`Pay ${serviceName}`} bottomSheet={step === 'pin'}>
+    <Modal
+      open={open}
+      onClose={() => {
+        if (confirmStatus === 'processing') return
+        onClose()
+      }}
+      title={confirmStatus === 'processing' ? 'Processing…' : confirmStatus === 'success' ? `${serviceName} submitted` : confirmStatus === 'error' ? 'Transaction failed' : `Pay ${serviceName}`}
+      bottomSheet={step === 'pin'}
+      dismissible={confirmStatus !== 'processing'}
+    >
       {step === 'form' ? (
       <div className="p-6 flex flex-col gap-4">
         {needsProvider && (
@@ -1109,6 +1127,27 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
           onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
           biometricBusy={nativeBiometricBusy}
+          status={confirmStatus}
+          statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? `${serviceName} submitted` : undefined}
+          statusMessage={confirmStatus === 'processing'
+            ? 'Stay on this screen. We’re confirming with the provider and updating your wallet.'
+            : confirmStatus === 'success'
+              ? successMessage
+              : confirmError}
+          statusReference={reference}
+          onRetry={() => {
+            if (retryReturnsToForm) {
+              setRetryReturnsToForm(false)
+              setConfirmStatus('pin')
+              setConfirmError('')
+              setStep('form')
+              return
+            }
+            setConfirmError('')
+            setConfirmStatus('pin')
+            setPinVersion(current => current + 1)
+          }}
+          onDone={onClose}
         />
       )}
     </Modal>

@@ -4,7 +4,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
-import { PinPad } from '@/components/ui/PinPad'
+import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
@@ -15,7 +15,7 @@ import { useAppStore } from '@/store'
 import { formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
 import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
 
-type Step = 'form' | 'pin' | 'processing' | 'success'
+type Step = 'form' | 'pin'
 type AmountMode = 'ngn' | 'usd' | 'asset'
 const QUICK_NGN_AMOUNTS = [1000, 2000, 5000, 10000]
 const LAST_USED_BUY_ADDRESS_KEY = 'mafitapay:last-buy-addresses'
@@ -78,6 +78,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const [availabilityError, setAvailabilityError] = useState<string | null>(null)
   const [lockingQuote, setLockingQuote] = useState(false)
   const [submittingOrder, setSubmittingOrder] = useState(false)
+  const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [confirmError, setConfirmError] = useState('')
   const [lastUsedAddress, setLastUsedAddress] = useState('')
   const addressInputRef = useRef<HTMLInputElement>(null)
 
@@ -130,25 +132,38 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   }, [open, pairId])
 
   useEffect(() => {
-    if (!quote || step !== 'pin') return
+    if (!quote || step !== 'pin' || confirmStatus !== 'pin') return
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((new Date(quote.expiresAt).getTime() - Date.now()) / 1000))
       setQuoteTimeLeft(remaining)
       if (remaining === 0) {
         setQuote(null)
-        setStep('form')
-        showToast('Quote expired. Lock a new quote to continue.', 'error')
+        setConfirmError('Quote expired. Lock a new quote to continue.')
+        setConfirmStatus('error')
       }
     }
 
     tick()
     const timer = window.setInterval(tick, 1000)
     return () => window.clearInterval(timer)
-  }, [quote, showToast, step])
+  }, [confirmStatus, quote, step])
 
   function handleClose() {
+    if (confirmStatus === 'processing') return
     onClose()
-    setTimeout(() => { setStep('form'); setAmount(''); setAmountMode('ngn'); setAddress(''); setQuote(null); setPinVersion(0); setAvailabilityError(null); setShowAssetPicker(false) }, 400)
+    setTimeout(() => {
+      setStep('form')
+      setAmount('')
+      setAmountMode('ngn')
+      setAddress('')
+      setQuote(null)
+      setPinVersion(0)
+      setAvailabilityError(null)
+      setShowAssetPicker(false)
+      setConfirmStatus('pin')
+      setConfirmError('')
+      setRef('')
+    }, 400)
   }
 
   useEffect(() => {
@@ -195,7 +210,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
 
   async function requestQuote() {
     if (!amt || !address || !asset) {
-      showToast('Fill in all fields', 'error')
+      setAvailabilityError('Fill in all fields')
       return
     }
     if (!addressValidation.valid) {
@@ -238,6 +253,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       setAvailabilityError(null)
       setQuote(lockedQuote)
       setPinVersion(current => current + 1)
+      setConfirmStatus('pin')
+      setConfirmError('')
       setStep('pin')
     } finally {
       setLockingQuote(false)
@@ -251,7 +268,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   }) {
     if (submittingOrder) return
     setSubmittingOrder(true)
-    setStep('processing')
+    setConfirmError('')
+    setConfirmStatus('processing')
 
     try {
       if (!asset || !quote) {
@@ -282,11 +300,10 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       setLastUsedAddress(trimmedAddress)
       setRef(payload.data.transaction.reference)
       await refreshSession()
-      setStep('success')
+      setConfirmStatus('success')
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Buy order failed.', 'error')
-      setPinVersion(current => current + 1)
-      setStep('pin')
+      setConfirmError(error instanceof Error ? error.message : 'Buy order failed.')
+      setConfirmStatus('error')
     } finally {
       setSubmittingOrder(false)
     }
@@ -301,8 +318,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       const approval = await createBiometricApproval()
       await submitBuyOrder({ biometricApprovalToken: approval.token })
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Biometric approval failed.', 'error')
-      setPinVersion(current => current + 1)
+      setConfirmError(error instanceof Error ? error.message : 'Biometric approval failed.')
+      setConfirmStatus('error')
     }
   }
 
@@ -313,7 +330,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     })
     if (!result.verified) {
       if (!result.cancelled) {
-        showToast(result.message || 'Biometric verification failed.', 'error')
+        setConfirmError(result.message || 'Biometric verification failed.')
+        setConfirmStatus('error')
       }
       return
     }
@@ -321,7 +339,13 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   }
 
   return (
-    <Modal open={open} onClose={handleClose} title={step === 'success' ? 'Order Placed!' : 'Buy Crypto'} bottomSheet={step === 'pin'}>
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title={confirmStatus === 'processing' ? 'Processing…' : confirmStatus === 'success' ? 'Order Placed!' : confirmStatus === 'error' ? 'Transaction failed' : 'Buy Crypto'}
+      bottomSheet={step === 'pin'}
+      dismissible={confirmStatus !== 'processing'}
+    >
       {!asset && (
         <div className="p-8 text-center">
           <div className="spinner mx-auto mb-4" />
@@ -472,9 +496,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           )}
           <Button
             onClick={() => void requestQuote().catch(error => {
-              const message = error instanceof Error ? error.message : 'Quote request failed.'
-              setAvailabilityError(message)
-              showToast(message, 'error')
+              setAvailabilityError(error instanceof Error ? error.message : 'Quote request failed.')
             })}
             className="w-full py-3.5"
             disabled={lockingQuote || asset.baseExecutionEnabled !== true || belowMinimum || (address.trim().length > 0 && !addressValidation.valid)}
@@ -504,24 +526,28 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
           onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
           biometricBusy={nativeBiometricBusy}
+          status={confirmStatus}
+          statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Order placed!' : undefined}
+          statusMessage={confirmStatus === 'processing'
+            ? `Submitting ${asset.symbol} purchase and reserving your NGN balance.`
+            : confirmStatus === 'success'
+              ? `${formatCrypto(crypto, asset.symbol)} on ${asset.network} has been booked. NGN funds are locked until fulfillment or failure.`
+              : confirmError}
+          statusReference={ref}
+          onRetry={() => {
+            if (!quote) {
+              setConfirmError('')
+              setConfirmStatus('pin')
+              setAvailabilityError('Quote expired. Lock a new quote to continue.')
+              setStep('form')
+              return
+            }
+            setConfirmError('')
+            setConfirmStatus('pin')
+            setPinVersion(current => current + 1)
+          }}
+          onDone={handleClose}
         />
-      )}
-
-      {asset && step === 'processing' && (
-        <div className="p-10 text-center"><div className="spinner mx-auto mb-4" /><div className="font-display font-bold text-[17px] text-[var(--text)]">Processing…</div><div className="text-[11px] text-[var(--muted)] mt-1">Submitting {asset.symbol} purchase and reserving your NGN balance.</div></div>
-      )}
-
-      {asset && step === 'success' && (
-        <div className="p-9 text-center flex flex-col items-center gap-4">
-          <div className="w-[72px] h-[72px] rounded-full bg-[rgba(46,170,92,.12)] border-2 border-[rgba(46,170,92,.3)] flex items-center justify-center text-[28px] animate-pop">✅</div>
-          <div className="font-display font-black text-[24px] text-[var(--text)]">Order Placed!</div>
-          <div className="text-[13px] text-[var(--text2)]">{formatCrypto(crypto, asset.symbol)} on {asset.network} has been booked. NGN funds are locked until fulfillment or failure.</div>
-          <div className="bg-[var(--clay)] border border-[var(--border)] p-3 w-full text-left">
-            <div className="text-[8px] text-[var(--muted)] uppercase tracking-[1px] mb-1">Transaction Reference</div>
-            <div className="text-[11px] text-[var(--gold2)] font-mono">{ref}</div>
-          </div>
-          <Button onClick={handleClose} className="w-full py-3">Done</Button>
-        </div>
       )}
     </Modal>
   )

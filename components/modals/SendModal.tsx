@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
-import { PinPad } from '@/components/ui/PinPad'
+import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
@@ -14,12 +14,12 @@ import { quoteTransferFee } from '@/lib/transfer-fees'
 import { formatNGN } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
 
-type Step = 'form' | 'pin' | 'processing' | 'success'
+type Step = 'form' | 'pin'
 
 const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { refreshSession, showToast, securitySettings, transferFeeMarginNgn } = useAppStore()
+  const { refreshSession, securitySettings, transferFeeMarginNgn } = useAppStore()
   const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [step, setStep] = useState<Step>('form')
@@ -34,9 +34,11 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [amount, setAmount]       = useState('')
   const [narration, setNarration] = useState('')
   const [ref, setRef]             = useState('')
-  const [procStep, setProcStep]   = useState(0)
   const [pinVersion, setPinVersion] = useState(0)
   const [verifying, setVerifying]   = useState(false)
+  const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [confirmError, setConfirmError] = useState('')
+  const [formError, setFormError] = useState('')
 
   const amt = parseFloat(amount) || 0
   // Bank transfers carry a fee; internal transfers stay free, so the quote is only surfaced in
@@ -74,6 +76,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   }, [open])
 
   function handleClose() {
+    if (confirmStatus === 'processing') return
     onClose()
     setTimeout(() => {
       setStep('form')
@@ -86,9 +89,12 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       setRecipient('')
       setResolvedRecipient(null)
       setNarration('')
-      setProcStep(0)
       setPinVersion(0)
       setVerifying(false)
+      setConfirmStatus('pin')
+      setConfirmError('')
+      setFormError('')
+      setRef('')
     }, 400)
   }
 
@@ -96,13 +102,14 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   // as PinPad details, so authorising and reviewing happen on one screen instead of two.
   async function goConfirm() {
     if (verifying) return
-    if (!amt) { showToast('Fill in all required fields', 'error'); return }
+    if (!amt) { setFormError('Fill in all required fields'); return }
 
-    if (mode === 'internal' && !recipient) { showToast('Recipient is required', 'error'); return }
+    if (mode === 'internal' && !recipient) { setFormError('Recipient is required'); return }
     if (mode === 'bank' && (!bankCode || !bankName || !accountNumber)) {
-      showToast('Fill in all required fields', 'error')
+      setFormError('Fill in all required fields')
       return
     }
+    setFormError('')
 
     // The lookup is a network round-trip -- resolving an email or handle to an account, or
     // verifying bank details. Without a pending state the button looks inert and gets tapped
@@ -120,7 +127,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           const data = await readJsonResponse<{ recipient: { name: string; handle: string } }>(response)
           setResolvedRecipient(data.recipient)
         } catch (error) {
-          showToast(toUserMessage(error, 'Recipient verification failed.'), 'error')
+          setFormError(toUserMessage(error, 'Recipient verification failed.'))
           return
         }
       } else {
@@ -144,12 +151,14 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           setAccountNumber(data.verification.accountNumber)
           setAccountName(data.verification.accountName)
         } catch (error) {
-          showToast(toUserMessage(error, 'Beneficiary verification failed.'), 'error')
+          setFormError(toUserMessage(error, 'Beneficiary verification failed.'))
           return
         }
       }
 
       setPinVersion(current => current + 1)
+      setConfirmStatus('pin')
+      setConfirmError('')
       setStep('pin')
     } finally {
       setVerifying(false)
@@ -161,10 +170,10 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     biometricApprovalToken?: string
     confirmWithBiometric?: boolean
   }) {
-    setStep('processing')
-    setProcStep(1)
+    if (confirmStatus === 'processing') return
+    setConfirmError('')
+    setConfirmStatus('processing')
     try {
-      setProcStep(2)
       const response = await fetch('/api/wallet/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -175,14 +184,12 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       })
       const transfer = await readJsonResponse<{ transaction: { reference: string } }>(response)
 
-      setProcStep(3)
       setRef(transfer.transaction.reference)
       await refreshSession()
-      setStep('success')
+      setConfirmStatus('success')
     } catch (error) {
-      showToast(toUserMessage(error, 'Transfer failed.'), 'error')
-      setPinVersion(current => current + 1)
-      setStep('pin')
+      setConfirmError(toUserMessage(error, 'Transfer failed.'))
+      setConfirmStatus('error')
     }
   }
 
@@ -195,8 +202,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       const approval = await createBiometricApproval()
       await submitTransfer({ biometricApprovalToken: approval.token })
     } catch (error) {
-      showToast(toUserMessage(error, 'Biometric approval failed.'), 'error')
-      setPinVersion(current => current + 1)
+      setConfirmError(toUserMessage(error, 'Biometric approval failed.'))
+      setConfirmStatus('error')
     }
   }
 
@@ -207,7 +214,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     })
     if (!result.verified) {
       if (!result.cancelled) {
-        showToast(result.message || 'Biometric verification failed.', 'error')
+        setConfirmError(result.message || 'Biometric verification failed.')
+        setConfirmStatus('error')
       }
       return
     }
@@ -216,8 +224,14 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   const titles: Record<Step, string> = {
     form: 'Bank Transfer', pin: nativeTransactionBiometricEnabled ? 'Confirm' : 'Confirm with PIN',
-    processing: 'Processing…', success: 'Transfer Submitted'
   }
+  const confirmTitle = confirmStatus === 'processing'
+    ? 'Processing…'
+    : confirmStatus === 'success'
+      ? (mode === 'internal' ? 'Sent!' : 'Submitted!')
+      : confirmStatus === 'error'
+        ? 'Transaction failed'
+        : titles.pin
 
   const transferDetails = mode === 'internal'
     ? [
@@ -235,7 +249,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       ]
 
   return (
-    <Modal open={open} onClose={handleClose} title={titles[step]} size="md" bottomSheet={step === 'pin'}>
+    <Modal open={open} onClose={handleClose} title={step === 'form' ? titles.form : confirmTitle} size="md" bottomSheet={step === 'pin'} dismissible={confirmStatus !== 'processing'}>
       {step === 'form' && (
         <div className="p-6 flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-2">
@@ -311,6 +325,11 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
             )}
             <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Delivery</span><span className="text-[var(--gold2)] font-bold">{mode === 'internal' ? 'Instant' : 'Pending settlement'}</span></div>
           </div>
+          {formError ? (
+            <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[11px] font-medium text-[var(--red2)]">
+              {formError}
+            </div>
+          ) : null}
           <Button onClick={() => void goConfirm()} loading={verifying} className="w-full py-3.5">
             {verifying
               ? (mode === 'internal' ? 'Verifying recipient…' : 'Verifying account…')
@@ -342,47 +361,39 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
           onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
           biometricBusy={nativeBiometricBusy}
+          status={confirmStatus}
+          statusTitle={confirmStatus === 'processing'
+            ? 'Processing payment'
+            : confirmStatus === 'success'
+              ? (mode === 'internal' ? 'Sent!' : 'Submitted!')
+              : undefined}
+          statusMessage={confirmStatus === 'processing'
+            ? (mode === 'internal' ? 'Processing internal transfer.' : 'Creating your payout request.')
+            : confirmStatus === 'success'
+              ? `${formatNGN(amt)} ${mode === 'internal' ? 'sent to' : 'queued for'} ${mode === 'internal' ? (resolvedRecipient?.name || recipient) : accountName}.`
+              : confirmError}
+          statusReference={ref}
+          onRetry={() => {
+            setConfirmError('')
+            setConfirmStatus('pin')
+            setPinVersion(current => current + 1)
+          }}
+          onDone={handleClose}
+          secondaryDoneLabel="Send again"
+          onSecondaryDone={() => {
+            setStep('form')
+            setAmount('')
+            setBankName('')
+            setAccountNumber('')
+            setAccountName('')
+            setRecipient('')
+            setResolvedRecipient(null)
+            setNarration('')
+            setConfirmStatus('pin')
+            setConfirmError('')
+            setRef('')
+          }}
         />
-      )}
-
-      {step === 'processing' && (
-        <div className="p-10 text-center">
-          <div className="spinner mx-auto mb-5" />
-          <div className="font-display font-bold text-[18px] text-[var(--text)] mb-1.5">Submitting…</div>
-          <div className="text-[11px] text-[var(--muted)]">{mode === 'internal' ? 'Processing internal transfer' : 'Creating your payout request'}</div>
-          <div className="mt-6 border border-[var(--border)]">
-            {[
-              { label: 'PIN verified', done: procStep >= 1 },
-              { label: mode === 'internal' ? 'Debiting sender' : 'Locking funds', done: procStep >= 2, active: procStep === 1 },
-              { label: mode === 'internal' ? 'Crediting recipient' : 'Queueing bank payout', done: procStep >= 3, active: procStep === 2 },
-            ].map((s, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] last:border-0">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] flex-shrink-0 ${
-                  s.done ? 'bg-[rgba(46,170,92,.15)] border border-[rgba(46,170,92,.35)] text-[var(--green2)]'
-                  : s.active ? 'bg-[rgba(79,70,229,.15)] border border-[rgba(79,70,229,.35)] animate-pulse-dot'
-                  : 'bg-[var(--clay2)] border border-[var(--border)]'
-                }`}>{s.done ? '✓' : ''}</div>
-                <span className={`text-[12px] ${s.done || s.active ? 'text-[var(--text)]' : 'text-[var(--muted)]'}`}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {step === 'success' && (
-        <div className="p-9 text-center flex flex-col items-center gap-4">
-          <div className="w-18 h-18 rounded-full bg-[rgba(46,170,92,.12)] border-2 border-[rgba(46,170,92,.3)] flex items-center justify-center text-[28px] animate-pop w-[72px] h-[72px]">✅</div>
-          <div className="font-display font-black text-[26px] text-[var(--text)]">{mode === 'internal' ? 'Sent!' : 'Submitted!'}</div>
-          <div className="text-[13px] text-[var(--text2)]">{formatNGN(amt)} {mode === 'internal' ? 'sent to' : 'queued for'} <span className="text-[var(--gold2)]">{mode === 'internal' ? (resolvedRecipient?.name || recipient) : accountName}</span></div>
-          <div className="bg-[var(--clay)] border border-[var(--border)] p-3 w-full text-left">
-            <div className="text-[8px] text-[var(--muted)] uppercase tracking-[1px] mb-1">Transaction Reference</div>
-            <div className="text-[11px] text-[var(--gold2)] font-mono">{ref}</div>
-          </div>
-          <div className="flex gap-2 w-full">
-            <Button variant="secondary" onClick={handleClose} className="flex-1 py-3">Done</Button>
-            <Button onClick={() => { setStep('form'); setAmount(''); setBankName(''); setAccountNumber(''); setAccountName(''); setRecipient(''); setResolvedRecipient(null); setNarration('') }} className="flex-1 py-3">Send Again</Button>
-          </div>
-        </div>
       )}
     </Modal>
   )
