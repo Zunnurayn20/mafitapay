@@ -151,7 +151,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   }
 
   return (
-    <Modal open={open} onClose={handleClose} title="Sell Crypto">
+    <Modal open={open} onClose={handleClose} title="Crypto Deposit">
       {!asset && (
         <div className="p-8 text-center">
           <div className="spinner mx-auto mb-4" />

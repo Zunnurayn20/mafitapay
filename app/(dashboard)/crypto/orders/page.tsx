@@ -30,7 +30,7 @@ function getOrderAssetSymbol(order: CryptoOrder) {
 }
 
 function formatOrderTitle(order: CryptoOrder) {
-  const side = order.side === 'sell' ? 'Sell' : 'Buy'
+  const side = order.side === 'sell' ? 'Crypto Deposit' : 'Buy'
   return `${side} ${formatCryptoQuantity(order.cryptoAmount)} ${getOrderAssetSymbol(order)}`
 }
 
@@ -175,7 +175,7 @@ export default function CryptoOrdersPage() {
       <Card>
         <div className="border-b border-[var(--border)] px-5 py-4">
           <div className="text-[13px] font-bold text-[var(--text)]">Crypto Orders</div>
-          <div className="mt-1 text-[10px] text-[var(--muted)]">Track your buy and sell orders, delivery status, and execution details.</div>
+          <div className="mt-1 text-[10px] text-[var(--muted)]">Track your buy and deposit orders, delivery status, and execution details.</div>
         </div>
 
         {loading ? (

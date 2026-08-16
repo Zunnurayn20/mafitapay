@@ -19,7 +19,7 @@ function formatCryptoQuantity(value: number) {
 }
 
 function formatTradeTitle(tx: Transaction) {
-  const side = tx.type === 'crypto_sell' ? 'Sell' : 'Buy'
+  const side = tx.type === 'crypto_sell' ? 'Crypto Deposit' : 'Buy'
   const amount =
     typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
       ? formatCryptoQuantity(tx.metadata.cryptoAmount)
@@ -228,7 +228,7 @@ export default function CryptoPage() {
           </div>
         </div>
         <div className="flex shrink-0">
-          <Button variant="secondary" onClick={() => openModal('sell')} size="sm">⬆ Sell Crypto</Button>
+          <Button variant="secondary" onClick={() => openModal('sell')} size="sm">⬆ Crypto Deposit</Button>
         </div>
       </div>
 
@@ -302,7 +302,7 @@ export default function CryptoPage() {
         {cryptoTxs.length === 0 ? (
           <div className="py-14 text-center text-[var(--muted)] text-[12px]">
             <div className="text-[28px] mb-3">₿</div>
-            No crypto trades yet. Buy or sell to get started.
+            No crypto trades yet. Buy or deposit to get started.
           </div>
         ) : cryptoTxs.map(tx => (
             <button key={tx.id} type="button" onClick={() => void openTradeDetail(tx.id)} className="flex w-full items-center gap-3 px-5 py-4 border-b border-[var(--border)] last:border-0 text-left transition-colors hover:bg-[var(--clay)]">
@@ -377,7 +377,7 @@ export default function CryptoPage() {
       title={`Select ${networkPickerGroup?.symbol ?? ''} network`}
       subtitle={
         networkPickerMode === 'sell'
-          ? 'Choose the network for this sell'
+          ? 'Choose the network for this deposit'
           : 'Choose the network for this buy'
       }
       size="sm"

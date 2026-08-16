@@ -58,7 +58,7 @@ function formatTransactionTitle(tx: Transaction, cryptoAsset?: { symbol?: string
     }
   }
 
-  const side = tx.type === 'crypto_sell' ? 'Sell' : 'Buy'
+  const side = tx.type === 'crypto_sell' ? 'Crypto Deposit' : 'Buy'
   const amount =
     typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
       ? formatCryptoQuantity(tx.metadata.cryptoAmount)
