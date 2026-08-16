@@ -9,6 +9,7 @@ import { TransactionIcon } from '@/components/transactions/TransactionIcon'
 import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
+import { formatTransactionTitle } from '@/lib/transaction-title'
 import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 const FILTERS = ['All','Deposits','Withdrawals','Bills','Crypto']
@@ -16,71 +17,6 @@ const FILTERS = ['All','Deposits','Withdrawals','Bills','Crypto']
 function compactHash(value: string, head = 8, tail = 6) {
   if (value.length <= head + tail + 3) return value
   return `${value.slice(0, head)}...${value.slice(-tail)}`
-}
-
-function formatPairLabel(pairId: string) {
-  return pairId.replace(/_/g, ' · ')
-}
-
-function formatCryptoQuantity(value: number) {
-  if (!Number.isFinite(value)) return '0'
-  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
-  return value.toFixed(5).replace(/\.?0+$/, '')
-}
-
-function formatHistoryTitle(tx: Transaction, cryptoAsset?: { network?: string; symbol?: string }) {
-  if (!tx.type.startsWith('crypto')) {
-    switch (tx.type) {
-      case 'deposit':
-        return 'Bank Deposit'
-      case 'withdrawal':
-        return 'Bank Withdrawal'
-      case 'transfer_in':
-        return 'Funds Received'
-      case 'transfer_out':
-        return tx.metadata?.settlementKind === 'bank_transfer_out' ? 'Bank Transfer' : 'Internal Transfer'
-      case 'airtime':
-        return 'Airtime Purchase'
-      case 'data':
-        return 'Data Purchase'
-      case 'electric':
-        return 'Electricity'
-      case 'cable':
-        return 'Cable TV'
-      case 'education':
-        return 'Education'
-      case 'gas':
-        return 'Gas'
-      case 'insurance':
-        return 'Insurance'
-      case 'water':
-        return 'Water'
-      case 'referral_bonus':
-        return 'Referral Bonus'
-      case 'reward_bonus':
-        return 'Reward Bonus'
-      case 'p2p_deposit':
-        return 'Deposit'
-      case 'p2p_withdrawal':
-        return 'Withdrawal'
-      default:
-        return tx.description
-    }
-  }
-
-  const side = tx.type === 'crypto_sell' ? 'Crypto Deposit' : 'Buy'
-  const amount =
-    typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
-      ? formatCryptoQuantity(tx.metadata.cryptoAmount)
-      : null
-  const symbol =
-    cryptoAsset?.symbol
-    || (typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : '')
-
-  const amountLabel = amount && symbol ? `${amount} ${symbol}` : ''
-  const providerLabel = ''
-
-  return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
 }
 
 function getStatusIcon(status: Transaction['status']) {
@@ -183,7 +119,7 @@ function buildReceiptShareText(detail: {
 }, cryptoAsset?: { symbol?: string; network?: string }) {
   return [
     'MafitaPay Receipt',
-    formatHistoryTitle(detail.transaction, cryptoAsset),
+    formatTransactionTitle(detail.transaction, cryptoAsset),
     `Amount: ${formatNGN(detail.transaction.amount)}`,
     `Status: ${detail.transaction.status}`,
     `Reference: ${detail.transaction.reference}`,
@@ -434,8 +370,6 @@ export default function HistoryPage() {
           {filtered.map(tx => {
             const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
             const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
-            const statusVariant =
-              tx.status === 'success' ? 'success' : tx.status === 'failed' ? 'failed' : 'pending'
             const statusIcon = getStatusIcon(tx.status)
             const isPendingCryptoOrder =
               tx.type.startsWith('crypto')
@@ -456,7 +390,7 @@ export default function HistoryPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-[13px] font-semibold text-[var(--text)]">
-                          {formatHistoryTitle(tx, cryptoAsset)}
+                          {formatTransactionTitle(tx, cryptoAsset)}
                         </div>
                       </div>
                       <div className={`text-right text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
@@ -514,7 +448,7 @@ export default function HistoryPage() {
                       <TransactionIcon tx={tx} cryptoAsset={cryptoAsset} />
                     </td>
                     <td className="px-4 py-3">
-                      <div className="text-[13px] font-semibold text-[var(--text)]">{formatHistoryTitle(tx, cryptoAsset)}</div>
+                      <div className="text-[13px] font-semibold text-[var(--text)]">{formatTransactionTitle(tx, cryptoAsset)}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[9px] text-[var(--muted)] font-mono">
                         {isPendingCryptoOrder && (
                           <span className="inline-flex items-center gap-1.5 border border-[rgba(99,102,241,.25)] bg-[rgba(79,70,229,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.6px] text-[var(--gold2)]">
@@ -595,7 +529,7 @@ export default function HistoryPage() {
               id="history-receipt-sheet"
               transaction={detail.transaction}
               details={buildReceiptDetails(detail)}
-              title={formatHistoryTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
+              title={formatTransactionTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
                 ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
                 : undefined)}
             />
@@ -745,7 +679,7 @@ export default function HistoryPage() {
                   id="history-receipt-sheet"
                   transaction={detail.transaction}
                   details={buildReceiptDetails(detail)}
-                  title={formatHistoryTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
+                  title={formatTransactionTitle(detail.transaction, typeof detail.transaction.metadata?.pairId === 'string'
                     ? cryptoAssets.find(asset => asset.id === detail.transaction.metadata?.pairId)
                     : undefined)}
                 />

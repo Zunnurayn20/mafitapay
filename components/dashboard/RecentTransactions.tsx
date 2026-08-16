@@ -10,67 +10,8 @@ import { useCryptoAssets } from '@/lib/client/catalogs'
 import { TransactionIcon } from '@/components/transactions/TransactionIcon'
 import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { fmtDate, formatNGN } from '@/lib/utils'
+import { formatTransactionTitle } from '@/lib/transaction-title'
 import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
-
-function formatCryptoQuantity(value: number) {
-  if (!Number.isFinite(value)) return '0'
-  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
-  return value.toFixed(5).replace(/\.?0+$/, '')
-}
-
-function formatTransactionTitle(tx: Transaction, cryptoAsset?: { symbol?: string }) {
-  if (!tx.type.startsWith('crypto')) {
-    switch (tx.type) {
-      case 'deposit':
-        return 'Bank Deposit'
-      case 'withdrawal':
-        return 'Bank Withdrawal'
-      case 'transfer_in':
-        return 'Funds Received'
-      case 'transfer_out':
-        return tx.metadata?.settlementKind === 'bank_transfer_out' ? 'Bank Transfer' : 'Internal Transfer'
-      case 'airtime':
-        return 'Airtime Purchase'
-      case 'data':
-        return 'Data Purchase'
-      case 'electric':
-        return 'Electricity'
-      case 'cable':
-        return 'Cable TV'
-      case 'education':
-        return 'Education'
-      case 'gas':
-        return 'Gas'
-      case 'insurance':
-        return 'Insurance'
-      case 'water':
-        return 'Water'
-      case 'referral_bonus':
-        return 'Referral Bonus'
-      case 'reward_bonus':
-        return 'Reward Bonus'
-      case 'p2p_deposit':
-        return 'Deposit'
-      case 'p2p_withdrawal':
-        return 'Withdrawal'
-      default:
-        return tx.description
-    }
-  }
-
-  const side = tx.type === 'crypto_sell' ? 'Crypto Deposit' : 'Buy'
-  const amount =
-    typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
-      ? formatCryptoQuantity(tx.metadata.cryptoAmount)
-      : null
-  const symbol =
-    cryptoAsset?.symbol
-    || (typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : '')
-  const amountLabel = amount && symbol ? `${amount} ${symbol}` : ''
-  const providerLabel = ''
-
-  return `${side}${providerLabel}${amountLabel ? ` ${amountLabel}` : ''}`
-}
 
 function getStatusIcon(status: Transaction['status']) {
   if (status === 'success') {

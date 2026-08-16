@@ -1,8 +1,10 @@
 'use client'
 import { Card } from '@/components/ui/Card'
+import { TransactionIcon } from '@/components/transactions/TransactionIcon'
 import { useBillProviders } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
+import { formatTransactionTitle } from '@/lib/transaction-title'
 
 const BILL_TYPES = ['airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water']
 
@@ -50,12 +52,12 @@ export default function BillsPage() {
           <div className="divide-y divide-[var(--border)]">
             {billTransactions.map(tx => (
               <div key={tx.id} className="flex items-center gap-3 px-5 py-4">
-                <div className="text-[22px]">
-                  {'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'}
+                <div className="w-10 flex-shrink-0">
+                  <TransactionIcon tx={tx} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-semibold text-[var(--text)]">
-                    {tx.description}
+                    {formatTransactionTitle(tx)}
                   </div>
                   <div className="mt-1 text-[9px] font-mono text-[var(--muted)]">
                     {fmtDate(tx.createdAt)}

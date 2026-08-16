@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
+import { formatCryptoQuantity } from '@/lib/transaction-title'
 import type { CryptoOrder } from '@/types'
 
 const STATUS_FILTERS = ['all', 'pending', 'fulfilled', 'failed', 'expired'] as const
@@ -17,12 +18,6 @@ const orderListInflight = new Map<string, Promise<CryptoOrder[]>>()
 function compactHash(value: string, head = 10, tail = 8) {
   if (value.length <= head + tail + 3) return value
   return `${value.slice(0, head)}...${value.slice(-tail)}`
-}
-
-function formatCryptoQuantity(value: number) {
-  if (!Number.isFinite(value)) return '0'
-  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
-  return value.toFixed(5).replace(/\.?0+$/, '')
 }
 
 function getOrderAssetSymbol(order: CryptoOrder) {

@@ -9,25 +9,9 @@ import { TransactionReceiptSheet } from '@/components/transactions/TransactionRe
 import { useCryptoAssets, useCryptoAssetsRefreshing } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN, formatPercentChange, formatUSDAdaptive, fmtDate } from '@/lib/utils'
+import { formatCryptoQuantity, formatTransactionTitle } from '@/lib/transaction-title'
 import { getNetworkFallbackLabel, getNetworkIconUrl } from '@/lib/crypto-networks'
 import type { CryptoAsset, CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
-
-function formatCryptoQuantity(value: number) {
-  if (!Number.isFinite(value)) return '0'
-  if (value >= 1) return value.toFixed(4).replace(/\.?0+$/, '')
-  return value.toFixed(5).replace(/\.?0+$/, '')
-}
-
-function formatTradeTitle(tx: Transaction) {
-  const side = tx.type === 'crypto_sell' ? 'Crypto Deposit' : 'Buy'
-  const amount =
-    typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
-      ? formatCryptoQuantity(tx.metadata.cryptoAmount)
-      : null
-  const symbol = typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : ''
-  const providerLabel = ''
-  return `${side}${providerLabel}${amount && symbol ? ` ${amount} ${symbol}` : ''}`
-}
 
 function isStablecoin(symbol: string) {
   return new Set(['USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'BUSD', 'USDE']).has(symbol.toUpperCase())
@@ -323,7 +307,7 @@ export default function CryptoPage() {
                 )
               })()}
               <div className="flex-1">
-                <div className="text-[13px] font-semibold text-[var(--text)]">{formatTradeTitle(tx)}</div>
+                <div className="text-[13px] font-semibold text-[var(--text)]">{formatTransactionTitle(tx)}</div>
                 <div className="text-[9px] text-[var(--muted)] font-mono">{fmtDate(tx.createdAt)}</div>
               </div>
               <div className={`text-[13px] font-bold font-mono ${tx.amount > 0 ? 'text-[var(--green2)]' : 'text-[var(--text2)]'}`}>
@@ -337,7 +321,7 @@ export default function CryptoPage() {
       <Modal
         open={Boolean(selectedId)}
         onClose={closeTradeDetail}
-        title={detail ? formatTradeTitle(detail.transaction) : 'Trade Detail'}
+        title={detail ? formatTransactionTitle(detail.transaction) : 'Trade Detail'}
         subtitle={detail ? detail.transaction.reference : undefined}
         size="lg"
         className="max-w-3xl"
@@ -354,7 +338,7 @@ export default function CryptoPage() {
             <TransactionReceiptSheet
               id="crypto-trade-receipt"
               transaction={detail.transaction}
-              title={formatTradeTitle(detail.transaction)}
+              title={formatTransactionTitle(detail.transaction)}
               details={[
                 { label: 'Wallet address', value: detail.cryptoOrder?.walletAddress || 'Not available', mono: true },
                 ...(detail.cryptoOrder ? [
