@@ -204,13 +204,13 @@
         </svg>
       </div>
 
-      <h1>No connection</h1>
-      <p class="detail">
+      <h1 id="heading">No connection</h1>
+      <p class="detail" id="detail">
         MafitaPay could not reach the network. Your account and balance are safe - nothing was
         interrupted.
       </p>
 
-      <ul class="hints">
+      <ul class="hints" id="hints">
         <li>Check mobile data or Wi-Fi is on</li>
         <li>Turn off airplane mode</li>
         <li>Move somewhere with better signal</li>
@@ -225,6 +225,58 @@
         var button = document.getElementById('retry')
         var status = document.getElementById('status')
 
+        var HOME = 'https://mafitapay.com/'
+
+        // MainActivity passes the route the user was on, plus why this screen is up. Only the
+        // production origin or a local dev server is accepted, so the parameter cannot point the
+        // WebView at an arbitrary host.
+        function isAllowedTarget(parsed) {
+          var host = parsed.hostname
+          if (parsed.protocol === 'https:') {
+            if (host === 'mafitapay.com') return true
+            if (host.length > 13 && host.indexOf('.mafitapay.com', host.length - 14) !== -1) return true
+          }
+          // Dev builds run against MAFITAPAY_MOBILE_SERVER_URL, e.g. http://10.0.2.2:3000.
+          if (parsed.protocol === 'http:') {
+            if (host === 'localhost' || host === '127.0.0.1' || host === '10.0.2.2') return true
+            if (host.indexOf('192.168.') === 0 || host.indexOf('10.') === 0) return true
+          }
+          return false
+        }
+
+        function readParams() {
+          var params
+          try {
+            params = new URLSearchParams(window.location.search)
+          } catch (error) {
+            return { target: HOME, reason: '' }
+          }
+
+          var wanted = params.get('return') || ''
+          var safe = HOME
+          try {
+            var parsed = new URL(wanted, HOME)
+            if (isAllowedTarget(parsed)) {
+              safe = parsed.href
+            }
+          } catch (error) {
+            safe = HOME
+          }
+
+          return { target: safe, reason: params.get('reason') || '' }
+        }
+
+        var config = readParams()
+
+        // Connected but the origin would not answer: do not claim the phone is offline.
+        if (config.reason === 'unreachable') {
+          document.getElementById('heading').textContent = 'Cannot reach MafitaPay'
+          document.getElementById('detail').textContent =
+            'Your connection is working but MafitaPay did not respond. Your account and balance are safe - nothing was interrupted.'
+          document.getElementById('hints').innerHTML =
+            '<li>This is usually brief - try again in a moment</li>'
+        }
+
         function retry() {
           if (button.disabled) return
           button.disabled = true
@@ -233,17 +285,20 @@
 
           // Navigate back to the remote app explicitly. Reloading the local error document can
           // resolve to localhost/offline.html and Android then opens it outside the WebView.
+          var destination =
+            config.target + (config.target.indexOf('?') === -1 ? '?' : '&') + 'reconnect=' + Date.now()
+
           window.setTimeout(function () {
             try {
-              window.location.replace('https://mafitapay.com/?reconnect=' + Date.now())
+              window.location.replace(destination)
             } catch (error) {
-              window.location.href = 'https://mafitapay.com/?reconnect=' + Date.now()
+              window.location.href = destination
             }
           }, 400)
 
           // If the reload never navigates away, the network is still down.
           window.setTimeout(function () {
-            reset('Still offline')
+            reset(config.reason === 'unreachable' ? 'Still not responding' : 'Still offline')
           }, 6000)
         }
 
