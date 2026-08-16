@@ -71,7 +71,7 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         appInForeground = true;
-        recoverIfNetworkRestored();
+        recoverIfStranded();
     }
 
     @Override
@@ -220,15 +220,35 @@ public class MainActivity extends BridgeActivity {
         view.loadUrl(target);
     }
 
-    private void recoverIfNetworkRestored() {
-        if (!appInForeground || !hasValidatedNetwork()) return;
+    /**
+     * Put the app back on screen whenever the visible document is not a healthy app page.
+     *
+     * Checking only for our own offline.html was the hole that kept this bug alive: when the WebView
+     * paints its own error page it keeps the failed URL, so view.getUrl() still looks like a normal
+     * app address and nothing recovers. mainFrameLoadFailed is the honest signal — it survives from
+     * the failing navigation until the next one starts, including across a background spell, which
+     * is what lets a resume repair an error page painted while the app was not even visible.
+     */
+    private void recoverIfStranded() {
+        if (!appInForeground) return;
 
         WebView view = currentWebView();
-        if (view == null || !isOfflineDocument(view.getUrl())) return;
+        if (view == null) return;
 
-        // The network genuinely came back, so the previous failures should not count against us.
+        String url = view.getUrl();
+        if (!mainFrameLoadFailed && !isOfflineDocument(url)) return;
+
+        if (!hasValidatedNetwork()) {
+            // Still no usable network: at least replace the raw error page with our own screen,
+            // which knows the route and offers a retry.
+            showBrandedOffline(view, REASON_OFFLINE);
+            return;
+        }
+
+        // Returning to the app, or the network coming back, earns a fresh budget: the earlier
+        // failures were almost certainly the radio and DNS still waking up.
         restoreAttempts = 0;
-        restoreApp(view, null);
+        restoreApp(view, isAppDocumentUrl(url) ? url : null);
     }
 
     /**
@@ -257,14 +277,14 @@ public class MainActivity extends BridgeActivity {
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
-                mainHandler.post(() -> recoverIfNetworkRestored());
+                mainHandler.post(() -> recoverIfStranded());
             }
 
             @Override
             public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
                 if (capabilities != null
                     && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                    mainHandler.post(() -> recoverIfNetworkRestored());
+                    mainHandler.post(() -> recoverIfStranded());
                 }
             }
         };

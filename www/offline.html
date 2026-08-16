@@ -315,6 +315,18 @@
           status.textContent = 'Back online'
           retry()
         })
+
+        // 'online' never fires for the unreachable case: the radio is up and navigator.onLine is
+        // already true, it is DNS that is still cold after the phone dozed. Give it one unattended
+        // retry so the common transient case heals without the user doing anything.
+        if (config.reason === 'unreachable') {
+          window.setTimeout(function () {
+            if (!button.disabled) {
+              status.textContent = 'Retrying...'
+              retry()
+            }
+          }, 3000)
+        }
       })()
     </script>
   </body>
