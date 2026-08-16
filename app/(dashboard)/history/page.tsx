@@ -4,8 +4,8 @@ import { toBlob, toPng } from 'html-to-image'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
+import { TransactionIcon } from '@/components/transactions/TransactionIcon'
 import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
@@ -432,7 +432,6 @@ export default function HistoryPage() {
       <Card>
         <div className="xl:hidden">
           {filtered.map(tx => {
-            const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
             const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
             const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
             const statusVariant =
@@ -450,19 +449,8 @@ export default function HistoryPage() {
                 onClick={() => void openDetail(tx.id)}
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-9 flex-shrink-0">
-                    {cryptoAsset ? (
-                      <AssetLogo
-                        src={cryptoAsset.icon}
-                        alt={`${cryptoAsset.symbol} logo`}
-                        fallback={cryptoAsset.symbol.slice(0, 1)}
-                        className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(79,70,229,.1)]"
-                        imgClassName="h-6 w-6 object-contain"
-                        textClassName="text-[18px] font-bold text-[var(--gold2)]"
-                      />
-                    ) : (
-                      <span className="text-[18px]">{icon}</span>
-                    )}
+                  <div className="w-10 flex-shrink-0">
+                    <TransactionIcon tx={tx} cryptoAsset={cryptoAsset} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
@@ -512,7 +500,6 @@ export default function HistoryPage() {
             </thead>
             <tbody>
               {filtered.map(tx => {
-                const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
                 const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
                 const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
                 const statusVariant =
@@ -523,19 +510,8 @@ export default function HistoryPage() {
 
                 return (
                   <tr key={tx.id} className="hover:bg-[rgba(26,26,46,.6)] cursor-pointer transition-colors" onClick={() => void openDetail(tx.id)}>
-                    <td className="px-4 py-3 w-9">
-                      {cryptoAsset ? (
-                        <AssetLogo
-                          src={cryptoAsset.icon}
-                          alt={`${cryptoAsset.symbol} logo`}
-                          fallback={cryptoAsset.symbol.slice(0, 1)}
-                          className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[rgba(79,70,229,.1)]"
-                          imgClassName="h-6 w-6 object-contain"
-                          textClassName="text-[18px] font-bold text-[var(--gold2)]"
-                        />
-                      ) : (
-                        <span className="text-[18px]">{icon}</span>
-                      )}
+                    <td className="px-4 py-3 w-10">
+                      <TransactionIcon tx={tx} cryptoAsset={cryptoAsset} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-[13px] font-semibold text-[var(--text)]">{formatHistoryTitle(tx, cryptoAsset)}</div>

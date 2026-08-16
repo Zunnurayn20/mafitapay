@@ -5,9 +5,9 @@ import { useAppStore } from '@/store'
 import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardAction } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
 import { useCryptoAssets } from '@/lib/client/catalogs'
+import { TransactionIcon } from '@/components/transactions/TransactionIcon'
 import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
@@ -91,38 +91,6 @@ function getStatusIcon(status: Transaction['status']) {
     icon: '•',
     className: 'border-[var(--gold)] bg-[var(--gold)] text-[var(--char)]',
   }
-}
-
-/** Dark tile surface (matches activity card); only the glyph keeps a type colour. */
-const TX_TILE = 'border-[var(--border)] bg-[var(--coal)]'
-
-function getTransactionTypeIconStyle(type: Transaction['type'], amount: number) {
-  const styles: Record<Transaction['type'], string> = {
-    deposit: `${TX_TILE} text-emerald-400`,
-    withdrawal: `${TX_TILE} text-rose-400`,
-    transfer_in: `${TX_TILE} text-green-400`,
-    transfer_out: `${TX_TILE} text-sky-400`,
-    airtime: `${TX_TILE} text-amber-400`,
-    data: `${TX_TILE} text-sky-400`,
-    electric: `${TX_TILE} text-emerald-400`,
-    cable: `${TX_TILE} text-violet-400`,
-    education: `${TX_TILE} text-sky-400`,
-    gas: `${TX_TILE} text-orange-400`,
-    insurance: `${TX_TILE} text-rose-400`,
-    water: `${TX_TILE} text-cyan-400`,
-    crypto_buy: `${TX_TILE} text-orange-400`,
-    crypto_sell: `${TX_TILE} text-yellow-400`,
-    referral_bonus: `${TX_TILE} text-lime-400`,
-    reward_bonus: `${TX_TILE} text-teal-400`,
-    admin_credit: `${TX_TILE} text-green-400`,
-    admin_debit: `${TX_TILE} text-red-400`,
-    p2p_deposit: `${TX_TILE} text-emerald-400`,
-    p2p_withdrawal: `${TX_TILE} text-rose-400`,
-  }
-
-  return styles[type] || (amount > 0
-    ? `${TX_TILE} text-emerald-400`
-    : `${TX_TILE} text-[var(--text2)]`)
 }
 
 export function RecentTransactions() {
@@ -294,11 +262,9 @@ export function RecentTransactions() {
         ) : (
           <div>
             {recent.map((tx, index) => {
-              const icon = 'icon' in tx && typeof tx.icon === 'string' ? tx.icon : '•'
               const pairId = typeof tx.metadata?.pairId === 'string' ? tx.metadata.pairId : ''
               const cryptoAsset = pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
               const statusIcon = getStatusIcon(tx.status)
-              const typeIconStyle = getTransactionTypeIconStyle(tx.type, tx.amount)
 
               return (
                 <button
@@ -310,20 +276,7 @@ export function RecentTransactions() {
                   }`}
                 >
                   <div className="w-10 flex-shrink-0">
-                    {cryptoAsset ? (
-                      <AssetLogo
-                        src={cryptoAsset.icon}
-                        alt={`${cryptoAsset.symbol} logo`}
-                        fallback={cryptoAsset.symbol.slice(0, 1)}
-                        className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border ${typeIconStyle}`}
-                        imgClassName="h-5 w-5 object-contain"
-                        textClassName="text-[15px] font-bold"
-                      />
-                    ) : (
-                      <div className={`flex h-10 w-10 items-center justify-center rounded-xl border text-[16px] ${typeIconStyle}`}>
-                        {icon}
-                      </div>
-                    )}
+                    <TransactionIcon tx={tx} cryptoAsset={cryptoAsset} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
