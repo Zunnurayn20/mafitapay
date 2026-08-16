@@ -2,19 +2,25 @@ package ng.mafitapay.app;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
+
+import androidx.core.view.WindowCompat;
 
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
@@ -156,10 +162,42 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    /**
+     * Nothing behind the system navigation bar but our own page.
+     *
+     * Android 15+ (targetSdk 35+) already lays the WebView out edge-to-edge, but it still paints an
+     * 80% scrim tinted like the window background across 3-button navigation, because
+     * navigationBarContrastEnforced defaults to true. Gesture navigation ignores both that flag and
+     * navigationBarColor. Android 14 and below enforce nothing: the decor still fits system windows
+     * (the StatusBar plugin only opts out for the status bar) and the bar keeps its opaque theme
+     * colour, so both have to be cleared by hand.
+     */
+    @SuppressWarnings("deprecation")
+    private void makeNavigationBarTransparent() {
+        Window window = getWindow();
+
+        // No-op on API 35+, this is what lets the WebView reach under the bar on older releases.
+        WindowCompat.setDecorFitsSystemWindows(window, false);
+
+        window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.setNavigationBarDividerColor(Color.TRANSPARENT);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // The one call that removes the 3-button scrim on Android 15+.
+            window.setNavigationBarContrastEnforced(false);
+        }
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BiometricAuthPlugin.class);
         super.onCreate(savedInstanceState);
+
+        makeNavigationBarTransparent();
 
         connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         registerNetworkCallback();
