@@ -40,9 +40,9 @@ function formatHistoryTitle(tx: Transaction, cryptoAsset?: { network?: string; s
       case 'transfer_out':
         return tx.metadata?.settlementKind === 'bank_transfer_out' ? 'Bank Transfer' : 'Internal Transfer'
       case 'airtime':
-        return 'Airtime'
+        return 'Airtime Purchase'
       case 'data':
-        return 'Data'
+        return 'Data Purchase'
       case 'electric':
         return 'Electricity'
       case 'cable':
