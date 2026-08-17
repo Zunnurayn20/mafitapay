@@ -116,6 +116,21 @@ async function readJson<T>(res: Response): Promise<T> {
   return readJsonResponse<T>(res)
 }
 
+// Backoff for retrying the session read, capped so a long offline stretch settles into one quiet
+// request every few seconds rather than a hot loop.
+const SESSION_RETRY_DELAYS_MS = [400, 1_000, 2_500, 5_000, 10_000]
+
+function sessionRetryDelay(attempt: number) {
+  return SESSION_RETRY_DELAYS_MS[Math.min(attempt, SESSION_RETRY_DELAYS_MS.length - 1)]
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** Guards against a second bootstrap loop starting while the first is still retrying. */
+let bootstrapInFlight = false
+
 function applySessionData(set: (partial: Partial<AppStore>) => void, data: SessionData | null) {
   if (!data) {
     set({
@@ -166,23 +181,40 @@ export const useAppStore = create<AppStore>()(
       authResolved: false,
       user: null,
       bootstrap: async () => {
-        if (get().authResolved) return
+        if (get().authResolved || bootstrapInFlight) return
+        bootstrapInFlight = true
 
+        // `GET /api/auth` answers 200 with `data: null` when there is genuinely no session, so a
+        // throw here never means "signed out" -- it means the request did not complete: the radio
+        // still waking after the phone slept, a Railway cold start, a proxy timeout. Reporting that
+        // as signed-out is what sent authenticated users to the login page on resume, because
+        // DashboardLayout pushes /login the moment authResolved flips with no session.
+        //
+        // Leaving authResolved false instead holds the brand splash, which is the honest state: we
+        // do not yet know. Retry until the server actually answers.
         try {
-          const res = await fetch('/api/auth', { credentials: 'include' })
-          const data = await readJson<SessionData | null>(res)
-          applySessionData(set, data)
-        } catch {
-          applySessionData(set, null)
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              const res = await fetch('/api/auth', { credentials: 'include' })
+              applySessionData(set, await readJson<SessionData | null>(res))
+              return
+            } catch {
+              await sleep(sessionRetryDelay(attempt))
+            }
+          }
+        } finally {
+          bootstrapInFlight = false
         }
       },
       refreshSession: async () => {
         try {
           const res = await fetch('/api/auth', { credentials: 'include', cache: 'no-store' })
-          const data = await readJson<SessionData | null>(res)
-          applySessionData(set, data)
+          applySessionData(set, await readJson<SessionData | null>(res))
         } catch {
-          applySessionData(set, null)
+          // Same reasoning as bootstrap: a throw means the request failed, not that the session
+          // ended, so keep the state we already have. This runs every 20s and on every resume and
+          // window focus, so clearing it on one blip signed people out mid-flow -- including right
+          // after a withdrawal or deposit, where callers refresh to pick up the new balance.
         }
       },
       login: async (email: string, password: string) => {
