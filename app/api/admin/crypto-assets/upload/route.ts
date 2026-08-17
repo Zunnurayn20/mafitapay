@@ -44,7 +44,12 @@ export async function POST(req: Request) {
   const ext = ALLOWED_TYPES.get(file.type) as string
   const baseName = toSafeBasename(pairId || symbol || file.name.replace(/\.[^.]+$/, ''))
   const fileName = `${baseName}-${randomUUID().slice(0, 8)}${ext}`
-  const targetDir = path.join(process.cwd(), 'public', 'crypto-assets')
+  // Written to the Railway volume, not `public/`. `public/` is baked into the Docker image from git
+  // (Dockerfile: `COPY --from=builder /app/public ./public`), so a logo written there at runtime
+  // lived in one container's writable layer and disappeared on the next deploy -- while the pair in
+  // the database went on pointing at a path that now 404s. That is why two earlier uploads had to be
+  // aliased by hand in sanitizeCryptoIcon. `data/` is the mounted volume, so these survive releases.
+  const targetDir = path.join(process.cwd(), 'data', 'uploads', 'crypto-assets')
   const targetPath = path.join(targetDir, fileName)
 
   await mkdir(targetDir, { recursive: true })
@@ -52,7 +57,9 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     data: {
-      path: `/crypto-assets/${fileName}`,
+      // Served by app/api/crypto-assets/[fileName]/route.ts, since nothing outside `public/` is a
+      // static route. Stored verbatim as the pair's icon.
+      path: `/api/crypto-assets/${fileName}`,
       fileName,
       contentType: file.type,
       size: file.size,
