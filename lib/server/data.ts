@@ -4869,10 +4869,17 @@ export async function recordProviderEvent(input: {
   if (isPostgresEnabled()) {
     const id = `pe_${randomBytes(6).toString('hex')}`
     const now = new Date().toISOString()
+    // `retry_count` is passed explicitly rather than left to the column default, because on
+    // PostgreSQL there is no default to fall back on: scripts/migrate-sqlite-to-postgres.mjs copies
+    // each column's NOT NULL but drops its DEFAULT, so the SQLite `INTEGER NOT NULL DEFAULT 0`
+    // arrived as a bare `INTEGER NOT NULL`. Omitting the column therefore inserted NULL and the
+    // whole webhook threw `null value in column "retry_count" ... violates not-null constraint`,
+    // which the Flutterwave handler answered with a 404 -- so deposits were never credited and
+    // payouts stayed `pending` while the provider retried three times and gave up.
     const inserted = await queryPostgres<ProviderEventRow>(`
-      INSERT INTO provider_events (id, external_event_id, provider, reference, status, payload, failure_reason, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(external_event_id) DO NOTHING RETURNING *
-    `, [id, input.externalEventId, input.provider, input.reference, input.status, input.payload ? JSON.stringify(input.payload) : null, input.failureReason ?? null, now])
+      INSERT INTO provider_events (id, external_event_id, provider, reference, status, payload, failure_reason, retry_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(external_event_id) DO NOTHING RETURNING *
+    `, [id, input.externalEventId, input.provider, input.reference, input.status, input.payload ? JSON.stringify(input.payload) : null, input.failureReason ?? null, 0, now])
     const event = inserted.rows[0] ?? (await queryPostgres<ProviderEventRow>('SELECT * FROM provider_events WHERE external_event_id = ? LIMIT 1', [input.externalEventId])).rows[0]
     if (!event) throw new Error('Unable to persist provider event')
     return { event: mapProviderEventRow(event), inserted: inserted.rows.length > 0 }
@@ -5119,10 +5126,14 @@ export async function createDepositIntent(input: {
   const now = new Date().toISOString()
   const id = `di_${randomBytes(6).toString('hex')}`
   if (isPostgresEnabled()) {
+    // `retry_count` passed explicitly for the same reason as in recordProviderEvent: the Postgres
+    // column carries NOT NULL without the SQLite DEFAULT 0, so omitting it inserts NULL and throws.
+    // This insert is the next step after the provider event on a virtual-account credit, so it would
+    // have failed the deposit identically once that one was fixed.
     const result = await queryPostgres<DepositIntentRow>(`
-      INSERT INTO deposit_intents (id, user_id, transaction_id, reference, gross_amount, net_amount, fee, funding_method, provider, provider_reference, provider_status, account_number, bank_name, account_name, expires_at, note, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
-    `, [id, input.userId, input.transactionId, input.reference, input.grossAmount, input.netAmount, input.fee, input.fundingMethod, input.provider, input.providerReference ?? null, input.providerStatus ?? null, input.accountNumber ?? null, input.bankName ?? null, input.accountName ?? null, input.expiresAt ?? null, input.note ?? null, input.status ?? 'pending', now, now])
+      INSERT INTO deposit_intents (id, user_id, transaction_id, reference, gross_amount, net_amount, fee, funding_method, provider, provider_reference, provider_status, account_number, bank_name, account_name, expires_at, note, status, retry_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.userId, input.transactionId, input.reference, input.grossAmount, input.netAmount, input.fee, input.fundingMethod, input.provider, input.providerReference ?? null, input.providerStatus ?? null, input.accountNumber ?? null, input.bankName ?? null, input.accountName ?? null, input.expiresAt ?? null, input.note ?? null, input.status ?? 'pending', 0, now, now])
     const row = result.rows[0]
     if (!row) throw new Error('Unable to create deposit intent')
     return mapDepositIntentRow(row)

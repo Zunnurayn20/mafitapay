@@ -92,11 +92,16 @@ export async function handleFlutterwaveWebhook(input: {
 }) {
   const signatureValid = input.skipSignatureVerification || verifyFlutterwaveWebhook(input.rawBody, input.signature ?? null)
   if (!signatureValid) {
-    logFlutterwaveWebhook('signature.invalid', {
+    // Unconditional, not debug-gated: a rejected signature settles nothing, and with the debug flag
+    // off in production it produced no output at all -- leaving "Flutterwave is not calling us" and
+    // "we are refusing every call" indistinguishable from the logs. Names only non-secret facts.
+    console.warn('[flutterwave-webhook] signature rejected — delivery refused', JSON.stringify({
       source: input.source ?? 'public_webhook',
       hasSignature: Boolean(input.signature),
+      signatureLength: input.signature?.length ?? 0,
+      secretHashConfigured: Boolean(process.env.MAFITAPAY_FLUTTERWAVE_SECRET_HASH?.trim()),
       bodyLength: input.rawBody.length,
-    })
+    }))
     return { body: { error: 'Unauthorized webhook request.', success: false }, status: 401 as const }
   }
 
@@ -400,7 +405,15 @@ export async function handleFlutterwaveWebhook(input: {
           }
         }
 
-        return { body: { data: { duplicate: true, transaction: existingByReference.transaction }, success: true }, status: 200 as const }
+        // Only a transaction that has already reached a terminal state is a genuine duplicate.
+        // Reporting `duplicate` for a *pending* one acknowledged the callback with a 200 and then did
+        // nothing -- so a dynamic virtual-account deposit sat at `pending` with its funds never
+        // credited, and because the provider had been told the delivery succeeded, it never retried.
+        // Anything still pending falls through to processSettlementEvent below, which resolves both
+        // deposit intents and payout requests and is idempotent on the provider event id.
+        if (existingByReference.transaction.status !== 'pending') {
+          return { body: { data: { duplicate: true, transaction: existingByReference.transaction }, success: true }, status: 200 as const }
+        }
       }
     }
 

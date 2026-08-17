@@ -15,6 +15,25 @@ function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`
 }
 
+/**
+ * Render a column's DEFAULT for PostgreSQL, or '' when it has none.
+ *
+ * Carrying this across matters as much as NOT NULL does. Dropping it while keeping NOT NULL turns a
+ * SQLite `INTEGER NOT NULL DEFAULT 0` into a bare `INTEGER NOT NULL`, so every INSERT that relied on
+ * the default -- which is most of them, since that is the point of a default -- starts failing with
+ * `null value in column ... violates not-null constraint`. That is exactly how the Flutterwave
+ * webhook broke: `provider_events.retry_count` lost its default here, so recording an incoming event
+ * threw, the handler answered 404, and deposits went uncredited while payouts stalled at `pending`.
+ *
+ * `dflt_value` from PRAGMA table_info is already SQL text (`0`, `'active'`, `NULL`), so it is emitted
+ * verbatim rather than re-quoted.
+ */
+function postgresDefault(column) {
+  const value = column.dflt_value
+  if (value === null || value === undefined) return ''
+  return ` DEFAULT ${value}`
+}
+
 function postgresType(sqliteType = '') {
   const type = sqliteType.toUpperCase()
   if (type.includes('INT')) return 'BIGINT'
@@ -48,7 +67,7 @@ try {
       .map(column => column.name)
     const definitions = columns.map(column => {
       const required = column.notnull ? ' NOT NULL' : ''
-      return `${quoteIdentifier(column.name)} ${postgresType(column.type)}${required}`
+      return `${quoteIdentifier(column.name)} ${postgresType(column.type)}${postgresDefault(column)}${required}`
     })
     if (primaryKeyColumns.length > 0) {
       definitions.push(`PRIMARY KEY (${primaryKeyColumns.map(quoteIdentifier).join(', ')})`)
