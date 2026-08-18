@@ -206,6 +206,33 @@ async function withCoinGeckoRateLimit<T>(operation: () => Promise<T>) {
   }
 }
 
+/**
+ * Authenticated CoinGecko GET for any endpoint, reusing the rate limit, retry, unauthenticated
+ * retry and curl escape hatch that price fetching already needed. Exported so other server modules
+ * (token metadata lookup) do not rebuild the auth and transport handling.
+ *
+ * A 404 is re-thrown untouched: "CoinGecko does not list this contract" is a real answer, and
+ * retrying it through curl would only turn a clear negative into a confusing parse error.
+ */
+export async function fetchCoinGeckoJson<T>(pathAndQuery: string) {
+  const url = `${COINGECKO_API_BASE_URL.replace(/\/+$/, '')}/${pathAndQuery.replace(/^\/+/, '')}`
+
+  return await withCoinGeckoRateLimit(async () => {
+    try {
+      return await fetchJsonWithRetry<T>(url, getCoinGeckoHeaders())
+    } catch (error) {
+      const statusCode = (error as Error & { statusCode?: number }).statusCode
+      if (statusCode === 404) throw error
+
+      const hasConfiguredKey = Boolean(process.env.COINGECKO_API_KEY?.trim())
+      if (statusCode === 401 && hasConfiguredKey && isPublicCoinGeckoUrl()) {
+        return await fetchJsonWithRetry<T>(url, { accept: 'application/json' })
+      }
+      return await fetchJsonViaCurl<T>(url, getCoinGeckoHeaders())
+    }
+  })
+}
+
 async function fetchCoinGeckoSimplePrice(ids: string[], currency: 'usd' | 'ngn') {
   if (ids.length === 0) return {} as CoinGeckoSimplePriceResponse
 

@@ -19,6 +19,7 @@ import {
   ToggleField,
 } from '@/components/admin/AdminForm'
 import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn } from '@/lib/crypto-market'
+import { CONTRACT_LOOKUP_NETWORKS, isContractLookupNetwork } from '@/lib/crypto-contract-lookup'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
 import { buildCryptoPairId, findRoutedTreasuryPairId } from '@/lib/routed-assets'
 import type { CryptoAsset } from '@/types'
@@ -80,6 +81,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     addCryptoAssetDraft,
     uploadCryptoLogo,
     uploadingCryptoLogoId,
+    contractLookupAddress,
+    setContractLookupAddress,
+    lookingUpContract,
+    contractLookup,
+    lookupCryptoToken,
+    resetContractLookup,
+    primeNewCryptoAssetDefaults,
     visibleCryptoPricing,
     setCryptoPricing,
     setCryptoPairArchived,
@@ -171,6 +179,18 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     }
   }
 
+  function openNewAssetForm() {
+    // Seed the house margin on open rather than at mount, so it reflects the catalog as loaded.
+    primeNewCryptoAssetDefaults()
+    setShowNewAssetForm(true)
+  }
+
+  function closeNewAssetForm() {
+    setShowNewAssetForm(false)
+    setShowNewAssetAdvanced(false)
+    resetContractLookup()
+  }
+
   return (
     <>
       {!submodule && <Card className="p-6">
@@ -211,7 +231,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant={showNewAssetForm ? 'secondary' : 'primary'}
-                onClick={() => setShowNewAssetForm(current => !current)}
+                onClick={() => (showNewAssetForm ? closeNewAssetForm() : openNewAssetForm())}
               >
                 {showNewAssetForm ? 'Close New Pair' : 'New Pair'}
               </Button>
@@ -228,7 +248,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
                 <div className="mt-1 text-[10px] text-[var(--muted)]">Open the pair form only when you need to create a new executable or catalog asset.</div>
               </div>
-              <Button onClick={() => setShowNewAssetForm(true)}>Open Pair Form</Button>
+              <Button onClick={openNewAssetForm}>Open Pair Form</Button>
             </div>
           </div>
         )}
@@ -241,6 +261,84 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </div>
           </div>
           <div className="space-y-5">
+          <FormSection
+            title="Start from the contract address"
+            description="Paste the token's contract address and the symbol, name, decimals, price feed and logo fill themselves in — and we check the coin is one we can actually price before you can trade it. Native coins like BNB or ETH have no contract address; pick their routed preset under Advanced instead."
+          >
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+              <SelectField
+                label="Chain"
+                className="sm:w-52"
+                value={isContractLookupNetwork(newCryptoAsset.network) ? newCryptoAsset.network : ''}
+                onChange={event => {
+                  const network = event.target.value as CryptoAsset['network']
+                  if (!network) return
+                  setNewCryptoAsset(current => ({ ...current, network }))
+                  syncRoutedPresetFor(newCryptoAsset.symbol.trim().toUpperCase(), network)
+                }}
+                hint="EVM chains only."
+              >
+                <option value="">Select chain</option>
+                {CONTRACT_LOOKUP_NETWORKS.map(option => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </SelectField>
+              <TextField
+                label="Contract address"
+                className="flex-1"
+                value={contractLookupAddress}
+                onChange={event => setContractLookupAddress(event.target.value)}
+                placeholder="0x0000000000000000000000000000000000000000"
+                hint={isContractLookupNetwork(newCryptoAsset.network)
+                  ? 'Copy it from the block explorer, then press Look up.'
+                  : `${newCryptoAsset.network} stores token details differently, so those pairs are filled in by hand below.`}
+              />
+              <div className="sm:pt-[26px]">
+                <Button
+                  onClick={() => void lookupCryptoToken(newCryptoAsset.network, contractLookupAddress)}
+                  disabled={lookingUpContract || !isContractLookupNetwork(newCryptoAsset.network) || !contractLookupAddress.trim()}
+                >
+                  {lookingUpContract ? 'Looking up…' : 'Look up'}
+                </Button>
+              </div>
+            </div>
+            {contractLookup && (
+              <div className="mt-4 space-y-3">
+                <Callout
+                  tone={contractLookup.verification === 'verified'
+                    ? 'info'
+                    : contractLookup.verification === 'unlisted' ? 'danger' : 'warn'}
+                >
+                  <strong>
+                    {contractLookup.verification === 'verified'
+                      ? 'Verified'
+                      : contractLookup.verification === 'unlisted' ? 'Not listed' : 'Unconfirmed'}
+                    :
+                  </strong>{' '}
+                  {contractLookup.verificationMessage}
+                  {contractLookup.priceUsd != null && (
+                    <> Live price ${contractLookup.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 6 })}.</>
+                  )}
+                </Callout>
+                {contractLookup.warnings.length > 0 && (
+                  <Callout tone="warn">
+                    <ul className="list-disc space-y-1 pl-4">
+                      {contractLookup.warnings.map(warning => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </Callout>
+                )}
+                <FieldGrid columns={4}>
+                  <ReadOnlyField label="Chain ID" value={contractLookup.chainId} />
+                  <ReadOnlyField label="Decimals" value={contractLookup.decimals ?? 'Unknown'} />
+                  <ReadOnlyField label="Price feed" value={contractLookup.marketSourceId || 'None'} mono={false} />
+                  <ReadOnlyField label="Token address" value={contractLookup.address} />
+                </FieldGrid>
+              </div>
+            )}
+          </FormSection>
+
           <FormSection title="Coin" description="What customers see in the app.">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
               <div className="flex shrink-0 flex-col items-center gap-2">
@@ -535,7 +633,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               className="sm:max-w-xs"
             />
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={() => setShowNewAssetForm(false)}>Cancel</Button>
+              <Button variant="secondary" onClick={closeNewAssetForm}>Cancel</Button>
               <Button onClick={addCryptoAssetDraft}>Add Pair To Draft</Button>
             </div>
           </div>

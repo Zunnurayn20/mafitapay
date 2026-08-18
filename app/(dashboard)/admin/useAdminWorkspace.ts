@@ -5,6 +5,7 @@ import { refreshCryptoAssets } from '@/lib/client/catalogs'
 import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import { useAppStore } from '@/store'
+import type { TokenLookupResult } from '@/lib/crypto-contract-lookup'
 import type { AuditLog, BillProvider, CryptoAsset, CryptoDepositEvent, CryptoOrder, DepositIntent, LedgerEntry, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, RewardAwardRequest, RewardRule, RewardRuleReport, Transaction, User } from '@/types'
 import {
   ADMIN_ENDPOINTS,
@@ -355,6 +356,9 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [syncingAllBaseReceipts, setSyncingAllBaseReceipts] = useState(false)
   const [syncingCryptoOrderId, setSyncingCryptoOrderId] = useState<string | null>(null)
   const [uploadingCryptoLogoId, setUploadingCryptoLogoId] = useState<string | null>(null)
+  const [contractLookupAddress, setContractLookupAddress] = useState('')
+  const [lookingUpContract, setLookingUpContract] = useState(false)
+  const [contractLookup, setContractLookup] = useState<TokenLookupResult | null>(null)
   const [loadingReferenceCase, setLoadingReferenceCase] = useState<string | null>(null)
   const [syncingAllPayouts, setSyncingAllPayouts] = useState(false)
   const [requeueingEventId, setRequeueingEventId] = useState<string | null>(null)
@@ -657,6 +661,101 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       showToast(error instanceof Error ? error.message : 'Logo upload failed.', 'error')
     } finally {
       setUploadingCryptoLogoId(null)
+    }
+  }
+
+  /**
+   * The profit per dollar this desk actually charges, taken as the most common value across the live
+   * catalog, so a new pair starts from house practice instead of the library default. Falls back to
+   * the constant while the catalog is still empty.
+   */
+  function getDefaultMarginNgnPerUsd() {
+    const counts = new Map<number, number>()
+    for (const asset of cryptoPricing) {
+      const margin = asset.buyMarginNgnPerUsd
+      if (typeof margin !== 'number' || !Number.isFinite(margin) || margin <= 0) continue
+      counts.set(margin, (counts.get(margin) ?? 0) + 1)
+    }
+
+    let best = DEFAULT_USD_MARGIN_NGN
+    let bestCount = 0
+    for (const [margin, count] of counts) {
+      if (count > bestCount) {
+        best = margin
+        bestCount = count
+      }
+    }
+    return best
+  }
+
+  /** Seeds the new-pair draft with the house margin. Called when the operator opens the form. */
+  function primeNewCryptoAssetDefaults() {
+    const margin = getDefaultMarginNgnPerUsd()
+    setNewCryptoAsset(current => ({
+      ...current,
+      buyMarginNgnPerUsd: margin,
+      sellMarginNgnPerUsd: margin,
+    }))
+  }
+
+  function resetContractLookup() {
+    setContractLookup(null)
+    setContractLookupAddress('')
+  }
+
+  /**
+   * Fills the new-pair draft from a contract address, replacing the chain id, token address,
+   * decimals, symbol, name, price-feed id and logo that were previously typed by hand.
+   *
+   * A token CoinGecko does not list is force-parked as catalog-only and inactive: with no price feed
+   * there is nothing to quote against, so offering it for trading would create orders we cannot
+   * price. The operator can still override both under Advanced, deliberately.
+   */
+  async function lookupCryptoToken(network: CryptoAsset['network'], address: string) {
+    const trimmed = address.trim()
+    if (!trimmed) {
+      showToast('Paste a contract address first.', 'error')
+      return
+    }
+
+    try {
+      setLookingUpContract(true)
+      const response = await fetch('/api/admin/crypto-assets/lookup', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ network, address: trimmed }),
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) throw new Error(payload.error || 'Token lookup failed.')
+
+      const result = payload.data as TokenLookupResult
+      setContractLookup(result)
+      setNewCryptoAsset(current => ({
+        ...current,
+        symbol: result.symbol || current.symbol,
+        name: result.name || current.name,
+        network: result.network,
+        icon: result.iconPath || current.icon,
+        marketSourceId: result.marketSourceId || current.marketSourceId,
+        routedToChain: String(result.chainId),
+        routedToToken: result.address,
+        routedDecimals: result.decimals == null ? '' : String(result.decimals),
+        routedAddressFamily: result.addressFamily,
+        executionRail: result.verification === 'verified' ? current.executionRail : '',
+        isActive: result.verification === 'verified' ? current.isActive : false,
+      }))
+      showToast(
+        result.verification === 'verified'
+          ? `Filled in ${result.symbol || 'the token'} from the chain.`
+          : 'Looked up — read the notice on the form before saving.',
+        result.verification === 'verified' ? 'success' : 'error',
+      )
+    } catch (error) {
+      setContractLookup(null)
+      showToast(error instanceof Error ? error.message : 'Token lookup failed.', 'error')
+    } finally {
+      setLookingUpContract(false)
     }
   }
 
@@ -1487,6 +1586,13 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     saveConfig,
     saveCryptoPricing,
     uploadCryptoLogo,
+    contractLookupAddress,
+    setContractLookupAddress,
+    lookingUpContract,
+    contractLookup,
+    lookupCryptoToken,
+    resetContractLookup,
+    primeNewCryptoAssetDefaults,
     applyNewAssetRoutedProfile,
     addCryptoAssetDraft,
     setCryptoPairArchived,
