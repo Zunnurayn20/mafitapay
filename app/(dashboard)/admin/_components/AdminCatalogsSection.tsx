@@ -20,6 +20,7 @@ import {
 } from '@/components/admin/AdminForm'
 import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn } from '@/lib/crypto-market'
 import { CONTRACT_LOOKUP_NETWORKS, isContractLookupNetwork } from '@/lib/crypto-contract-lookup'
+import { cn } from '@/lib/utils'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
 import { buildCryptoPairId, findRoutedTreasuryPairId } from '@/lib/routed-assets'
 import type { CryptoAsset } from '@/types'
@@ -44,6 +45,49 @@ function pricingPreview(asset: Pick<CryptoAsset, 'marketPriceUsd' | 'marketRate'
     sellRate: asset.sellRate || computeSellRate(usd, mid, sellMargin),
     asymmetric: Math.abs(buyMargin - sellMargin) > 0.009,
   }
+}
+
+/**
+ * Save / Discard footer for a record editor. While there are unsaved edits this is the only way out
+ * — callers pair it with `dismissible={false}` so the X, Escape and the backdrop cannot silently
+ * drop an edit. Clean, it collapses to a plain Close.
+ */
+function EditorFooter({
+  dirty,
+  saving,
+  onSave,
+  onDiscard,
+  onClose,
+  /** Negative margins that cancel the host body's padding so the footer spans the modal edge to edge. */
+  insetClassName = '-mx-5 -mb-5',
+}: {
+  dirty: boolean
+  saving: boolean
+  onSave: () => void
+  onDiscard: () => void
+  onClose: () => void
+  insetClassName?: string
+}) {
+  return (
+    <div className={cn(
+      'sticky bottom-0 mt-5 flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--coal)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between',
+      insetClassName,
+    )}>
+      <div className="text-xs leading-relaxed text-[var(--muted)]">
+        {dirty ? 'Not saved yet — nothing here is live until you press Save changes.' : 'All changes saved.'}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {dirty ? (
+          <>
+            <Button variant="secondary" onClick={onDiscard} disabled={saving}>Discard changes</Button>
+            <Button onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
+          </>
+        ) : (
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function AdminCatalogsSection({ workspace, submodule }: { workspace: AdminWorkspaceState; submodule?: AdminSubmodule }) {
@@ -108,21 +152,33 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     newRewardRule,
     setNewRewardRule,
     toggleRewardTransactionType,
-    addRewardRuleDraft,
+    createRewardRule,
     rewardRules,
     setRewardRules,
     saveRewardRuleCatalog,
     savingRewardRules,
+    saveRewardRule,
+    savingRewardRuleId,
+    discardRewardRuleEdits,
+    dirtyRewardRuleIds,
+    dirtyRewardRuleIdSet,
+    hasUnsavedRewardEdits,
     billCatalogFilter,
     setBillCatalogFilter,
     newBillProvider,
     setNewBillProvider,
-    addBillProviderDraft,
+    createBillProvider,
     visibleBillProviders,
     setBillProviderCatalog,
     setBillProviderArchived,
     saveBillProviderCatalog,
     savingBillProviders,
+    saveBillProvider,
+    savingBillProviderId,
+    discardBillProviderEdits,
+    dirtyBillProviderIds,
+    dirtyBillProviderIdSet,
+    hasUnsavedBillEdits,
     drafts,
     setDrafts,
     saveConfig,
@@ -213,6 +269,36 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
   function discardSelectedCryptoPair(pairId: string) {
     discardCryptoPairEdits(pairId)
     closeCryptoEditor()
+  }
+
+  const selectedRewardRuleDirty = selectedRewardRuleId ? dirtyRewardRuleIdSet.has(selectedRewardRuleId) : false
+
+  function closeRewardRuleEditor() {
+    setSelectedRewardRuleId(null)
+  }
+
+  async function saveSelectedRewardRule(ruleId: string) {
+    if (await saveRewardRule(ruleId)) closeRewardRuleEditor()
+  }
+
+  function discardSelectedRewardRule(ruleId: string) {
+    discardRewardRuleEdits(ruleId)
+    closeRewardRuleEditor()
+  }
+
+  const selectedBillProviderDirty = selectedBillProviderId ? dirtyBillProviderIdSet.has(selectedBillProviderId) : false
+
+  function closeBillProviderEditor() {
+    setSelectedBillProviderId(null)
+  }
+
+  async function saveSelectedBillProvider(providerId: string) {
+    if (await saveBillProvider(providerId)) closeBillProviderEditor()
+  }
+
+  function discardSelectedBillProvider(providerId: string) {
+    discardBillProviderEdits(providerId)
+    closeBillProviderEditor()
   }
 
   return (
@@ -1062,34 +1148,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 </p>
               </FormSection>
 
-              <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--coal)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs leading-relaxed text-[var(--muted)]">
-                  {dirtyCryptoPairIdSet.has(item.id)
-                    ? 'Not saved yet — nothing here is live until you press Save changes.'
-                    : 'All changes saved.'}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {dirtyCryptoPairIdSet.has(item.id) ? (
-                    <>
-                      <Button
-                        variant="secondary"
-                        onClick={() => discardSelectedCryptoPair(item.id)}
-                        disabled={savingCryptoPairId === item.id}
-                      >
-                        Discard changes
-                      </Button>
-                      <Button
-                        onClick={() => void saveSelectedCryptoPair(item.id)}
-                        disabled={savingCryptoPairId === item.id}
-                      >
-                        {savingCryptoPairId === item.id ? 'Saving…' : 'Save changes'}
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="secondary" onClick={closeCryptoEditor}>Close</Button>
-                  )}
-                </div>
-              </div>
+              <EditorFooter
+                dirty={dirtyCryptoPairIdSet.has(item.id)}
+                saving={savingCryptoPairId === item.id}
+                onSave={() => void saveSelectedCryptoPair(item.id)}
+                onDiscard={() => discardSelectedCryptoPair(item.id)}
+                onClose={closeCryptoEditor}
+              />
             </div>
           )
         })()}
@@ -1119,9 +1184,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             >
               {showNewRewardRuleForm ? 'Close New Rule' : 'New Rule'}
             </Button>
-            <Button onClick={() => void saveRewardRuleCatalog()} disabled={savingRewardRules}>
-              {savingRewardRules ? 'Saving…' : 'Save Reward Rules'}
-            </Button>
+            {hasUnsavedRewardEdits && (
+              <Button onClick={() => void saveRewardRuleCatalog()} disabled={savingRewardRules}>
+                {savingRewardRules
+                  ? 'Saving…'
+                  : `Save ${dirtyRewardRuleIds.length} unsaved change${dirtyRewardRuleIds.length === 1 ? '' : 's'}`}
+              </Button>
+            )}
           </div>
         </div>
         <div className="mb-4 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
@@ -1351,8 +1420,10 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
           )}
           <div className="mt-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={addRewardRuleDraft}>Add Rule To Draft</Button>
-              <Button variant="secondary" onClick={() => setShowNewRewardRuleForm(false)}>Close</Button>
+              <Button onClick={() => void createRewardRule()} disabled={savingRewardRules}>
+                {savingRewardRules ? 'Creating…' : 'Create Rule'}
+              </Button>
+              <Button variant="secondary" onClick={() => setShowNewRewardRuleForm(false)}>Cancel</Button>
             </div>
           </div>
         </div>}
@@ -1388,7 +1459,8 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         </div>
         <Modal
           open={Boolean(selectedRewardRule)}
-          onClose={() => setSelectedRewardRuleId(null)}
+          onClose={closeRewardRuleEditor}
+          dismissible={!selectedRewardRuleDirty}
           title={selectedRewardRule ? selectedRewardRule.name : 'Reward Rule Editor'}
           subtitle={selectedRewardRule ? `${selectedRewardRule.id} · ${selectedRewardRule.kind} · ${selectedRewardRule.triggerEvent}` : undefined}
           size="lg"
@@ -1478,6 +1550,14 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   </div>
                 </div>
               )}
+              <EditorFooter
+                insetClassName="-mx-4 -mb-4"
+                dirty={dirtyRewardRuleIdSet.has(rule.id)}
+                saving={savingRewardRuleId === rule.id}
+                onSave={() => void saveSelectedRewardRule(rule.id)}
+                onDiscard={() => discardSelectedRewardRule(rule.id)}
+                onClose={closeRewardRuleEditor}
+              />
             </div>
           )
         })()}
@@ -1504,9 +1584,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             >
               {showNewBillProviderForm ? 'Close New Service' : 'New Service'}
             </Button>
-            <Button onClick={() => void saveBillProviderCatalog()} disabled={savingBillProviders}>
-              {savingBillProviders ? 'Saving…' : 'Save Bill Providers'}
-            </Button>
+            {hasUnsavedBillEdits && (
+              <Button onClick={() => void saveBillProviderCatalog()} disabled={savingBillProviders}>
+                {savingBillProviders
+                  ? 'Saving…'
+                  : `Save ${dirtyBillProviderIds.length} unsaved change${dirtyBillProviderIds.length === 1 ? '' : 's'}`}
+              </Button>
+            )}
           </div>
         </div>
         {!showNewBillProviderForm && (
@@ -1573,8 +1657,10 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
           </div>
           <div className="mt-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={addBillProviderDraft}>Add Service To Draft</Button>
-              <Button variant="secondary" onClick={() => setShowNewBillProviderForm(false)}>Close</Button>
+              <Button onClick={() => void createBillProvider()} disabled={savingBillProviders}>
+                {savingBillProviders ? 'Creating…' : 'Create Service'}
+              </Button>
+              <Button variant="secondary" onClick={() => setShowNewBillProviderForm(false)}>Cancel</Button>
             </div>
           </div>
         </div>}
@@ -1609,7 +1695,8 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         </div>
         <Modal
           open={Boolean(selectedBillProvider)}
-          onClose={() => setSelectedBillProviderId(null)}
+          onClose={closeBillProviderEditor}
+          dismissible={!selectedBillProviderDirty}
           title={selectedBillProvider ? selectedBillProvider.name : 'Bill Provider Editor'}
           subtitle={selectedBillProvider ? `${selectedBillProvider.id} · ${selectedBillProvider.type}` : undefined}
           size="lg"
@@ -1668,6 +1755,14 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 <label className="flex items-center gap-2"><input type="checkbox" checked={item.requiresNetwork === true} onChange={event => setBillProviderCatalog(current => current.map(provider => provider.id === item.id ? { ...provider, requiresNetwork: event.target.checked } : provider))} />Requires Network</label>
                 <label className="flex items-center gap-2"><input type="checkbox" checked={item.requiresAccount !== false} onChange={event => setBillProviderCatalog(current => current.map(provider => provider.id === item.id ? { ...provider, requiresAccount: event.target.checked } : provider))} />Requires Account</label>
               </div>
+              <EditorFooter
+                insetClassName="-mx-4 -mb-4"
+                dirty={dirtyBillProviderIdSet.has(item.id)}
+                saving={savingBillProviderId === item.id}
+                onSave={() => void saveSelectedBillProvider(item.id)}
+                onDiscard={() => discardSelectedBillProvider(item.id)}
+                onClose={closeBillProviderEditor}
+              />
             </div>
           )
         })()}

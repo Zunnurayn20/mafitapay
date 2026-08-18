@@ -38,18 +38,38 @@ const adminFetchSnapshotCache = new Map<string, { expiresAt: number; data: unkno
 const adminFetchInFlight = new Map<string, Promise<unknown>>()
 
 /**
- * Shallow field-by-field compare, used to decide whether a pair still matches what the server last
- * confirmed. Every CryptoAsset field is a primitive, so this is exact — and unlike comparing
- * JSON.stringify output it cannot report a false difference just because the server returned the
- * same fields in a different key order.
+ * Field-by-field compare used to decide whether a catalog record still matches what the server last
+ * confirmed. Primitives compare directly; array fields (a reward rule's transaction-type lists)
+ * compare by contents, because a fresh array with identical entries is not an edit. Unlike comparing
+ * JSON.stringify output this cannot report a false difference from key ordering alone.
  */
-function isSameCryptoAsset(left: CryptoAsset, right: CryptoAsset) {
-  const a = left as unknown as Record<string, unknown>
-  const b = right as unknown as Record<string, unknown>
+function isSameCatalogRecord(left: unknown, right: unknown) {
+  const a = left as Record<string, unknown>
+  const b = right as Record<string, unknown>
+
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    if (a[key] !== b[key]) return false
+    const first = a[key]
+    const second = b[key]
+
+    if (Array.isArray(first) || Array.isArray(second)) {
+      if (!Array.isArray(first) || !Array.isArray(second) || first.length !== second.length) return false
+      if (first.some((entry, index) => entry !== second[index])) return false
+      continue
+    }
+    if (first !== second) return false
   }
   return true
+}
+
+/** Ids present in the working copy that differ from — or are missing from — the saved baseline. */
+function dirtyIdsBetween<T extends { id: string }>(working: T[], saved: T[]) {
+  const savedById = new Map(saved.map(item => [item.id, item]))
+  return working
+    .filter(item => {
+      const previous = savedById.get(item.id)
+      return !previous || !isSameCatalogRecord(previous, item)
+    })
+    .map(item => item.id)
 }
 
 type AdminCriticalCheck = {
@@ -235,6 +255,12 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [cryptoCatalogFilter, setCryptoCatalogFilter] = useState<CryptoCatalogFilter>('all')
   const [billProviderCatalog, setBillProviderCatalog] = useState<BillProvider[]>([])
   const [rewardRules, setRewardRules] = useState<RewardRule[]>([])
+  // Server-confirmed baselines, exactly as for crypto pairs: the gap between working copy and
+  // baseline is the set of unsaved edits.
+  const [savedBillProviderCatalog, setSavedBillProviderCatalog] = useState<BillProvider[]>([])
+  const [savedRewardRules, setSavedRewardRules] = useState<RewardRule[]>([])
+  const [savingRewardRuleId, setSavingRewardRuleId] = useState<string | null>(null)
+  const [savingBillProviderId, setSavingBillProviderId] = useState<string | null>(null)
   const [rewardRuleReport, setRewardRuleReport] = useState<RewardRuleReport | null>(null)
   const [providerDiagnosticsReport, setProviderDiagnosticsReport] = useState<ProviderDiagnosticsReport | null>(null)
   const [refreshingProviderDiagnostics, setRefreshingProviderDiagnostics] = useState(false)
@@ -439,7 +465,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
           ])
           if (!active) return
           const nextRules = Array.isArray(loadedRewardRules) ? loadedRewardRules : []
-          setRewardRules(nextRules)
+          adoptPersistedRewardRules(nextRules)
           setRewardRuleReport(loadedRewardRuleReport ?? null)
           setDrafts(current => ({ ...current, rewardRules: JSON.stringify(nextRules, null, 2) }))
           return
@@ -449,7 +475,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
           const loadedBillProviders = await fetchAdminJsonCached<BillProvider[]>('/api/admin/bill-providers')
           if (!active) return
           const nextProviders = Array.isArray(loadedBillProviders) ? loadedBillProviders : []
-          setBillProviderCatalog(nextProviders)
+          adoptPersistedBillProviders(nextProviders)
           setDrafts(current => ({ ...current, billProviders: JSON.stringify(nextProviders, null, 2) }))
           return
         }
@@ -904,7 +930,9 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingCryptoPricing(true)
-      const nextAssets = [normalizeCryptoAssetForPersist(asset), ...cryptoPricing]
+      // Built from the saved baseline, not the working copy, so creating a pair cannot also write out
+      // an unrelated pair that happens to be sitting mid-edit.
+      const nextAssets = [normalizeCryptoAssetForPersist(asset), ...savedCryptoPricing]
       setCryptoPricing(nextAssets)
       const persistedAssets = await persistCryptoPricing(nextAssets)
       adoptPersistedCryptoPricing(persistedAssets)
@@ -984,21 +1012,32 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     setRewardRuleReport(reportPayload.data ?? null)
   }
 
+  function adoptPersistedRewardRules(rules: RewardRule[]) {
+    setRewardRules(rules)
+    setSavedRewardRules(rules)
+  }
+
+  async function persistRewardRules(rules: RewardRule[]) {
+    const normalizedRules = rules.map(normalizeRewardRuleForPersist)
+    const response = await fetch('/api/admin/reward-rules', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ rules: normalizedRules }),
+    })
+    const payload = await response.json()
+    if (!response.ok || payload.success === false) throw new Error(payload.error || 'Reward rule update failed.')
+    const persisted = Array.isArray(payload.data) ? payload.data as RewardRule[] : normalizedRules
+    primeAdminFetchCache('/api/admin/reward-rules', persisted)
+    return persisted
+  }
+
   async function saveRewardRuleCatalog() {
     try {
       setSavingRewardRules(true)
-      const normalizedRules = rewardRules.map(normalizeRewardRuleForPersist)
-      const response = await fetch('/api/admin/reward-rules', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ rules: normalizedRules }),
-      })
-      const payload = await response.json()
-      if (!response.ok || payload.success === false) throw new Error(payload.error || 'Reward rule update failed.')
-      primeAdminFetchCache('/api/admin/reward-rules', Array.isArray(payload.data) ? payload.data : [])
-      setRewardRules(Array.isArray(payload.data) ? payload.data : [])
-      setDrafts(current => ({ ...current, rewardRules: JSON.stringify(payload.data, null, 2) }))
+      const persisted = await persistRewardRules(rewardRules)
+      adoptPersistedRewardRules(persisted)
+      setDrafts(current => ({ ...current, rewardRules: JSON.stringify(persisted, null, 2) }))
       await refreshRewardRuleReport()
       showToast('Reward rules updated.')
     } catch (error) {
@@ -1008,11 +1047,43 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
+  /** Saves one rule's edits, built from the baseline so another rule mid-edit is not written out. */
+  async function saveRewardRule(ruleId: string) {
+    const edited = rewardRules.find(rule => rule.id === ruleId)
+    if (!edited) return false
+
+    try {
+      setSavingRewardRuleId(ruleId)
+      const nextRules = savedRewardRules.some(rule => rule.id === ruleId)
+        ? savedRewardRules.map(rule => rule.id === ruleId ? edited : rule)
+        : [edited, ...savedRewardRules]
+      const persisted = await persistRewardRules(nextRules)
+      adoptPersistedRewardRules(persisted)
+      setDrafts(current => ({ ...current, rewardRules: JSON.stringify(persisted, null, 2) }))
+      await refreshRewardRuleReport()
+      showToast(`${ruleId} saved.`)
+      return true
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : `${ruleId} could not be saved.`, 'error')
+      return false
+    } finally {
+      setSavingRewardRuleId(null)
+    }
+  }
+
+  /** Throws away one rule's unsaved edits, restoring whatever the server last confirmed. */
+  function discardRewardRuleEdits(ruleId: string) {
+    const saved = savedRewardRules.find(rule => rule.id === ruleId)
+    setRewardRules(current => saved
+      ? current.map(rule => rule.id === ruleId ? saved : rule)
+      : current.filter(rule => rule.id !== ruleId))
+  }
+
   function toggleRewardTransactionType(current: Transaction['type'][], value: Transaction['type']): Transaction['type'][] {
     return current.includes(value) ? current.filter(item => item !== value) : [...current, value]
   }
 
-  function addRewardRuleDraft() {
+  async function createRewardRule() {
     const normalizedId = newRewardRule.id.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_')
     if (!normalizedId || !newRewardRule.name.trim()) return showToast('Reward rule id and name are required.', 'error')
     if (rewardRules.some(item => item.id === normalizedId)) return showToast(`${normalizedId} already exists. Edit the existing rule instead.`, 'error')
@@ -1033,23 +1104,34 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
-    setRewardRules(current => [draftRule, ...current])
-    setNewRewardRule({
-      id: '',
-      name: '',
-      description: '',
-      kind: 'referral',
-      triggerEvent: 'first_successful_transaction',
-      audience: 'inviter',
-      amountNgn: 200,
-      requiresReferral: true,
-      allowedTransactionTypes: [],
-      excludedTransactionTypes: [],
-      dailyPayoutCapNgn: '',
-      manualApprovalRequired: false,
-      isActive: true,
-    })
-    showToast(`${draftRule.name} added to the draft list. Save reward rules to persist it.`)
+
+    try {
+      setSavingRewardRules(true)
+      const persisted = await persistRewardRules([draftRule, ...savedRewardRules])
+      adoptPersistedRewardRules(persisted)
+      setDrafts(current => ({ ...current, rewardRules: JSON.stringify(persisted, null, 2) }))
+      await refreshRewardRuleReport()
+      setNewRewardRule({
+        id: '',
+        name: '',
+        description: '',
+        kind: 'referral',
+        triggerEvent: 'first_successful_transaction',
+        audience: 'inviter',
+        amountNgn: 200,
+        requiresReferral: true,
+        allowedTransactionTypes: [],
+        excludedTransactionTypes: [],
+        dailyPayoutCapNgn: '',
+        manualApprovalRequired: false,
+        isActive: true,
+      })
+      showToast(`${draftRule.name} created and saved.`)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Reward rule creation failed.', 'error')
+    } finally {
+      setSavingRewardRules(false)
+    }
   }
 
   async function reviewRewardRequest(request: RewardAwardRequest, action: 'approve' | 'reject') {
@@ -1073,20 +1155,31 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
+  function adoptPersistedBillProviders(providers: BillProvider[]) {
+    setBillProviderCatalog(providers)
+    setSavedBillProviderCatalog(providers)
+  }
+
+  async function persistBillProviders(providers: BillProvider[]) {
+    const response = await fetch('/api/admin/bill-providers', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ providers }),
+    })
+    const payload = await response.json()
+    if (!response.ok || payload.success === false) throw new Error(payload.error || 'Bill provider update failed.')
+    const persisted = Array.isArray(payload.data) ? payload.data as BillProvider[] : providers
+    primeAdminFetchCache('/api/admin/bill-providers', persisted)
+    return persisted
+  }
+
   async function saveBillProviderCatalog() {
     try {
       setSavingBillProviders(true)
-      const response = await fetch('/api/admin/bill-providers', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ providers: billProviderCatalog }),
-      })
-      const payload = await response.json()
-      if (!response.ok || payload.success === false) throw new Error(payload.error || 'Bill provider update failed.')
-      primeAdminFetchCache('/api/admin/bill-providers', Array.isArray(payload.data) ? payload.data : [])
-      setBillProviderCatalog(Array.isArray(payload.data) ? payload.data : [])
-      setDrafts(current => ({ ...current, billProviders: JSON.stringify(payload.data, null, 2) }))
+      const persisted = await persistBillProviders(billProviderCatalog)
+      adoptPersistedBillProviders(persisted)
+      setDrafts(current => ({ ...current, billProviders: JSON.stringify(persisted, null, 2) }))
       showToast('Bill providers updated.')
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Bill provider update failed.', 'error')
@@ -1095,7 +1188,38 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
-  function addBillProviderDraft() {
+  /** Saves one provider's edits, built from the baseline so another mid-edit is not written out. */
+  async function saveBillProvider(providerId: string) {
+    const edited = billProviderCatalog.find(provider => provider.id === providerId)
+    if (!edited) return false
+
+    try {
+      setSavingBillProviderId(providerId)
+      const nextProviders = savedBillProviderCatalog.some(provider => provider.id === providerId)
+        ? savedBillProviderCatalog.map(provider => provider.id === providerId ? edited : provider)
+        : [edited, ...savedBillProviderCatalog]
+      const persisted = await persistBillProviders(nextProviders)
+      adoptPersistedBillProviders(persisted)
+      setDrafts(current => ({ ...current, billProviders: JSON.stringify(persisted, null, 2) }))
+      showToast(`${providerId} saved.`)
+      return true
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : `${providerId} could not be saved.`, 'error')
+      return false
+    } finally {
+      setSavingBillProviderId(null)
+    }
+  }
+
+  /** Throws away one provider's unsaved edits, restoring whatever the server last confirmed. */
+  function discardBillProviderEdits(providerId: string) {
+    const saved = savedBillProviderCatalog.find(provider => provider.id === providerId)
+    setBillProviderCatalog(current => saved
+      ? current.map(provider => provider.id === providerId ? saved : provider)
+      : current.filter(provider => provider.id !== providerId))
+  }
+
+  async function createBillProvider() {
     const id = newBillProvider.id.trim().toLowerCase()
     const name = newBillProvider.name.trim()
     const icon = (newBillProvider.icon.trim() || BILL_ICON_SUGGESTIONS[newBillProvider.type] || '🧾').slice(0, 2)
@@ -1119,22 +1243,31 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       isActive: newBillProvider.isActive,
     }
 
-    setBillProviderCatalog(current => [provider, ...current])
-    setNewBillProvider({
-      id: '',
-      name: '',
-      icon: '',
-      type: 'airtime',
-      accountLabel: 'Phone Number',
-      accountPlaceholder: '0803 000 0000',
-      helperText: '',
-      minAmount: 100,
-      maxAmount: 50000,
-      requiresNetwork: true,
-      requiresAccount: true,
-      isActive: true,
-    })
-    showToast(`${name} added to the draft list. Save bill providers to persist it.`)
+    try {
+      setSavingBillProviders(true)
+      const persisted = await persistBillProviders([provider, ...savedBillProviderCatalog])
+      adoptPersistedBillProviders(persisted)
+      setDrafts(current => ({ ...current, billProviders: JSON.stringify(persisted, null, 2) }))
+      setNewBillProvider({
+        id: '',
+        name: '',
+        icon: '',
+        type: 'airtime',
+        accountLabel: 'Phone Number',
+        accountPlaceholder: '0803 000 0000',
+        helperText: '',
+        minAmount: 100,
+        maxAmount: 50000,
+        requiresNetwork: true,
+        requiresAccount: true,
+        isActive: true,
+      })
+      showToast(`${name} created and saved.`)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Bill provider creation failed.', 'error')
+    } finally {
+      setSavingBillProviders(false)
+    }
   }
 
   function setBillProviderArchived(providerId: string, archived: boolean) {
@@ -1538,26 +1671,27 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   }
 
   const visibleCryptoPricing = cryptoPricing.filter(item => cryptoCatalogFilter === 'active' ? item.isActive !== false : cryptoCatalogFilter === 'archived' ? item.isActive === false : true)
-  const savedCryptoPricingById = new Map(savedCryptoPricing.map(asset => [asset.id, asset]))
-  const dirtyCryptoPairIds = cryptoPricing
-    .filter(asset => {
-      const saved = savedCryptoPricingById.get(asset.id)
-      return !saved || !isSameCryptoAsset(saved, asset)
-    })
-    .map(asset => asset.id)
+  const dirtyCryptoPairIds = dirtyIdsBetween(cryptoPricing, savedCryptoPricing)
   const dirtyCryptoPairIdSet = new Set<string>(dirtyCryptoPairIds)
   const hasUnsavedCryptoEdits = dirtyCryptoPairIds.length > 0
+  const dirtyRewardRuleIds = dirtyIdsBetween(rewardRules, savedRewardRules)
+  const dirtyRewardRuleIdSet = new Set<string>(dirtyRewardRuleIds)
+  const hasUnsavedRewardEdits = dirtyRewardRuleIds.length > 0
+  const dirtyBillProviderIds = dirtyIdsBetween(billProviderCatalog, savedBillProviderCatalog)
+  const dirtyBillProviderIdSet = new Set<string>(dirtyBillProviderIds)
+  const hasUnsavedBillEdits = dirtyBillProviderIds.length > 0
+  const hasUnsavedCatalogEdits = hasUnsavedCryptoEdits || hasUnsavedRewardEdits || hasUnsavedBillEdits
 
   // Last line of defence: an accidental refresh or tab close while an editor still holds unsaved
   // edits. The browser owns the wording — all we can do is ask it to confirm.
   useEffect(() => {
-    if (!hasUnsavedCryptoEdits) return
+    if (!hasUnsavedCatalogEdits) return
     const handler = (event: BeforeUnloadEvent) => {
       event.preventDefault()
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [hasUnsavedCryptoEdits])
+  }, [hasUnsavedCatalogEdits])
   const draftMarketPreview = getDraftMarketPreview()
   const draftMarketRatePreview = draftMarketPreview.marketRate
   const draftMarketPriceUsdPreview = draftMarketPreview.marketPriceUsd
@@ -1692,13 +1826,25 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     draftMarketPriceUsdPreview,
     visibleCryptoPricing,
     toggleRewardTransactionType,
-    addRewardRuleDraft,
+    createRewardRule,
     reviewRewardRequest,
     saveRewardRuleCatalog,
-    addBillProviderDraft,
+    saveRewardRule,
+    savingRewardRuleId,
+    discardRewardRuleEdits,
+    dirtyRewardRuleIds,
+    dirtyRewardRuleIdSet,
+    hasUnsavedRewardEdits,
+    createBillProvider,
     setBillProviderArchived,
     visibleBillProviders,
     saveBillProviderCatalog,
+    saveBillProvider,
+    savingBillProviderId,
+    discardBillProviderEdits,
+    dirtyBillProviderIds,
+    dirtyBillProviderIdSet,
+    hasUnsavedBillEdits,
     resolveCryptoOrder,
     updateCryptoExecution,
     broadcastCryptoOrder,
