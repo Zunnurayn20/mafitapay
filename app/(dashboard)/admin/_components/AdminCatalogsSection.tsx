@@ -72,13 +72,19 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     setCryptoCatalogFilter,
     saveCryptoPricing,
     savingCryptoPricing,
+    saveCryptoPair,
+    savingCryptoPairId,
+    discardCryptoPairEdits,
+    dirtyCryptoPairIds,
+    dirtyCryptoPairIdSet,
+    hasUnsavedCryptoEdits,
     newCryptoAsset,
     setNewCryptoAsset,
     applyNewAssetRoutedProfile,
     getRoutedProfileConfig,
     draftMarketRatePreview,
     draftMarketPriceUsdPreview,
-    addCryptoAssetDraft,
+    createCryptoPair,
     uploadCryptoLogo,
     uploadingCryptoLogoId,
     contractLookupAddress,
@@ -191,6 +197,24 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     resetContractLookup()
   }
 
+  const selectedPairDirty = selectedCryptoAssetId ? dirtyCryptoPairIdSet.has(selectedCryptoAssetId) : false
+
+  function closeCryptoEditor() {
+    setSelectedCryptoAssetId(null)
+    setShowEditorAdvanced(false)
+  }
+
+  async function saveSelectedCryptoPair(pairId: string) {
+    // Only leave the editor once the server has confirmed, so a failed save keeps the operator in
+    // front of their own edits instead of dropping them back to the grid.
+    if (await saveCryptoPair(pairId)) closeCryptoEditor()
+  }
+
+  function discardSelectedCryptoPair(pairId: string) {
+    discardCryptoPairEdits(pairId)
+    closeCryptoEditor()
+  }
+
   return (
     <>
       {!submodule && <Card className="p-6">
@@ -235,9 +259,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               >
                 {showNewAssetForm ? 'Close New Pair' : 'New Pair'}
               </Button>
-              <Button onClick={() => void saveCryptoPricing()} disabled={savingCryptoPricing}>
-                {savingCryptoPricing ? 'Saving…' : 'Save Crypto Pricing'}
-              </Button>
+              {hasUnsavedCryptoEdits && (
+                <Button onClick={() => void saveCryptoPricing()} disabled={savingCryptoPricing}>
+                  {savingCryptoPricing
+                    ? 'Saving…'
+                    : `Save ${dirtyCryptoPairIds.length} unsaved change${dirtyCryptoPairIds.length === 1 ? '' : 's'}`}
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -634,7 +662,9 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             />
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="secondary" onClick={closeNewAssetForm}>Cancel</Button>
-              <Button onClick={addCryptoAssetDraft}>Add Pair To Draft</Button>
+              <Button onClick={createCryptoPair} disabled={savingCryptoPricing}>
+                {savingCryptoPricing ? 'Creating…' : 'Create Pair'}
+              </Button>
             </div>
           </div>
         </div>}
@@ -677,10 +707,10 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         </div>
         <Modal
           open={Boolean(selectedCryptoAsset)}
-          onClose={() => {
-            setSelectedCryptoAssetId(null)
-            setShowEditorAdvanced(false)
-          }}
+          onClose={closeCryptoEditor}
+          // While edits are pending the X, Escape and the backdrop are all disabled, so the only ways
+          // out are Save changes and Discard changes. Nothing can be lost by a stray click.
+          dismissible={!selectedPairDirty}
           title={selectedCryptoAsset ? selectedCryptoAsset.id : 'Asset Editor'}
           subtitle={selectedCryptoAsset ? `${selectedCryptoAsset.name} · ${selectedCryptoAsset.network}` : undefined}
           size="lg"
@@ -1031,6 +1061,35 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     : 'Pricing and execution flags are operator-controlled.'}
                 </p>
               </FormSection>
+
+              <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--coal)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs leading-relaxed text-[var(--muted)]">
+                  {dirtyCryptoPairIdSet.has(item.id)
+                    ? 'Not saved yet — nothing here is live until you press Save changes.'
+                    : 'All changes saved.'}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {dirtyCryptoPairIdSet.has(item.id) ? (
+                    <>
+                      <Button
+                        variant="secondary"
+                        onClick={() => discardSelectedCryptoPair(item.id)}
+                        disabled={savingCryptoPairId === item.id}
+                      >
+                        Discard changes
+                      </Button>
+                      <Button
+                        onClick={() => void saveSelectedCryptoPair(item.id)}
+                        disabled={savingCryptoPairId === item.id}
+                      >
+                        {savingCryptoPairId === item.id ? 'Saving…' : 'Save changes'}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="secondary" onClick={closeCryptoEditor}>Close</Button>
+                  )}
+                </div>
+              </div>
             </div>
           )
         })()}

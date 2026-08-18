@@ -37,6 +37,21 @@ const ADMIN_FETCH_CACHE_TTL_MS = 15_000
 const adminFetchSnapshotCache = new Map<string, { expiresAt: number; data: unknown }>()
 const adminFetchInFlight = new Map<string, Promise<unknown>>()
 
+/**
+ * Shallow field-by-field compare, used to decide whether a pair still matches what the server last
+ * confirmed. Every CryptoAsset field is a primitive, so this is exact — and unlike comparing
+ * JSON.stringify output it cannot report a false difference just because the server returned the
+ * same fields in a different key order.
+ */
+function isSameCryptoAsset(left: CryptoAsset, right: CryptoAsset) {
+  const a = left as unknown as Record<string, unknown>
+  const b = right as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (a[key] !== b[key]) return false
+  }
+  return true
+}
+
 type AdminCriticalCheck = {
   key: string
   label: string
@@ -204,6 +219,12 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [payoutRequests, setPayoutRequests] = useState<PayoutRequest[]>([])
   const [cryptoOrders, setCryptoOrders] = useState<CryptoOrder[]>([])
   const [cryptoPricing, setCryptoPricing] = useState<CryptoAsset[]>([])
+  /**
+   * What the server last confirmed. `cryptoPricing` is the working copy the editor mutates as the
+   * operator types; the difference between the two is exactly the set of unsaved edits.
+   */
+  const [savedCryptoPricing, setSavedCryptoPricing] = useState<CryptoAsset[]>([])
+  const [savingCryptoPairId, setSavingCryptoPairId] = useState<string | null>(null)
   const [cryptoDepositEvents, setCryptoDepositEvents] = useState<CryptoDepositEvent[]>([])
   const [recentSweepGasStats, setRecentSweepGasStats] = useState<any[]>([])
   const [cryptoDepositStatusFilter, setCryptoDepositStatusFilter] = useState<'all' | CryptoDepositEvent['status']>('all')
@@ -406,7 +427,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
           const loadedCryptoPricing = await fetchAdminJsonCached<CryptoAsset[]>('/api/admin/crypto-assets')
           if (!active) return
           const nextAssets = Array.isArray(loadedCryptoPricing) ? loadedCryptoPricing : []
-          setCryptoPricing(nextAssets)
+          adoptPersistedCryptoPricing(nextAssets)
           setDrafts(current => ({ ...current, assets: JSON.stringify(nextAssets, null, 2) }))
           return
         }
@@ -567,6 +588,16 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
+  /**
+   * Replaces the working copy *and* the saved baseline together. Use this for anything that came
+   * from the server — a load, a market refresh, or a successful persist — so that "unsaved" always
+   * means "differs from what the server confirmed" and can never drift.
+   */
+  function adoptPersistedCryptoPricing(assets: CryptoAsset[]) {
+    setCryptoPricing(assets)
+    setSavedCryptoPricing(assets)
+  }
+
   async function persistCryptoPricing(assets: CryptoAsset[]) {
     const normalizedAssets = assets.map(normalizeCryptoAssetForPersist)
     const response = await fetch('/api/admin/crypto-assets', {
@@ -624,7 +655,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     try {
       setSavingCryptoPricing(true)
       const persistedAssets = await persistCryptoPricing(cryptoPricing)
-      setCryptoPricing(persistedAssets)
+      adoptPersistedCryptoPricing(persistedAssets)
       setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
       showToast('Crypto pricing updated.')
     } catch (error) {
@@ -632,6 +663,41 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     } finally {
       setSavingCryptoPricing(false)
     }
+  }
+
+  /**
+   * Saves one pair's edits. Builds the payload from the saved baseline rather than the working copy,
+   * so pressing Save in one pair's editor cannot quietly write out a different pair that happens to
+   * be sitting mid-edit. Returns whether it succeeded, so the caller can decide to close the editor.
+   */
+  async function saveCryptoPair(pairId: string) {
+    const edited = cryptoPricing.find(asset => asset.id === pairId)
+    if (!edited) return false
+
+    try {
+      setSavingCryptoPairId(pairId)
+      const nextAssets = savedCryptoPricing.some(asset => asset.id === pairId)
+        ? savedCryptoPricing.map(asset => asset.id === pairId ? edited : asset)
+        : [edited, ...savedCryptoPricing]
+      const persistedAssets = await persistCryptoPricing(nextAssets)
+      adoptPersistedCryptoPricing(persistedAssets)
+      setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
+      showToast(`${pairId} saved.`)
+      return true
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : `${pairId} could not be saved.`, 'error')
+      return false
+    } finally {
+      setSavingCryptoPairId(null)
+    }
+  }
+
+  /** Throws away one pair's unsaved edits, restoring whatever the server last confirmed. */
+  function discardCryptoPairEdits(pairId: string) {
+    const saved = savedCryptoPricing.find(asset => asset.id === pairId)
+    setCryptoPricing(current => saved
+      ? current.map(asset => asset.id === pairId ? saved : asset)
+      : current.filter(asset => asset.id !== pairId))
   }
 
   async function uploadCryptoLogo(file: File, target: { draft?: boolean; pairId?: string; symbol?: string }) {
@@ -653,7 +719,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         const nextAssets = cryptoPricing.map(asset => asset.id === target.pairId ? { ...asset, icon: uploadedPath } : asset)
         setCryptoPricing(nextAssets)
         const persistedAssets = await persistCryptoPricing(nextAssets)
-        setCryptoPricing(persistedAssets)
+        adoptPersistedCryptoPricing(persistedAssets)
         setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
       }
       showToast(target.pairId ? 'Logo uploaded and saved.' : 'Logo uploaded.')
@@ -795,7 +861,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     })
   }
 
-  async function addCryptoAssetDraft() {
+  async function createCryptoPair() {
     const symbol = newCryptoAsset.symbol.trim().toUpperCase()
     const name = newCryptoAsset.name.trim()
     const icon = newCryptoAsset.icon.trim() || CRYPTO_LOGO_SUGGESTIONS[symbol] || symbol.slice(0, 1) || '¤'
@@ -841,7 +907,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       const nextAssets = [normalizeCryptoAssetForPersist(asset), ...cryptoPricing]
       setCryptoPricing(nextAssets)
       const persistedAssets = await persistCryptoPricing(nextAssets)
-      setCryptoPricing(persistedAssets)
+      adoptPersistedCryptoPricing(persistedAssets)
       setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
       setNewCryptoAsset({
         symbol: '',
@@ -1458,7 +1524,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Crypto market refresh failed.')
       setCryptoMarketHealth(payload.data?.health ?? null)
       if (Array.isArray(payload.data?.assets)) {
-        setCryptoPricing(payload.data.assets)
+        adoptPersistedCryptoPricing(payload.data.assets)
         await refreshCryptoAssets(payload.data.assets)
       } else {
         await refreshCryptoAssets()
@@ -1472,6 +1538,26 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   }
 
   const visibleCryptoPricing = cryptoPricing.filter(item => cryptoCatalogFilter === 'active' ? item.isActive !== false : cryptoCatalogFilter === 'archived' ? item.isActive === false : true)
+  const savedCryptoPricingById = new Map(savedCryptoPricing.map(asset => [asset.id, asset]))
+  const dirtyCryptoPairIds = cryptoPricing
+    .filter(asset => {
+      const saved = savedCryptoPricingById.get(asset.id)
+      return !saved || !isSameCryptoAsset(saved, asset)
+    })
+    .map(asset => asset.id)
+  const dirtyCryptoPairIdSet = new Set<string>(dirtyCryptoPairIds)
+  const hasUnsavedCryptoEdits = dirtyCryptoPairIds.length > 0
+
+  // Last line of defence: an accidental refresh or tab close while an editor still holds unsaved
+  // edits. The browser owns the wording — all we can do is ask it to confirm.
+  useEffect(() => {
+    if (!hasUnsavedCryptoEdits) return
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasUnsavedCryptoEdits])
   const draftMarketPreview = getDraftMarketPreview()
   const draftMarketRatePreview = draftMarketPreview.marketRate
   const draftMarketPriceUsdPreview = draftMarketPreview.marketPriceUsd
@@ -1585,6 +1671,12 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     setDrafts,
     saveConfig,
     saveCryptoPricing,
+    saveCryptoPair,
+    savingCryptoPairId,
+    discardCryptoPairEdits,
+    dirtyCryptoPairIds,
+    dirtyCryptoPairIdSet,
+    hasUnsavedCryptoEdits,
     uploadCryptoLogo,
     contractLookupAddress,
     setContractLookupAddress,
@@ -1594,7 +1686,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     resetContractLookup,
     primeNewCryptoAssetDefaults,
     applyNewAssetRoutedProfile,
-    addCryptoAssetDraft,
+    createCryptoPair,
     setCryptoPairArchived,
     draftMarketRatePreview,
     draftMarketPriceUsdPreview,
