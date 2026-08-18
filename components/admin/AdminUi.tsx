@@ -18,15 +18,15 @@ export function formatDate(value?: string | null) {
 export function statusClass(status: string) {
   const normalized = status.toUpperCase()
   if (['SUCCESS', 'PROCESSED', 'ACTIVE', 'VERIFIED', 'APPLIED', 'READ', 'TEMPORARY'].includes(normalized)) {
-    return 'bg-emerald-50 text-emerald-700'
+    return 'bg-[rgba(46,170,92,.12)] text-[var(--green2)]'
   }
   if (['FAILED', 'REJECTED', 'INACTIVE', 'DEACTIVATED', 'ERROR'].includes(normalized)) {
-    return 'bg-red-50 text-red-700'
+    return 'bg-[rgba(196,52,26,.12)] text-[var(--red2)]'
   }
   if (['PENDING', 'PROCESSING', 'UNREAD'].includes(normalized)) {
-    return 'bg-amber-50 text-amber-800'
+    return 'bg-[rgba(245,158,11,.12)] text-[var(--gold2)]'
   }
-  return 'bg-slate-100 text-slate-700'
+  return 'bg-[var(--clay2)] text-[var(--text2)]'
 }
 
 export function AdminPageCard({
@@ -41,11 +41,11 @@ export function AdminPageCard({
   children: ReactNode
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_10px_30px_-18px_rgba(15,23,42,0.35)]">
-      <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--coal)] shadow-[0_10px_30px_-18px_rgba(0,0,0,0.55)]">
+      <div className="flex flex-col gap-3 border-b border-[var(--border)] p-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-xl font-bold text-slate-900">{title}</h2>
-          {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+          <h2 className="text-xl font-bold text-[var(--text)]">{title}</h2>
+          {description ? <p className="mt-1 text-sm text-[var(--muted)]">{description}</p> : null}
         </div>
         {actions ? <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">{actions}</div> : null}
       </div>
@@ -64,7 +64,7 @@ export function AdminTable({ children }: { children: ReactNode }) {
 
 export function AdminThead({ columns }: { columns: string[] }) {
   return (
-    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+    <thead className="bg-[var(--clay)] text-xs uppercase tracking-wide text-[var(--muted)]">
       <tr>
         {columns.map(column => (
           <th key={column} className="px-4 py-3 font-bold">
@@ -85,12 +85,12 @@ export function AdminStatusPill({ status }: { status: string }) {
 }
 
 export function AdminEmpty({ label }: { label: string }) {
-  return <div className="p-8 text-center text-sm text-slate-500">{label}</div>
+  return <div className="p-8 text-center text-sm text-[var(--muted)]">{label}</div>
 }
 
 export function AdminError({ message }: { message: string }) {
   return (
-    <div className="m-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+    <div className="m-4 rounded-lg border border-[rgba(196,52,26,.28)] bg-[rgba(196,52,26,.08)] p-3 text-sm text-[var(--red2)]">
       {message}
     </div>
   )
@@ -100,7 +100,7 @@ export function AdminInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--gold)] ${props.className ?? ''}`}
+      className={`rounded-lg border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--gold)] ${props.className ?? ''}`}
     />
   )
 }
@@ -109,7 +109,7 @@ export function AdminSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>
   return (
     <select
       {...props}
-      className={`rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--gold)] ${props.className ?? ''}`}
+      className={`rounded-lg border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--gold)] ${props.className ?? ''}`}
     />
   )
 }
@@ -122,7 +122,7 @@ export function AdminButton({
   const styles =
     variant === 'primary'
       ? 'bg-[var(--gold)] text-[var(--char)] hover:brightness-105'
-      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+      : 'border border-[var(--border)] bg-[var(--clay)] text-[var(--text2)] hover:border-[var(--gold2)] hover:text-[var(--text)]'
   return (
     <button
       {...props}

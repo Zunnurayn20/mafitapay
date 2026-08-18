@@ -5,9 +5,22 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
+import {
+  Callout,
+  Disclosure,
+  FieldGrid,
+  FormSection,
+  MoneyField,
+  NumberField,
+  RatePreview,
+  ReadOnlyField,
+  SelectField,
+  TextField,
+  ToggleField,
+} from '@/components/admin/AdminForm'
 import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn } from '@/lib/crypto-market'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
-import { buildCryptoPairId } from '@/lib/routed-assets'
+import { buildCryptoPairId, findRoutedTreasuryPairId } from '@/lib/routed-assets'
 import type { CryptoAsset } from '@/types'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
@@ -109,6 +122,55 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
   const selectedRewardRule = rewardRules.find(rule => rule.id === selectedRewardRuleId) ?? null
   const selectedBillProvider = visibleBillProviders.find(provider => provider.id === selectedBillProviderId) ?? null
 
+  // Same three numbers, same maths as the editor — pricingPreview() is the single source so the
+  // create and edit paths cannot drift apart.
+  const draftPreview = pricingPreview({
+    marketPriceUsd: draftMarketPriceUsdPreview,
+    marketRate: draftMarketRatePreview,
+    buyMarginNgnPerUsd: newCryptoAsset.buyMarginNgnPerUsd,
+    sellMarginNgnPerUsd: newCryptoAsset.sellMarginNgnPerUsd,
+    buyRate: 0,
+    sellRate: 0,
+    symbol: newCryptoAsset.symbol,
+  })
+  const draftRoutedPreset = newCryptoAsset.routedProfile && newCryptoAsset.routedProfile !== 'custom'
+    ? getRoutedProfileConfig(newCryptoAsset.routedProfile)
+    : null
+  const draftAdvancedSummary = newCryptoAsset.executionRail === 'routed_treasury'
+    ? draftRoutedPreset
+      ? `Routing filled in from the ${draftRoutedPreset.symbol} on ${draftRoutedPreset.network} preset`
+      : 'Custom routing — chain, token and decimals set by hand'
+    : 'Price feed, quote validity, execution rail, separate buy/sell margins'
+
+  /**
+   * A coin and network we already ship a routed treasury preset for needs no technical input: the
+   * chain, token, decimals and address family all come from the preset. Only steps aside when the
+   * operator has deliberately chosen custom routing.
+   */
+  function syncRoutedPresetFor(symbol: string, network: CryptoAsset['network']) {
+    if (newCryptoAsset.routedProfile === 'custom') return
+    const presetId = findRoutedTreasuryPairId(symbol, network)
+    if (presetId) {
+      applyNewAssetRoutedProfile(presetId)
+      return
+    }
+    // No preset covers this combination, so drop routing copied from a previously matched preset
+    // rather than letting it be saved against a pair it does not describe.
+    if (newCryptoAsset.routedProfile) {
+      setNewCryptoAsset(current => ({
+        ...current,
+        executionRail: '',
+        routedProfile: '',
+        routedToChain: '',
+        routedToToken: '',
+        routedDecimals: '',
+        routedAddressFamily: '',
+        minimumBuyNgn: '',
+        maxQuoteDriftPercent: '',
+      }))
+    }
+  }
+
   return (
     <>
       {!submodule && <Card className="p-6">
@@ -170,74 +232,87 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </div>
           </div>
         )}
-        {showNewAssetForm && <div className="mb-5 border border-[var(--border)] bg-[var(--coal)] p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
-              <div className="mt-1 text-[10px] text-[var(--muted)]">
-                Set the coin, your profit per dollar, and a network fee. Technical settings stay under Advanced.
-              </div>
+        {showNewAssetForm && <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--coal)] p-5">
+          <div className="mb-5">
+            <div className="text-sm font-bold text-[var(--text)]">Add crypto pair</div>
+            <div className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--muted)]">
+              Set the coin, your profit per dollar, and a network fee. When we recognise the pair the
+              technical routing fills itself in; anything left over stays under Advanced.
             </div>
-            <button
-              type="button"
-              onClick={() => setShowNewAssetAdvanced(current => !current)}
-              className="border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[10px] font-bold text-[var(--text)]"
-            >
-              {showNewAssetAdvanced ? 'Hide Advanced' : 'Show Advanced'}
-            </button>
           </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <label className="text-[10px] text-[var(--muted)]">
-              Symbol
-              <input
-                type="text"
-                value={newCryptoAsset.symbol}
-                onChange={event => setNewCryptoAsset(current => ({
-                  ...current,
-                  symbol: event.target.value.toUpperCase(),
-                  marketSourceId: current.marketSourceId || getDefaultCryptoMarketSourceId(event.target.value),
-                  icon: current.icon || CRYPTO_LOGO_SUGGESTIONS[event.target.value.toUpperCase()] || '',
-                }))}
-                placeholder="USDT"
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Asset Name
-              <input
-                type="text"
-                value={newCryptoAsset.name}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, name: event.target.value }))}
-                placeholder="Tether USD"
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Network
-              <select
-                value={newCryptoAsset.network}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, network: event.target.value }))}
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              >
-                {CRYPTO_NETWORK_OPTIONS.map((option: string) => (
-                  <option key={option} value={option}>{option}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Logo Path / URL
-              <input
-                type="text"
-                value={newCryptoAsset.icon}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, icon: event.target.value }))}
-                placeholder="/crypto-assets/usdt.png or https://…"
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-              />
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Your profit (₦ per $1)
-              <input
-                type="number"
+          <div className="space-y-5">
+          <FormSection title="Coin" description="What customers see in the app.">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+              <div className="flex shrink-0 flex-col items-center gap-2">
+                <AssetLogo
+                  src={newCryptoAsset.icon}
+                  alt={`${newCryptoAsset.symbol || 'Asset'} logo preview`}
+                  fallback={(newCryptoAsset.symbol || 'A').slice(0, 1)}
+                  className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--clay)]"
+                  imgClassName="h-10 w-10 object-contain"
+                  textClassName="text-xl font-bold text-[var(--gold2)]"
+                />
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-xs font-semibold text-[var(--text)] transition-colors hover:border-[var(--gold2)]">
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={event => {
+                      const file = event.target.files?.[0]
+                      if (file) void uploadCryptoLogo(file, { draft: true, symbol: newCryptoAsset.symbol.trim().toUpperCase() })
+                      event.currentTarget.value = ''
+                    }}
+                  />
+                  {uploadingCryptoLogoId === 'draft' ? 'Uploading…' : 'Upload logo'}
+                </label>
+              </div>
+              <FieldGrid columns={3} className="flex-1">
+                <TextField
+                  label="Symbol"
+                  required
+                  value={newCryptoAsset.symbol}
+                  onChange={event => {
+                    const raw = event.target.value
+                    const symbol = raw.toUpperCase()
+                    setNewCryptoAsset(current => ({
+                      ...current,
+                      symbol,
+                      marketSourceId: current.marketSourceId || getDefaultCryptoMarketSourceId(raw),
+                      icon: current.icon || CRYPTO_LOGO_SUGGESTIONS[symbol] || '',
+                    }))
+                    syncRoutedPresetFor(symbol, newCryptoAsset.network)
+                  }}
+                  placeholder="USDT"
+                  hint="Logo and price feed fill in automatically for coins we know."
+                />
+                <TextField
+                  label="Asset name"
+                  required
+                  value={newCryptoAsset.name}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, name: event.target.value }))}
+                  placeholder="Tether USD"
+                />
+                <SelectField
+                  label="Network"
+                  value={newCryptoAsset.network}
+                  onChange={event => {
+                    const network = event.target.value as CryptoAsset['network']
+                    setNewCryptoAsset(current => ({ ...current, network }))
+                    syncRoutedPresetFor(newCryptoAsset.symbol.trim().toUpperCase(), network)
+                  }}
+                >
+                  {CRYPTO_NETWORK_OPTIONS.map((option: string) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </SelectField>
+              </FieldGrid>
+            </div>
+          </FormSection>
+
+          <FormSection title="Your pricing" description="The two numbers you change day to day.">
+            <FieldGrid columns={2}>
+              <MoneyField
+                label="Your profit per $1"
                 min={0}
                 step="1"
                 value={newCryptoAsset.buyMarginNgnPerUsd}
@@ -249,16 +324,10 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     sellMarginNgnPerUsd: margin,
                   }))
                 }}
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                hint="Live dollar rate ₦1,500 + profit ₦50 → customers buy at ₦1,550 per $1."
               />
-              <span className="mt-1 block text-[9px] text-[var(--muted)]">
-                Example: live dollar rate 1500 + profit 50 → customer buys at ₦1550 per $1
-              </span>
-            </label>
-            <label className="text-[10px] text-[var(--muted)]">
-              Buy network fee (₦ per order)
-              <input
-                type="number"
+              <MoneyField
+                label="Network fee per order"
                 min={0}
                 step="1"
                 value={newCryptoAsset.buyNetworkFeeNgn}
@@ -271,280 +340,204 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                     sellNetworkFeeNgn: '0',
                   }))
                 }}
-                placeholder="Leave blank for automatic"
-                className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                placeholder="Automatic"
+                hint="Covers on-chain gas. Leave blank to use a safe default for this network."
               />
-              <span className="mt-1 block text-[9px] text-[var(--muted)]">
-                Covers on-chain gas. Blank uses a safe default for this network.
-              </span>
-            </label>
-          </div>
-          {(draftMarketRatePreview > 0 || draftMarketPriceUsdPreview > 0) && (
-            <div className="mt-3 grid gap-2 border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.06)] p-3 text-[10px] text-[var(--text)] sm:grid-cols-3">
-              {(() => {
-                const margin = newCryptoAsset.buyMarginNgnPerUsd
-                const usdNgn = impliedUsdNgn(draftMarketPriceUsdPreview, draftMarketRatePreview)
-                return (
-                  <>
-                    <div>
-                      <div className="text-[var(--muted)]">Live mid (₦ / $1)</div>
-                      <div className="mt-0.5 font-mono font-bold">{usdNgn > 0 ? formatNgn(usdNgn) : '—'}</div>
-                    </div>
-                    <div>
-                      <div className="text-[var(--muted)]">Customer buys at</div>
-                      <div className="mt-0.5 font-mono font-bold text-[var(--gold2)]">
-                        {usdNgn > 0 ? `${formatNgn(usdNgn + margin)} / $1` : '—'}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[var(--muted)]">Customer sells at</div>
-                      <div className="mt-0.5 font-mono font-bold">
-                        {usdNgn > 0 ? `${formatNgn(Math.max(0, usdNgn - margin))} / $1` : '—'}
-                      </div>
-                    </div>
-                  </>
-                )
-              })()}
-            </div>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <AssetLogo
-              src={newCryptoAsset.icon}
-              alt={`${newCryptoAsset.symbol || 'Asset'} logo preview`}
-              fallback={(newCryptoAsset.symbol || 'A').slice(0, 1)}
-              className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--clay)]"
-              imgClassName="h-8 w-8 object-contain"
-              textClassName="text-lg font-bold text-[var(--gold2)]"
+            </FieldGrid>
+            {(draftMarketRatePreview > 0 || draftMarketPriceUsdPreview > 0) && (
+              <RatePreview
+                className="mt-4"
+                usdNgn={draftPreview.usdNgn}
+                buyFx={draftPreview.buyFx}
+                sellFx={draftPreview.sellFx}
+                note={draftPreview.asymmetric
+                  ? 'Buy and sell profit are currently different. Open Advanced to edit them separately, or change “Your profit per $1” to set both equal.'
+                  : undefined}
+              />
+            )}
+          </FormSection>
+
+          <FormSection title="Availability">
+            <ToggleField
+              label="Show this pair to customers"
+              hint="Turn this off to create the pair without exposing it in the app yet."
+              checked={newCryptoAsset.isActive}
+              onChange={checked => setNewCryptoAsset(current => ({ ...current, isActive: checked }))}
             />
-            <label className="inline-flex cursor-pointer items-center gap-2 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[10px] font-bold text-[var(--text)]">
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                onChange={event => {
-                  const file = event.target.files?.[0]
-                  if (file) void uploadCryptoLogo(file, { draft: true, symbol: newCryptoAsset.symbol.trim().toUpperCase() })
-                  event.currentTarget.value = ''
-                }}
+          </FormSection>
+          <Disclosure
+            open={showNewAssetAdvanced}
+            onToggle={() => setShowNewAssetAdvanced(current => !current)}
+            title="Advanced (optional)"
+            summary={draftAdvancedSummary}
+          >
+            <div className="space-y-4">
+              <FieldGrid columns={3}>
+                <TextField
+                  label="Live price feed ID"
+                  value={newCryptoAsset.marketSourceId}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, marketSourceId: event.target.value }))}
+                  placeholder="tether, usd-coin, ethereum…"
+                  hint="Filled in from the symbol. Change it only if the feed uses a different id."
+                />
+                <NumberField
+                  label="Quote validity (seconds)"
+                  min={30}
+                  value={newCryptoAsset.quoteTtlSeconds}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, quoteTtlSeconds: Number(event.target.value) }))}
+                  hint="How long a customer’s quoted rate stays honoured."
+                />
+                <SelectField
+                  label="Execution rail"
+                  value={newCryptoAsset.executionRail}
+                  onChange={event => setNewCryptoAsset(current => {
+                    const nextRail = event.target.value as typeof current.executionRail
+                    if (nextRail !== 'routed_treasury') {
+                      return {
+                        ...current,
+                        executionRail: nextRail,
+                        routedProfile: '',
+                        routedToChain: '',
+                        routedToToken: '',
+                        routedDecimals: '',
+                        routedAddressFamily: '',
+                        minimumBuyNgn: '',
+                        maxQuoteDriftPercent: '',
+                      }
+                    }
+                    return { ...current, executionRail: nextRail }
+                  })}
+                  hint="Catalog Only lists the coin without trading it in-app."
+                >
+                  {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
+                    <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                  ))}
+                </SelectField>
+                <MoneyField
+                  label="Buy profit only (per $1)"
+                  min={0}
+                  step="0.01"
+                  value={newCryptoAsset.buyMarginNgnPerUsd}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
+                />
+                <MoneyField
+                  label="Sell profit only (per $1)"
+                  min={0}
+                  step="0.01"
+                  value={newCryptoAsset.sellMarginNgnPerUsd}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
+                />
+                <MoneyField
+                  label="Buy network fee only"
+                  min={0}
+                  step="0.01"
+                  value={newCryptoAsset.buyNetworkFeeNgn}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
+                />
+                <TextField
+                  label="Logo path or URL"
+                  className="sm:col-span-2 lg:col-span-3"
+                  value={newCryptoAsset.icon}
+                  onChange={event => setNewCryptoAsset(current => ({ ...current, icon: event.target.value }))}
+                  placeholder="/crypto-assets/usdt.png or https://…"
+                  hint="Only needed if you are not uploading a file above."
+                />
+              </FieldGrid>
+              <ToggleField
+                label="In-app treasury trading enabled"
+                checked={newCryptoAsset.baseExecutionEnabled}
+                onChange={checked => setNewCryptoAsset(current => ({ ...current, baseExecutionEnabled: checked }))}
               />
-              {uploadingCryptoLogoId === 'draft' ? 'Uploading…' : 'Upload Logo'}
-            </label>
-            <div className="text-[10px] text-[var(--muted)]">
-              Pair ID
-              <div className="mt-1 font-mono text-[11px] text-[var(--text)]">
-                {buildCryptoPairId(newCryptoAsset.symbol || 'TOKEN', newCryptoAsset.network)}
-              </div>
-            </div>
-          </div>
-          {newCryptoAsset.executionRail === 'routed_treasury' && (
-            <>
-              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <label className="text-[10px] text-[var(--muted)]">
-                  Routed Profile
-                  <select
+              {newCryptoAsset.executionRail === 'routed_treasury' && (
+                <div className="space-y-4 rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4">
+                  <SelectField
+                    label="Routed profile"
                     value={newCryptoAsset.routedProfile}
                     onChange={event => applyNewAssetRoutedProfile(event.target.value)}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    className="sm:max-w-sm"
+                    hint="Presets carry the chain, token and decimals so you never type them."
                   >
                     <option value="">Select profile</option>
                     {ROUTED_PROFILE_OPTIONS.map(option => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                     <option value="custom">Custom</option>
-                  </select>
-                </label>
-              </div>
-              {newCryptoAsset.routedProfile && newCryptoAsset.routedProfile !== 'custom' && (
-                <div className="mt-3 border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[10px] text-[var(--muted)]">
-                  {getRoutedProfileConfig(newCryptoAsset.routedProfile)?.toChain} · {getRoutedProfileConfig(newCryptoAsset.routedProfile)?.toToken} · {getRoutedProfileConfig(newCryptoAsset.routedProfile)?.decimals} decimals
-                </div>
-              )}
-              {newCryptoAsset.routedProfile === 'custom' && (
-                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Routed Chain ID
-                    <input
-                      type="text"
-                      value={newCryptoAsset.routedToChain}
-                      onChange={event => setNewCryptoAsset(current => ({ ...current, routedToChain: event.target.value, routedProfile: 'custom' }))}
-                      placeholder="42161"
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                    />
-                  </label>
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Routed Token
-                    <input
-                      type="text"
-                      value={newCryptoAsset.routedToToken}
-                      onChange={event => setNewCryptoAsset(current => ({ ...current, routedToToken: event.target.value, routedProfile: 'custom' }))}
-                      placeholder="0x0000000000000000000000000000000000000000"
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                    />
-                  </label>
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Routed Decimals
-                    <input
-                      type="number"
-                      min={0}
-                      value={newCryptoAsset.routedDecimals}
-                      onChange={event => setNewCryptoAsset(current => ({ ...current, routedDecimals: event.target.value, routedProfile: 'custom' }))}
-                      placeholder="18"
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                    />
-                  </label>
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Address Family
-                    <select
-                      value={newCryptoAsset.routedAddressFamily}
-                      onChange={event => setNewCryptoAsset(current => ({
-                        ...current,
-                        routedAddressFamily: event.target.value as typeof current.routedAddressFamily,
-                        routedProfile: 'custom',
-                      }))}
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                    >
-                      <option value="">Select family</option>
-                      {ROUTED_ADDRESS_FAMILY_OPTIONS.map((option: string) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Minimum Buy (NGN)
-                    <input
-                      type="number"
-                      min={1}
-                      value={newCryptoAsset.minimumBuyNgn}
-                      onChange={event => setNewCryptoAsset(current => ({ ...current, minimumBuyNgn: event.target.value, routedProfile: 'custom' }))}
-                      placeholder="500"
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                    />
-                  </label>
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Max Quote Drift (%)
-                    <input
-                      type="number"
-                      min={0.01}
-                      step="0.01"
-                      value={newCryptoAsset.maxQuoteDriftPercent}
-                      onChange={event => setNewCryptoAsset(current => ({ ...current, maxQuoteDriftPercent: event.target.value, routedProfile: 'custom' }))}
-                      placeholder="1"
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                    />
-                  </label>
-                </div>
-              )}
-            </>
-          )}
-          {showNewAssetAdvanced && (
-            <div className="mt-4 space-y-3 border border-[var(--border)] bg-[var(--clay)] p-3">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">Advanced (optional)</div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <label className="text-[10px] text-[var(--muted)]">
-                  Live Price Feed ID
-                  <input
-                    type="text"
-                    value={newCryptoAsset.marketSourceId}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, marketSourceId: event.target.value }))}
-                    placeholder="tether, usd-coin, ethereum…"
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Buy profit only (₦ / $1)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={newCryptoAsset.buyMarginNgnPerUsd}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Sell profit only (₦ / $1)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={newCryptoAsset.sellMarginNgnPerUsd}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Buy network fee only (₦)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={newCryptoAsset.buyNetworkFeeNgn}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, buyNetworkFeeNgn: event.target.value }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Quote Validity (sec)
-                  <input
-                    type="number"
-                    min={30}
-                    value={newCryptoAsset.quoteTtlSeconds}
-                    onChange={event => setNewCryptoAsset(current => ({ ...current, quoteTtlSeconds: Number(event.target.value) }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Execution Rail
-                  <select
-                    value={newCryptoAsset.executionRail}
-                    onChange={event => setNewCryptoAsset(current => {
-                      const nextRail = event.target.value as typeof current.executionRail
-                      if (nextRail !== 'routed_treasury') {
-                        return {
+                  </SelectField>
+                  {draftRoutedPreset && (
+                    <Callout>
+                      Routed via chain <strong>{draftRoutedPreset.toChain}</strong> · token{' '}
+                      <span className="font-mono">{draftRoutedPreset.toToken}</span> ·{' '}
+                      <strong>{draftRoutedPreset.decimals}</strong> decimals
+                    </Callout>
+                  )}
+                  {newCryptoAsset.routedProfile === 'custom' && (
+                    <FieldGrid columns={3}>
+                      <TextField
+                        label="Routed chain ID"
+                        value={newCryptoAsset.routedToChain}
+                        onChange={event => setNewCryptoAsset(current => ({ ...current, routedToChain: event.target.value, routedProfile: 'custom' }))}
+                        placeholder="42161"
+                      />
+                      <TextField
+                        label="Routed token address"
+                        value={newCryptoAsset.routedToToken}
+                        onChange={event => setNewCryptoAsset(current => ({ ...current, routedToToken: event.target.value, routedProfile: 'custom' }))}
+                        placeholder="0x0000000000000000000000000000000000000000"
+                      />
+                      <NumberField
+                        label="Routed decimals"
+                        min={0}
+                        value={newCryptoAsset.routedDecimals}
+                        onChange={event => setNewCryptoAsset(current => ({ ...current, routedDecimals: event.target.value, routedProfile: 'custom' }))}
+                        placeholder="18"
+                      />
+                      <SelectField
+                        label="Address family"
+                        value={newCryptoAsset.routedAddressFamily}
+                        onChange={event => setNewCryptoAsset(current => ({
                           ...current,
-                          executionRail: nextRail,
-                          routedProfile: '',
-                          routedToChain: '',
-                          routedToToken: '',
-                          routedDecimals: '',
-                          routedAddressFamily: '',
-                          minimumBuyNgn: '',
-                          maxQuoteDriftPercent: '',
-                        }
-                      }
-                      return { ...current, executionRail: nextRail }
-                    })}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  >
-                    {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
-                      <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <label className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
-                <input
-                  type="checkbox"
-                  checked={newCryptoAsset.baseExecutionEnabled}
-                  onChange={event => setNewCryptoAsset(current => ({ ...current, baseExecutionEnabled: event.target.checked }))}
-                />
-                In-app treasury trading enabled
-              </label>
+                          routedAddressFamily: event.target.value as typeof current.routedAddressFamily,
+                          routedProfile: 'custom',
+                        }))}
+                      >
+                        <option value="">Select family</option>
+                        {ROUTED_ADDRESS_FAMILY_OPTIONS.map((option: string) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </SelectField>
+                      <MoneyField
+                        label="Minimum buy"
+                        min={1}
+                        value={newCryptoAsset.minimumBuyNgn}
+                        onChange={event => setNewCryptoAsset(current => ({ ...current, minimumBuyNgn: event.target.value, routedProfile: 'custom' }))}
+                        placeholder="500"
+                      />
+                      <NumberField
+                        label="Max quote drift (%)"
+                        min={0.01}
+                        step="0.01"
+                        value={newCryptoAsset.maxQuoteDriftPercent}
+                        onChange={event => setNewCryptoAsset(current => ({ ...current, maxQuoteDriftPercent: event.target.value, routedProfile: 'custom' }))}
+                        placeholder="1"
+                      />
+                    </FieldGrid>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-          <div className="mt-4 flex flex-wrap gap-4 text-[10px] text-[var(--muted)]">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={newCryptoAsset.isActive}
-                onChange={event => setNewCryptoAsset(current => ({ ...current, isActive: event.target.checked }))}
-              />
-              Show this pair to customers
-            </label>
+          </Disclosure>
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={addCryptoAssetDraft}>Add Pair To Draft</Button>
-            <Button variant="secondary" onClick={() => setShowNewAssetForm(false)}>Close</Button>
+          <div className="mt-5 flex flex-col gap-4 border-t border-[var(--border)] pt-4 sm:flex-row sm:items-end sm:justify-between">
+            <ReadOnlyField
+              label="Pair ID"
+              value={buildCryptoPairId(newCryptoAsset.symbol || 'TOKEN', newCryptoAsset.network)}
+              hint="Generated from the symbol and network."
+              className="sm:max-w-xs"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => setShowNewAssetForm(false)}>Cancel</Button>
+              <Button onClick={addCryptoAssetDraft}>Add Pair To Draft</Button>
+            </div>
           </div>
         </div>}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -598,31 +591,11 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         {selectedCryptoAsset && (() => {
           const item = selectedCryptoAsset
           return (
-            <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <AssetLogo
-                    src={item.icon}
-                    alt={`${item.symbol} logo preview`}
-                    fallback={item.symbol.slice(0, 1)}
-                    className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--coal)]"
-                    imgClassName="h-8 w-8 object-contain"
-                    textClassName="text-lg font-bold text-[var(--gold2)]"
-                  />
-                  <div>
-                    <div className="text-[12px] font-bold text-[var(--text)]">{item.id}</div>
-                    <div className="mt-1 text-[10px] text-[var(--muted)]">{item.name} · {item.symbol} · {item.network}</div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <label className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
-                    <input
-                      type="checkbox"
-                      checked={item.isActive !== false}
-                      onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, isActive: event.target.checked } : asset))}
-                    />
-                    Active
-                  </label>
+            <div className="space-y-5 p-5">
+              <FormSection
+                title="Coin"
+                description="What customers see in the app."
+                actions={(
                   <Button
                     size="sm"
                     variant={item.isActive === false ? 'secondary' : 'danger'}
@@ -630,254 +603,217 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   >
                     {item.isActive === false ? 'Restore Pair' : 'Archive Pair'}
                   </Button>
-                </div>
-              </div>
-              {item.isActive === false && (
-                <div className="mt-3 border border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] px-3 py-2 text-[10px] text-[var(--text)]">
-                  This pair is archived. It will stay in history and admin records, but users cannot actively trade it once you save.
-                </div>
-              )}
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <label className="flex-1 text-[10px] text-[var(--muted)]">
-                  Logo Path / URL
-                  <input
-                    type="text"
-                    value={item.icon}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, icon: event.target.value } : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[10px] font-bold text-[var(--text)]">
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={event => {
-                      const file = event.target.files?.[0]
-                      if (file) void uploadCryptoLogo(file, { pairId: item.id, symbol: item.symbol })
-                      event.currentTarget.value = ''
-                    }}
-                  />
-                  {uploadingCryptoLogoId === item.id ? 'Uploading…' : 'Upload Logo'}
-                </label>
-              </div>
-
-              {/* Simple pricing — what operators use every day */}
-              <div className="mt-4 space-y-3 border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.06)] p-4">
-                <div className="text-[11px] font-bold text-[var(--text)]">Pricing (simple)</div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Your profit (₦ per $1)
-                    <input
-                      type="number"
-                      min={0}
-                      step="1"
-                      value={item.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
-                      onChange={event => setCryptoPricing(current => current.map(asset => {
-                        if (asset.id !== item.id) return asset
-                        const margin = Math.max(0, Number(event.target.value) || 0)
-                        const usd = asset.marketPriceUsd ?? 0
-                        return {
-                          ...asset,
-                          buyMarginNgnPerUsd: margin,
-                          sellMarginNgnPerUsd: margin,
-                          buyRate: computeBuyRate(usd, asset.marketRate, margin),
-                          sellRate: computeSellRate(usd, asset.marketRate, margin),
-                        }
-                      }))}
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[13px] font-semibold text-[var(--text)] outline-none"
+                )}
+              >
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                  <div className="flex shrink-0 flex-col items-center gap-2">
+                    <AssetLogo
+                      src={item.icon}
+                      alt={`${item.symbol} logo preview`}
+                      fallback={item.symbol.slice(0, 1)}
+                      className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--clay)]"
+                      imgClassName="h-10 w-10 object-contain"
+                      textClassName="text-xl font-bold text-[var(--gold2)]"
                     />
-                    <span className="mt-1 block text-[9px] leading-relaxed text-[var(--muted)]">
-                      How much extra you earn on every dollar of this coin. Example: live rate 1500, profit 50 → customers buy at ₦1550 per $1.
-                    </span>
-                  </label>
-                  <label className="text-[10px] text-[var(--muted)]">
-                    Network fee (₦ per order)
-                    <input
-                      type="number"
-                      min={0}
-                      step="1"
-                      value={item.buyNetworkFeeNgn ?? ''}
-                      placeholder={String(getDefaultNetworkFeeNgn(item.network, 'buy', item.id))}
-                      onChange={event => {
-                        const raw = event.target.value
-                        setCryptoPricing(current => current.map(asset => {
-                          if (asset.id !== item.id) return asset
-                          if (raw.trim() === '') {
-                            return { ...asset, buyNetworkFeeNgn: undefined, sellNetworkFeeNgn: 0 }
-                          }
-                          const buyFee = Math.max(0, Number(raw) || 0)
-                          return {
-                            ...asset,
-                            buyNetworkFeeNgn: buyFee,
-                            sellNetworkFeeNgn: 0,
-                          }
-                        }))
-                      }}
-                      className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[13px] font-semibold text-[var(--text)] outline-none"
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-xs font-semibold text-[var(--text)] transition-colors hover:border-[var(--gold2)]">
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={event => {
+                          const file = event.target.files?.[0]
+                          if (file) void uploadCryptoLogo(file, { pairId: item.id, symbol: item.symbol })
+                          event.currentTarget.value = ''
+                        }}
+                      />
+                      {uploadingCryptoLogoId === item.id ? 'Uploading…' : 'Upload logo'}
+                    </label>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <ToggleField
+                      label="Show this pair to customers"
+                      hint="Turning this off hides the pair in the app once you save."
+                      checked={item.isActive !== false}
+                      onChange={checked => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, isActive: checked } : asset))}
                     />
-                    <span className="mt-1 block text-[9px] leading-relaxed text-[var(--muted)]">
-                      Extra charge so the customer covers on-chain gas. Leave blank to use the automatic amount for this network.
-                    </span>
-                  </label>
+                    {item.isActive === false && (
+                      <Callout tone="warn">
+                        This pair is archived. It will stay in history and admin records, but users cannot
+                        actively trade it once you save.
+                      </Callout>
+                    )}
+                  </div>
                 </div>
-                {(() => {
-                  const preview = pricingPreview(item)
-                  return (
-                    <div className="grid gap-2 border border-[var(--border)] bg-[var(--coal)] p-3 text-[10px] sm:grid-cols-3">
-                      <div>
-                        <div className="text-[var(--muted)]">Live mid rate</div>
-                        <div className="mt-0.5 font-mono font-bold text-[var(--text)]">
-                          {preview.usdNgn > 0 ? `${formatNgn(preview.usdNgn)} / $1` : 'Waiting for live price…'}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[var(--muted)]">Customer buys at</div>
-                        <div className="mt-0.5 font-mono font-bold text-[var(--gold2)]">
-                          {preview.buyFx > 0 ? `${formatNgn(preview.buyFx)} / $1` : '—'}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[var(--muted)]">Customer sells at</div>
-                        <div className="mt-0.5 font-mono font-bold text-[var(--text)]">
-                          {preview.sellFx > 0 ? `${formatNgn(preview.sellFx)} / $1` : '—'}
-                        </div>
-                      </div>
-                      {preview.asymmetric && (
-                        <div className="sm:col-span-3 text-[9px] text-amber-600">
-                          Buy and sell profit are currently different. Open Advanced to edit them separately, or change “Your profit” above to set both equal.
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
-              </div>
+              </FormSection>
 
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowEditorAdvanced(current => !current)}
-                  className="border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[10px] font-bold text-[var(--text)]"
-                >
-                  {showEditorAdvanced ? 'Hide Advanced' : 'Show Advanced'}
-                </button>
-              </div>
-
-              {showEditorAdvanced && (
-              <div className="mt-3 space-y-3 border border-[var(--border)] bg-[var(--coal)] p-3">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">Advanced</div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="text-[10px] text-[var(--muted)]">
-                  Live Price Feed ID
-                  <input
-                    type="text"
-                    value={item.marketSourceId}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, marketSourceId: event.target.value } : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Quote Validity (sec)
-                  <input
-                    type="number"
-                    min={30}
-                    value={item.quoteTtlSeconds}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, quoteTtlSeconds: Number(event.target.value) } : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Execution Rail
-                  <select
-                    value={item.executionRail ?? ''}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? (() => {
-                      const nextRail = (event.target.value || undefined) as typeof asset.executionRail
-                      if (nextRail !== 'routed_treasury') {
-                        return {
-                          ...asset,
-                          executionRail: nextRail,
-                          routedToChain: undefined,
-                          routedToToken: undefined,
-                          routedDecimals: undefined,
-                          routedAddressFamily: undefined,
-                          minimumBuyNgn: undefined,
-                          maxQuoteDriftPercent: undefined,
-                        }
-                      }
-                      return { ...asset, executionRail: nextRail }
-                    })() : asset))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  >
-                    {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
-                      <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Buy profit only (₦ / $1)
-                  <input
-                    type="number"
+              <FormSection title="Your pricing" description="The two numbers you change day to day.">
+                <FieldGrid columns={2}>
+                  <MoneyField
+                    label="Your profit per $1"
                     min={0}
-                    step="0.01"
+                    step="1"
                     value={item.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
                     onChange={event => setCryptoPricing(current => current.map(asset => {
                       if (asset.id !== item.id) return asset
                       const margin = Math.max(0, Number(event.target.value) || 0)
+                      const usd = asset.marketPriceUsd ?? 0
                       return {
                         ...asset,
                         buyMarginNgnPerUsd: margin,
-                        buyRate: computeBuyRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
-                      }
-                    }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                  />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Sell profit only (₦ / $1)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={item.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
-                    onChange={event => setCryptoPricing(current => current.map(asset => {
-                      if (asset.id !== item.id) return asset
-                      const margin = Math.max(0, Number(event.target.value) || 0)
-                      return {
-                        ...asset,
                         sellMarginNgnPerUsd: margin,
-                        sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
+                        buyRate: computeBuyRate(usd, asset.marketRate, margin),
+                        sellRate: computeSellRate(usd, asset.marketRate, margin),
                       }
                     }))}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    hint="How much extra you earn on every dollar of this coin. Live rate ₦1,500 + profit ₦50 → customers buy at ₦1,550 per $1."
                   />
-                </label>
-                <label className="text-[10px] text-[var(--muted)]">
-                  Buy network fee only (₦)
-                  <input
-                    type="number"
+                  <MoneyField
+                    label="Network fee per order"
                     min={0}
-                    step="0.01"
+                    step="1"
                     value={item.buyNetworkFeeNgn ?? ''}
                     placeholder={String(getDefaultNetworkFeeNgn(item.network, 'buy', item.id))}
                     onChange={event => {
                       const raw = event.target.value
-                      setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
-                        ...asset,
-                        buyNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
-                      } : asset))
+                      setCryptoPricing(current => current.map(asset => {
+                        if (asset.id !== item.id) return asset
+                        if (raw.trim() === '') {
+                          return { ...asset, buyNetworkFeeNgn: undefined, sellNetworkFeeNgn: 0 }
+                        }
+                        const buyFee = Math.max(0, Number(raw) || 0)
+                        return {
+                          ...asset,
+                          buyNetworkFeeNgn: buyFee,
+                          sellNetworkFeeNgn: 0,
+                        }
+                      }))
                     }}
-                    className="mt-1 w-full border border-[var(--border)] bg-[var(--clay)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
+                    hint="Extra charge so the customer covers on-chain gas. Leave blank to use the automatic amount for this network."
                   />
-                </label>
-              </div>
-              </div>
-              )}
-              {item.executionRail === 'routed_treasury' && (
-                <>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <label className="text-[10px] text-[var(--muted)]">
-                      Routed Profile
-                      <select
+                </FieldGrid>
+                {(() => {
+                  const preview = pricingPreview(item)
+                  return (
+                    <RatePreview
+                      className="mt-4"
+                      usdNgn={preview.usdNgn}
+                      buyFx={preview.buyFx}
+                      sellFx={preview.sellFx}
+                      note={preview.asymmetric
+                        ? 'Buy and sell profit are currently different. Open Advanced to edit them separately, or change “Your profit per $1” above to set both equal.'
+                        : undefined}
+                    />
+                  )
+                })()}
+              </FormSection>
+
+              <Disclosure
+                open={showEditorAdvanced}
+                onToggle={() => setShowEditorAdvanced(current => !current)}
+                title="Advanced"
+                summary={item.executionRail === 'routed_treasury'
+                  ? (customRoutedProfileIds[item.id] || findRoutedProfileForAsset(item) === 'custom'
+                      ? 'Custom routing — chain, token and decimals set by hand'
+                      : 'Routing comes from a built-in preset')
+                  : 'Price feed, quote validity, execution rail, separate buy/sell margins'}
+              >
+                <div className="space-y-4">
+                  <FieldGrid columns={2}>
+                    <TextField
+                      label="Live price feed ID"
+                      value={item.marketSourceId}
+                      onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, marketSourceId: event.target.value } : asset))}
+                      hint="The feed id used for this coin’s live price."
+                    />
+                    <NumberField
+                      label="Quote validity (seconds)"
+                      min={30}
+                      value={item.quoteTtlSeconds}
+                      onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, quoteTtlSeconds: Number(event.target.value) } : asset))}
+                      hint="How long a customer’s quoted rate stays honoured."
+                    />
+                    <SelectField
+                      label="Execution rail"
+                      value={item.executionRail ?? ''}
+                      onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? (() => {
+                        const nextRail = (event.target.value || undefined) as typeof asset.executionRail
+                        if (nextRail !== 'routed_treasury') {
+                          return {
+                            ...asset,
+                            executionRail: nextRail,
+                            routedToChain: undefined,
+                            routedToToken: undefined,
+                            routedDecimals: undefined,
+                            routedAddressFamily: undefined,
+                            minimumBuyNgn: undefined,
+                            maxQuoteDriftPercent: undefined,
+                          }
+                        }
+                        return { ...asset, executionRail: nextRail }
+                      })() : asset))}
+                      hint="Catalog Only lists the coin without trading it in-app."
+                    >
+                      {CRYPTO_EXECUTION_RAIL_OPTIONS.map(option => (
+                        <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                      ))}
+                    </SelectField>
+                    <TextField
+                      label="Logo path or URL"
+                      value={item.icon}
+                      onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, icon: event.target.value } : asset))}
+                      hint="Only needed if you are not uploading a file above."
+                    />
+                    <MoneyField
+                      label="Buy profit only (per $1)"
+                      min={0}
+                      step="0.01"
+                      value={item.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
+                      onChange={event => setCryptoPricing(current => current.map(asset => {
+                        if (asset.id !== item.id) return asset
+                        const margin = Math.max(0, Number(event.target.value) || 0)
+                        return {
+                          ...asset,
+                          buyMarginNgnPerUsd: margin,
+                          buyRate: computeBuyRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
+                        }
+                      }))}
+                    />
+                    <MoneyField
+                      label="Sell profit only (per $1)"
+                      min={0}
+                      step="0.01"
+                      value={item.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
+                      onChange={event => setCryptoPricing(current => current.map(asset => {
+                        if (asset.id !== item.id) return asset
+                        const margin = Math.max(0, Number(event.target.value) || 0)
+                        return {
+                          ...asset,
+                          sellMarginNgnPerUsd: margin,
+                          sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
+                        }
+                      }))}
+                    />
+                    <MoneyField
+                      label="Buy network fee only"
+                      min={0}
+                      step="0.01"
+                      value={item.buyNetworkFeeNgn ?? ''}
+                      placeholder={String(getDefaultNetworkFeeNgn(item.network, 'buy', item.id))}
+                      onChange={event => {
+                        const raw = event.target.value
+                        setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
+                          ...asset,
+                          buyNetworkFeeNgn: raw.trim() === '' ? undefined : Math.max(0, Number(raw)),
+                        } : asset))
+                      }}
+                    />
+                  </FieldGrid>
+                  {item.executionRail === 'routed_treasury' && (
+                    <div className="space-y-4 rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4">
+                      <SelectField
+                        label="Routed profile"
+                        className="sm:max-w-sm"
+                        hint="Presets carry the chain, token and decimals so you never type them."
                         value={customRoutedProfileIds[item.id] ? 'custom' : findRoutedProfileForAsset(item)}
                         onChange={event => {
                           const profileId = event.target.value
@@ -901,96 +837,102 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                             maxQuoteDriftPercent: config.maxQuoteDriftPercent,
                           } : asset))
                         }}
-                        className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
                       >
                         {ROUTED_PROFILE_OPTIONS.map(option => (
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                         <option value="custom">Custom</option>
-                      </select>
-                    </label>
-                  </div>
+                      </SelectField>
                   {!(customRoutedProfileIds[item.id] || findRoutedProfileForAsset(item) === 'custom') && (
-                    <div className="mt-3 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[10px] text-[var(--muted)]">
-                      {item.routedToChain} · {item.routedToToken} · {item.routedDecimals} decimals
-                    </div>
+                    <Callout>
+                      Routed via chain <strong>{item.routedToChain}</strong> · token{' '}
+                      <span className="font-mono">{item.routedToToken}</span> ·{' '}
+                      <strong>{item.routedDecimals}</strong> decimals
+                    </Callout>
                   )}
                   {(customRoutedProfileIds[item.id] || findRoutedProfileForAsset(item) === 'custom') && (
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Routed Chain ID
-                        <input type="text" value={item.routedToChain ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToChain: event.target.value } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
-                      </label>
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Routed Token
-                        <input type="text" value={item.routedToToken ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToToken: event.target.value } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
-                      </label>
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Routed Decimals
-                        <input type="number" min={0} value={item.routedDecimals ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedDecimals: parseOptionalNumber(event.target.value) } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
-                      </label>
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Address Family
-                        <select
-                          value={item.routedAddressFamily ?? ''}
-                          onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedAddressFamily: (event.target.value || undefined) as typeof asset.routedAddressFamily } : asset))}
-                          className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none"
-                        >
-                          <option value="">Select family</option>
-                          {ROUTED_ADDRESS_FAMILY_OPTIONS.map((option: string) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Minimum Buy (NGN)
-                        <input type="number" min={1} value={item.minimumBuyNgn ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, minimumBuyNgn: parseOptionalNumber(event.target.value) } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
-                      </label>
-                      <label className="text-[10px] text-[var(--muted)]">
-                        Max Quote Drift (%)
-                        <input type="number" min={0.01} step="0.01" value={item.maxQuoteDriftPercent ?? ''} onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, maxQuoteDriftPercent: parseOptionalNumber(event.target.value) } : asset))} className="mt-1 w-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)] outline-none" />
-                      </label>
+                    <FieldGrid columns={2}>
+                      <TextField
+                        label="Routed chain ID"
+                        value={item.routedToChain ?? ''}
+                        onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToChain: event.target.value } : asset))}
+                      />
+                      <TextField
+                        label="Routed token address"
+                        value={item.routedToToken ?? ''}
+                        onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedToToken: event.target.value } : asset))}
+                      />
+                      <NumberField
+                        label="Routed decimals"
+                        min={0}
+                        value={item.routedDecimals ?? ''}
+                        onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedDecimals: parseOptionalNumber(event.target.value) } : asset))}
+                      />
+                      <SelectField
+                        label="Address family"
+                        value={item.routedAddressFamily ?? ''}
+                        onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, routedAddressFamily: (event.target.value || undefined) as typeof asset.routedAddressFamily } : asset))}
+                      >
+                        <option value="">Select family</option>
+                        {ROUTED_ADDRESS_FAMILY_OPTIONS.map((option: string) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </SelectField>
+                      <MoneyField
+                        label="Minimum buy"
+                        min={1}
+                        value={item.minimumBuyNgn ?? ''}
+                        onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, minimumBuyNgn: parseOptionalNumber(event.target.value) } : asset))}
+                      />
+                      <NumberField
+                        label="Max quote drift (%)"
+                        min={0.01}
+                        step="0.01"
+                        value={item.maxQuoteDriftPercent ?? ''}
+                        onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, maxQuoteDriftPercent: parseOptionalNumber(event.target.value) } : asset))}
+                      />
+                    </FieldGrid>
+                  )}
                     </div>
                   )}
-                </>
-              )}
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                <div className="text-[10px] text-[var(--muted)]">
-                  {renderPricingSourceLabel(item.pricingSource)}
-                  <div className="mt-1 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)]">
-                    ₦{item.marketRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--muted)]">
-                  Derived Buy Rate
-                  <div className="mt-1 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)]">
-                    ₦{item.buyRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--muted)]">
-                  Derived Sell Rate
-                  <div className="mt-1 border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-[11px] text-[var(--text)]">
-                    ₦{item.sellRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-4 text-[10px] text-[var(--muted)]">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
+                  <ToggleField
+                    label="Treasury execution enabled"
+                    hint="Lets the in-app treasury settle this pair. Unavailable while the pair is archived."
                     checked={item.baseExecutionEnabled === true}
-                    onChange={event => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, baseExecutionEnabled: event.target.checked } : asset))}
                     disabled={item.isActive === false}
+                    onChange={checked => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, baseExecutionEnabled: checked } : asset))}
                   />
-                  Treasury Execution Enabled
-                </label>
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-[var(--muted)]">
-                <span>{item.executionRail === 'routed_treasury' ? 'Routed execution config is admin-controlled for this asset.' : 'Pricing and execution flags are operator-controlled.'}</span>
-                <span className={`border px-2 py-1 font-bold uppercase tracking-[.8px] ${item.pricingSource === 'live' ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]' : item.pricingSource === 'backup' ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] text-[var(--red2)]'}`}>
-                  {renderPricingSourceLabel(item.pricingSource)}
-                </span>
-              </div>
+                </div>
+              </Disclosure>
+              <FormSection
+                title="Live rates"
+                description="Read-only — derived from the live feed and the profit you set above."
+                actions={(
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-bold ${item.pricingSource === 'live' ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.08)] text-[var(--green2)]' : item.pricingSource === 'backup' ? 'border-[rgba(245,158,11,.25)] bg-[rgba(245,158,11,.08)] text-[var(--gold2)]' : 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.08)] text-[var(--red2)]'}`}>
+                    {renderPricingSourceLabel(item.pricingSource)}
+                  </span>
+                )}
+              >
+                <FieldGrid columns={3}>
+                  <ReadOnlyField
+                    label={renderPricingSourceLabel(item.pricingSource)}
+                    value={`₦${item.marketRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`}
+                  />
+                  <ReadOnlyField
+                    label="Derived buy rate"
+                    value={`₦${item.buyRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`}
+                  />
+                  <ReadOnlyField
+                    label="Derived sell rate"
+                    value={`₦${item.sellRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`}
+                  />
+                </FieldGrid>
+                <p className="mt-3 text-xs leading-relaxed text-[var(--muted)]">
+                  {item.executionRail === 'routed_treasury'
+                    ? 'Routed execution config is admin-controlled for this asset.'
+                    : 'Pricing and execution flags are operator-controlled.'}
+                </p>
+              </FormSection>
             </div>
           )
         })()}
