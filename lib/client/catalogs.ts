@@ -21,7 +21,6 @@ const billProviderListeners = new Set<(providers: BillProvider[]) => void>()
 const networkProviderListeners = new Set<(providers: NetworkProvider[]) => void>()
 const BILL_CATALOG_FORCE_REFRESH_DEBOUNCE_MS = 60 * 1000
 const BILL_PROVIDER_DISPLAY_ORDER = ['airtime', 'data', 'cable', 'electric', 'education', 'gas', 'insurance', 'water'] as const
-const HIDDEN_CRYPTO_PAIR_IDS = new Set<CryptoAsset['id']>(['USDC_SOLANA'])
 let stocksSnapshot: StockQuote[] = NGX_STOCKS.map(enrichStockQuote)
 let stocksSummarySnapshot: StocksMarketSummary = NGX_MARKET_SUMMARY
 let stocksSourceSnapshot: StocksMarketSource = 'seed'
@@ -57,13 +56,14 @@ function sortBillProviders(providers: BillProvider[]) {
   })
 }
 
-function filterVisibleCryptoAssets(assets: CryptoAsset[]) {
-  return assets
-    .filter(asset => !HIDDEN_CRYPTO_PAIR_IDS.has(asset.id))
-    .map(asset => ({
-      ...asset,
-      icon: LEGACY_CRYPTO_ICON_REPLACEMENTS[asset.icon] ?? asset.icon,
-    }))
+// Pair visibility is owned by crypto_pairs.is_active, which getCryptoAssets already filters on, so
+// the admin's archive toggle is the single source of truth. A hardcoded hide list used to live here
+// too and held USDC_SOLANA back even though the server had the pair active and executable.
+function normalizeCryptoAssets(assets: CryptoAsset[]) {
+  return assets.map(asset => ({
+    ...asset,
+    icon: LEGACY_CRYPTO_ICON_REPLACEMENTS[asset.icon] ?? asset.icon,
+  }))
 }
 
 function readCachedCryptoAssets() {
@@ -73,7 +73,7 @@ function readCachedCryptoAssets() {
     const raw = window.localStorage.getItem(CRYPTO_ASSETS_CACHE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? filterVisibleCryptoAssets(parsed as CryptoAsset[]) : []
+    return Array.isArray(parsed) ? normalizeCryptoAssets(parsed as CryptoAsset[]) : []
   } catch {
     return []
   }
@@ -231,7 +231,7 @@ async function loadCryptoAssets(options?: { force?: boolean; liveOnly?: boolean 
         throw new Error(payload.error || 'Failed to load crypto assets.')
       }
       if (Array.isArray(payload.data)) {
-        emitCryptoAssets(filterVisibleCryptoAssets(payload.data as CryptoAsset[]))
+        emitCryptoAssets(normalizeCryptoAssets(payload.data as CryptoAsset[]))
         return
       }
       throw new Error('Crypto asset payload was malformed.')
@@ -243,7 +243,7 @@ async function loadCryptoAssets(options?: { force?: boolean; liveOnly?: boolean 
           emitCryptoAssets(cachedAssets)
           return
         }
-        emitCryptoAssets(filterVisibleCryptoAssets(CRYPTO_ASSETS))
+        emitCryptoAssets(normalizeCryptoAssets(CRYPTO_ASSETS))
       }
     })
     .finally(() => {
