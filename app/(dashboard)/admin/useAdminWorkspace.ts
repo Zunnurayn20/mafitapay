@@ -702,10 +702,9 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingCryptoPairId(pairId)
-      const nextAssets = savedCryptoPricing.some(asset => asset.id === pairId)
-        ? savedCryptoPricing.map(asset => asset.id === pairId ? edited : asset)
-        : [edited, ...savedCryptoPricing]
-      const persistedAssets = await persistCryptoPricing(nextAssets)
+      // Only this pair. The endpoint upserts by id, and it validates every asset it is handed, so
+      // sending the whole catalog lets one pre-existing invalid record block saving anything at all.
+      const persistedAssets = await persistCryptoPricing([edited])
       adoptPersistedCryptoPricing(persistedAssets)
       setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
       showToast(`${pairId} saved.`)
@@ -930,11 +929,11 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingCryptoPricing(true)
-      // Built from the saved baseline, not the working copy, so creating a pair cannot also write out
-      // an unrelated pair that happens to be sitting mid-edit.
-      const nextAssets = [normalizeCryptoAssetForPersist(asset), ...savedCryptoPricing]
-      setCryptoPricing(nextAssets)
-      const persistedAssets = await persistCryptoPricing(nextAssets)
+      // Send only the new pair. The optimistic prepend keeps it on screen; the payload stays a single
+      // record so creating cannot fail on an unrelated pair the server would reject.
+      const created = normalizeCryptoAssetForPersist(asset)
+      setCryptoPricing(current => [created, ...current])
+      const persistedAssets = await persistCryptoPricing([created])
       adoptPersistedCryptoPricing(persistedAssets)
       setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
       setNewCryptoAsset({
@@ -1054,10 +1053,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingRewardRuleId(ruleId)
-      const nextRules = savedRewardRules.some(rule => rule.id === ruleId)
-        ? savedRewardRules.map(rule => rule.id === ruleId ? edited : rule)
-        : [edited, ...savedRewardRules]
-      const persisted = await persistRewardRules(nextRules)
+      const persisted = await persistRewardRules([edited])
       adoptPersistedRewardRules(persisted)
       setDrafts(current => ({ ...current, rewardRules: JSON.stringify(persisted, null, 2) }))
       await refreshRewardRuleReport()
@@ -1107,7 +1103,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingRewardRules(true)
-      const persisted = await persistRewardRules([draftRule, ...savedRewardRules])
+      const persisted = await persistRewardRules([draftRule])
       adoptPersistedRewardRules(persisted)
       setDrafts(current => ({ ...current, rewardRules: JSON.stringify(persisted, null, 2) }))
       await refreshRewardRuleReport()
@@ -1195,10 +1191,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingBillProviderId(providerId)
-      const nextProviders = savedBillProviderCatalog.some(provider => provider.id === providerId)
-        ? savedBillProviderCatalog.map(provider => provider.id === providerId ? edited : provider)
-        : [edited, ...savedBillProviderCatalog]
-      const persisted = await persistBillProviders(nextProviders)
+      const persisted = await persistBillProviders([edited])
       adoptPersistedBillProviders(persisted)
       setDrafts(current => ({ ...current, billProviders: JSON.stringify(persisted, null, 2) }))
       showToast(`${providerId} saved.`)
@@ -1245,7 +1238,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
 
     try {
       setSavingBillProviders(true)
-      const persisted = await persistBillProviders([provider, ...savedBillProviderCatalog])
+      const persisted = await persistBillProviders([provider])
       adoptPersistedBillProviders(persisted)
       setDrafts(current => ({ ...current, billProviders: JSON.stringify(persisted, null, 2) }))
       setNewBillProvider({
