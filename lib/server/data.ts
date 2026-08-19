@@ -2671,8 +2671,13 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       buy_network_fee_ngn = COALESCE(crypto_pairs.buy_network_fee_ngn, excluded.buy_network_fee_ngn),
       sell_network_fee_ngn = COALESCE(crypto_pairs.sell_network_fee_ngn, excluded.sell_network_fee_ngn),
       quote_ttl_seconds = excluded.quote_ttl_seconds,
-      is_active = excluded.is_active,
-      base_execution_enabled = excluded.base_execution_enabled,
+      -- is_active and base_execution_enabled are deliberately NOT reset from the seed. This backfill
+      -- runs on every startup, so taking excluded.* here re-activated any pair an operator had
+      -- archived (every entry in CRYPTO_ASSETS is isActive: true) and re-enabled treasury execution
+      -- they had switched off, meaning archiving a seeded pair silently undid itself on the next
+      -- deploy. A new row still takes the seed value from the INSERT; an existing row keeps whatever
+      -- the operator chose.
+      base_execution_enabled = crypto_pairs.base_execution_enabled,
       execution_rail = COALESCE(crypto_pairs.execution_rail, excluded.execution_rail),
       routed_to_chain = COALESCE(crypto_pairs.routed_to_chain, excluded.routed_to_chain),
       routed_to_token = COALESCE(crypto_pairs.routed_to_token, excluded.routed_to_token),
@@ -2735,12 +2740,6 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       WHERE id = ?
     `).run(asset.marketSourceId, asset.marketPriceUsd ?? null, now, asset.id)
   }
-
-  db.prepare(`
-    UPDATE crypto_pairs
-    SET base_execution_enabled = 1, updated_at = ?
-    WHERE id IN ('USDT_BSC', 'BNB_BSC', 'USDC_SOLANA', 'SOL_SOLANA', 'TON_TON', 'SUI_SUI', 'NEAR_NEAR')
-  `).run(now)
 
   // ETH token logo is eth.png for every network. Base chain logo is base.png (see crypto-networks).
   db.prepare(`
