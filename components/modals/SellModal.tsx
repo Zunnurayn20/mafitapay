@@ -1,48 +1,34 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
+import { ChevronLeft } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN } from '@/lib/utils'
-import { CryptoAsset, CryptoDepositAddressFamily, CryptoPairId } from '@/types'
-
-function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFamily | null {
-  if (!asset) return null
-  const network = asset.network.trim().toLowerCase()
-  if (asset.routedAddressFamily === 'solana' || network === 'solana') return 'solana'
-  if (network === 'ton') return 'ton'
-  if (network === 'near') return 'near'
-  if (network === 'sui') return 'sui'
-  if (
-    network === 'base'
-    || network === 'bsc'
-    || network === 'ethereum'
-    || network === 'polygon'
-    || network === 'matic'
-    || network === 'arbitrum'
-    || network === 'optimism'
-    || network === 'linea'
-    || network === 'robinhood'
-    || asset.routedAddressFamily === 'evm'
-  ) {
-    return 'evm'
-  }
-  return null
-}
+import { getNetworkFallbackLabel, getNetworkIconUrl } from '@/lib/crypto-networks'
+import {
+  getCryptoDepositAddressFamilyForAsset,
+  groupCryptoAssetsBySymbol,
+  isDepositableCryptoAsset,
+  type CryptoDepositAssetGroup,
+} from '@/lib/crypto-deposit-assets'
+import { CryptoAsset, CryptoPairId } from '@/types'
 
 export function SellModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { showToast, modalData, cryptoDepositAddresses } = useAppStore()
   const assets = useCryptoAssets()
   const sellableAssets = useMemo(
-    () => assets.filter(asset => Boolean(getAddressFamilyForAsset(asset))),
+    () => assets.filter(isDepositableCryptoAsset),
     [assets],
   )
+  const assetGroups = useMemo(() => groupCryptoAssetsBySymbol(sellableAssets), [sellableAssets])
   const initializedPairRef = useRef(false)
   const [pairId, setPairId] = useState<CryptoPairId>('USDT_BSC')
   const [showAssetPicker, setShowAssetPicker] = useState(false)
+  const [pickerSymbol, setPickerSymbol] = useState<string | null>(null)
   const [qrRenderKey, setQrRenderKey] = useState(0)
   const qrCodeCacheRef = useRef<Record<string, string>>({})
   // Quick win: support Binance internal (CEX) deposit method for crypto-to-NGN
@@ -54,8 +40,11 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const asset = sellableAssets.find(a => a.id === pairId)
     ?? (modalAsset?.id === pairId ? modalAsset : undefined)
     ?? sellableAssets[0]
-  const addressFamily = getAddressFamilyForAsset(asset)
+  const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
   const depositAddress = cryptoDepositAddresses.find(item => item.addressFamily === addressFamily && item.isActive)
+  const pickerGroup = pickerSymbol
+    ? assetGroups.find(group => group.symbol === pickerSymbol) ?? null
+    : null
 
   useEffect(() => {
     if (!open) {
@@ -130,8 +119,29 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     initializedPairRef.current = false
     setTimeout(() => {
       setShowAssetPicker(false)
+      setPickerSymbol(null)
       // do not reset QR state here; we use per-address cache (see qrCodeCacheRef) so QR is generated only once per address and displayed instantly on re-open/switch-back
     }, 400)
+  }
+
+  function toggleAssetPicker() {
+    setPickerSymbol(null)
+    setShowAssetPicker(current => !current)
+  }
+
+  function selectPair(nextPairId: CryptoPairId) {
+    setPairId(nextPairId)
+    setShowAssetPicker(false)
+    setPickerSymbol(null)
+  }
+
+  // A symbol that only exists on one chain has nothing to disambiguate, so skip the second step.
+  function handleGroupClick(group: CryptoDepositAssetGroup) {
+    if (group.options.length === 1) {
+      selectPair(group.options[0].id)
+      return
+    }
+    setPickerSymbol(group.symbol)
   }
 
   async function copyAddress() {
@@ -171,7 +181,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             </div>
             <button
               type="button"
-              onClick={() => setShowAssetPicker(current => !current)}
+              onClick={toggleAssetPicker}
               className="flex h-10 w-10 items-center justify-center border border-[var(--border)] bg-[var(--clay2)]"
             >
               <AssetLogo
@@ -184,27 +194,77 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               />
             </button>
             {showAssetPicker && (
-              <div className="absolute right-3 top-[calc(100%+0.5rem)] z-20 grid grid-cols-4 gap-2 border border-[var(--border)] bg-[var(--coal)] p-3 shadow-[0_14px_30px_rgba(0,0,0,.35)]">
-                {sellableAssets.map(a => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => {
-                      setPairId(a.id)
-                      setShowAssetPicker(false)
-                    }}
-                    className={`flex h-12 w-12 items-center justify-center border ${pairId === a.id ? 'border-[var(--gold)] bg-[rgba(202,165,96,.12)]' : 'border-[var(--border)] bg-[var(--clay2)]'}`}
-                  >
-                    <AssetLogo
-                      src={a.icon}
-                      alt={`${a.symbol} logo`}
-                      fallback={a.symbol.slice(0, 1)}
-                      className="flex h-8 w-8 items-center justify-center overflow-hidden"
-                      imgClassName="h-7 w-7 object-contain"
-                      textClassName="text-lg"
-                    />
-                  </button>
-                ))}
+              <div className="absolute right-3 top-[calc(100%+0.5rem)] z-20 max-h-64 w-[17.5rem] overflow-y-auto border border-[var(--border)] bg-[var(--coal)] p-3 shadow-[0_14px_30px_rgba(0,0,0,.35)]">
+                {pickerGroup ? (
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPickerSymbol(null)}
+                        aria-label="Back to asset list"
+                        className="flex h-6 w-6 flex-shrink-0 items-center justify-center border border-[var(--border)] bg-[var(--clay2)] text-[var(--text2)]"
+                      >
+                        <ChevronLeft size={12} />
+                      </button>
+                      <div className="text-[9px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">
+                        {pickerGroup.symbol} network
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {pickerGroup.options.map(option => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => selectPair(option.id)}
+                          className={`flex items-center gap-2.5 border px-2.5 py-2 text-left ${pairId === option.id ? 'border-[var(--gold)] bg-[rgba(202,165,96,.12)]' : 'border-[var(--border)] bg-[var(--clay2)]'}`}
+                        >
+                          <AssetLogo
+                            src={getNetworkIconUrl(option.network)}
+                            alt={`${option.network} network logo`}
+                            fallback={getNetworkFallbackLabel(option.network)}
+                            className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden"
+                            imgClassName="h-5 w-5 object-contain"
+                            textClassName="text-[10px] font-bold text-[var(--text2)]"
+                          />
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-[var(--text)]">
+                            {option.network}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {assetGroups.map(group => {
+                      const active = group.options.some(option => option.id === pairId)
+                      return (
+                        <button
+                          key={group.symbol}
+                          type="button"
+                          onClick={() => handleGroupClick(group)}
+                          className={`flex flex-col items-center gap-1 border px-1.5 py-2 ${active ? 'border-[var(--gold)] bg-[rgba(202,165,96,.12)]' : 'border-[var(--border)] bg-[var(--clay2)]'}`}
+                        >
+                          <AssetLogo
+                            src={group.icon}
+                            alt={`${group.symbol} logo`}
+                            fallback={group.symbol.slice(0, 1)}
+                            className="flex h-7 w-7 items-center justify-center overflow-hidden"
+                            imgClassName="h-6 w-6 object-contain"
+                            textClassName="text-base"
+                          />
+                          <span className="w-full truncate text-center text-[10px] font-bold text-[var(--text)]">
+                            {group.symbol}
+                          </span>
+                          <span className="w-full truncate text-center text-[8px] text-[var(--text2)]">
+                            {group.options.length === 1
+                              ? group.options[0].network
+                              : `${group.options.length} networks`}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

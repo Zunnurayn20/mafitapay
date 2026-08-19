@@ -8,34 +8,11 @@ import { AssetLogo } from '@/components/ui/AssetLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { getNetworkFallbackLabel, getNetworkIconUrl } from '@/lib/crypto-networks'
-import type { CryptoAsset, CryptoDepositAddressFamily, Wallet } from '@/types'
+import { groupCryptoAssetsBySymbol, isDepositableCryptoAsset } from '@/lib/crypto-deposit-assets'
+import type { CryptoAsset, Wallet } from '@/types'
 
 type FundingAccount = Wallet['virtualAccounts'][number]
 type FundingProvider = 'palmpay' | 'flutterwave'
-
-function getAddressFamilyForAsset(asset?: CryptoAsset): CryptoDepositAddressFamily | null {
-  if (!asset) return null
-  const network = asset.network.trim().toLowerCase()
-  if (asset.routedAddressFamily === 'solana' || network === 'solana') return 'solana'
-  if (network === 'ton') return 'ton'
-  if (network === 'near') return 'near'
-  if (network === 'sui') return 'sui'
-  if (
-    network === 'base'
-    || network === 'bsc'
-    || network === 'ethereum'
-    || network === 'polygon'
-    || network === 'matic'
-    || network === 'arbitrum'
-    || network === 'optimism'
-    || network === 'linea'
-    || network === 'robinhood'
-    || asset.routedAddressFamily === 'evm'
-  ) {
-    return 'evm'
-  }
-  return null
-}
 
 function providerLabel(provider: FundingProvider | FundingAccount['provider']) {
   if (provider === 'palmpay') return 'PalmPay'
@@ -68,24 +45,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
 
   const assets = useCryptoAssets()
   const sellableAssets = useMemo(
-    () => assets.filter(asset => Boolean(getAddressFamilyForAsset(asset))),
+    () => assets.filter(isDepositableCryptoAsset),
     [assets]
   )
-  const depositAssetGroups = useMemo(() => {
-    const groups = new Map<string, CryptoAsset[]>()
-    for (const asset of sellableAssets) {
-      const key = asset.symbol.toUpperCase()
-      const current = groups.get(key) ?? []
-      current.push(asset)
-      groups.set(key, current)
-    }
-    return Array.from(groups.entries()).map(([symbol, options]) => ({
-      symbol,
-      name: options[0]?.name ?? symbol,
-      icon: options[0]?.icon ?? '',
-      options: options.sort((a, b) => a.network.localeCompare(b.network)),
-    }))
-  }, [sellableAssets])
+  const depositAssetGroups = useMemo(() => groupCryptoAssetsBySymbol(sellableAssets), [sellableAssets])
   const networkPickerGroup = depositAssetGroups.find(group => group.symbol === networkPickerSymbol) ?? null
 
   useEffect(() => {

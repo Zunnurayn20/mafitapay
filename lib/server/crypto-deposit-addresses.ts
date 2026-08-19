@@ -14,6 +14,7 @@ import {
 } from '@/lib/server/data'
 import { subscribeCryptoDepositAddressesToAlchemy } from '@/lib/server/alchemy-address-webhooks'
 import { subscribeCryptoDepositAddressesToTon } from '@/lib/server/ton-address-webhooks'
+import { getCryptoDepositAddressFamilyForAsset as resolveCryptoDepositAddressFamilyForAsset } from '@/lib/crypto-deposit-assets'
 
 const FAMILY_LABELS: Record<CryptoDepositAddressFamily, string> = {
   evm: 'EVM networks',
@@ -24,26 +25,7 @@ const FAMILY_LABELS: Record<CryptoDepositAddressFamily, string> = {
 }
 
 export function getCryptoDepositAddressFamilyForAsset(asset: CryptoAsset): CryptoDepositAddressFamily | null {
-  const network = asset.network.trim().toLowerCase()
-  if (asset.routedAddressFamily === 'solana' || network === 'solana') return 'solana'
-  if (network === 'ton') return 'ton'
-  if (network === 'near') return 'near'
-  if (network === 'sui') return 'sui'
-  if (
-    network === 'base'
-    || network === 'bsc'
-    || network === 'ethereum'
-    || network === 'polygon'
-    || network === 'matic'
-    || network === 'arbitrum'
-    || network === 'optimism'
-    || network === 'linea'
-    || network === 'robinhood'
-    || asset.routedAddressFamily === 'evm'
-  ) {
-    return 'evm'
-  }
-  return null
+  return resolveCryptoDepositAddressFamilyForAsset(asset)
 }
 
 function getNetworkLabel(family: CryptoDepositAddressFamily) {
