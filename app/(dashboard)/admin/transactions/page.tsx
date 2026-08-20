@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import {
   AdminButton,
   AdminEmpty,
@@ -54,27 +55,27 @@ export default async function AdminTransactionsPage({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
-        <a href={summaryHref('ATTENTION', params.q || '')} className="rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4 hover:border-[var(--gold2)]">
+        <Link href={summaryHref('ATTENTION', params.q || '')} className="rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4 hover:border-[var(--gold2)]">
           <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Needs attention</div>
           <div className={`mt-2 text-2xl font-bold ${board.counts.attention > 0 ? 'text-[var(--red2)]' : 'text-[var(--green2)]'}`}>
             {board.counts.attention}
           </div>
           <div className="mt-1 text-xs text-[var(--muted)]">Failed, stale pending, or unmatched provider errors</div>
-        </a>
-        <a href={summaryHref('FAILED', params.q || '')} className="rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4 hover:border-[var(--gold2)]">
+        </Link>
+        <Link href={summaryHref('FAILED', params.q || '')} className="rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4 hover:border-[var(--gold2)]">
           <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Failed</div>
           <div className={`mt-2 text-2xl font-bold ${board.counts.failed > 0 ? 'text-[var(--red2)]' : 'text-[var(--text)]'}`}>
             {board.counts.failed}
           </div>
           <div className="mt-1 text-xs text-[var(--muted)]">Customer txns and unmatched provider failures</div>
-        </a>
-        <a href={summaryHref('PENDING', params.q || '')} className="rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4 hover:border-[var(--gold2)]">
+        </Link>
+        <Link href={summaryHref('PENDING', params.q || '')} className="rounded-lg border border-[var(--border)] bg-[var(--coal)] p-4 hover:border-[var(--gold2)]">
           <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Pending</div>
           <div className={`mt-2 text-2xl font-bold ${board.counts.pending > 0 ? 'text-[var(--gold2)]' : 'text-[var(--text)]'}`}>
             {board.counts.pending}
           </div>
           <div className="mt-1 text-xs text-[var(--muted)]">Still waiting on a provider or settlement</div>
-        </a>
+        </Link>
       </div>
 
       <AdminPageCard
