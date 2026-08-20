@@ -133,17 +133,4 @@ export function AdminButton({
   )
 }
 
-/** GET filter form — full navigation, no client JS required. */
-export function AdminGetForm({
-  action,
-  children,
-}: {
-  action: string
-  children: ReactNode
-}) {
-  return (
-    <form action={action} method="get" className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-      {children}
-    </form>
-  )
-}
+export { AdminGetForm } from './AdminGetForm'
