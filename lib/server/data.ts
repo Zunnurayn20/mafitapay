@@ -4088,21 +4088,25 @@ export async function listRecentTransactions(limit = 40): Promise<Array<{ userId
 
   return rows.map(row => ({
     userId: row.user_id,
-    transaction: {
-      id: row.id,
-      type: row.type,
-      status: row.status,
-      amount: Number(row.amount),
-      fee: Number(row.fee),
-      description: row.description,
-      reference: row.reference,
-      recipient: row.recipient ?? undefined,
-      narration: row.narration ?? undefined,
-      createdAt: row.created_at,
-      icon: row.icon ?? undefined,
-      metadata: parseJson(row.metadata, undefined as Transaction['metadata']),
-    },
+    transaction: mapTransactionRow(row),
   }))
+}
+
+export async function listTransactionsByStatuses(
+  statuses: Transaction['status'][],
+  limit = 100,
+): Promise<Array<{ userId: string; transaction: Transaction }>> {
+  await ensureDbReady()
+  const unique = [...new Set(statuses)]
+  if (unique.length === 0) return []
+  const placeholders = unique.map(() => '?').join(', ')
+  const sql = `SELECT * FROM transactions WHERE status IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<TransactionRow>(sql, [...unique, limit])
+    return result.rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
+  }
+  const rows = getDb().prepare(sql).all(...unique, limit) as TransactionRow[]
+  return rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
 }
 
 export async function listPendingBillTransactions(limit = 50): Promise<Array<{ userId: string; transaction: Transaction }>> {
