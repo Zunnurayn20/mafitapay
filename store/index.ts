@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { readJsonResponse } from '@/lib/client/http'
+import { applyTheme } from '@/lib/client/native-system-bars'
 import { CryptoDepositAddress, FundingAccountEligibility, Theme, Transaction, User, Wallet } from '@/types'
 
 interface SessionData {
@@ -283,7 +284,7 @@ export const useAppStore = create<AppStore>()(
       toggleTheme: () => {
         const next = get().theme === 'dark' ? 'light' : 'dark'
         set({ theme: next })
-        document.documentElement.setAttribute('data-theme', next)
+        applyTheme(next)
       },
       sidebarOpen: true,
       setSidebarOpen: (open) => set({ sidebarOpen: open }),

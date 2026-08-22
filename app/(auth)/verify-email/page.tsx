@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { useAppStore } from '@/store'
+import { applyTheme } from '@/lib/client/native-system-bars'
 
 export default function VerifyEmailPage() {
   const { authResolved, isAuthenticated, refreshSession, theme } = useAppStore()
@@ -13,7 +14,7 @@ export default function VerifyEmailPage() {
   const [message, setMessage] = useState('Verifying your email address...')
   const [error, setError] = useState('')
 
-  useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
+  useEffect(() => { applyTheme(theme) }, [theme])
   useEffect(() => { if (authResolved && isAuthenticated) router.push('/dashboard') }, [authResolved, isAuthenticated, router])
 
   useEffect(() => {

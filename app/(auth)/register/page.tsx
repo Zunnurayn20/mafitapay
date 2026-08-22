@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/store'
+import { applyTheme } from '@/lib/client/native-system-bars'
 import { AuthSplitShell } from '@/components/auth/AuthSplitShell'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -23,7 +24,7 @@ export default function RegisterPage() {
   const [success, setSuccess] = useState('')
   const [verificationLink, setVerificationLink] = useState('')
 
-  useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
+  useEffect(() => { applyTheme(theme) }, [theme])
   useEffect(() => { if (authResolved && isAuthenticated) router.push('/dashboard') }, [authResolved, isAuthenticated, router])
   useEffect(() => {
     const ref = searchParams.get('ref')?.trim().toUpperCase() ?? ''

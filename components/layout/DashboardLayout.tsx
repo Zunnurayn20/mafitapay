@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { canUseBiometrics } from '@/lib/client/biometric'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
+import { applyTheme } from '@/lib/client/native-system-bars'
 import { useAppStore } from '@/store'
 import { isAdminEmail } from '@/lib/admin-access'
 import { Sidebar } from './Sidebar'
@@ -61,7 +62,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     : TITLES[pathname] ?? 'Dashboard'
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
+    applyTheme(theme)
   }, [theme])
 
   useEffect(() => {

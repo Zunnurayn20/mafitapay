@@ -88,6 +88,25 @@ body {
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.3s, color 0.2s;
 }
+
+/* Backdrop for the system navigation bar. The shell draws edge-to-edge with a transparent bar
+   and no contrast scrim (MainActivity.makeNavigationBarTransparent), so without this the back /
+   home / recents icons are stencilled over whatever happens to scroll past — or over a modal's
+   own dark backdrop, which flips the contrast the native icon colour was chosen for. Sits above
+   the modal (z 500) and toast (z 600) for that reason. Collapses to nothing where there is no
+   system bar to cover. */
+body::after {
+  content: '';
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 700;
+  height: env(safe-area-inset-bottom);
+  background-color: var(--page-bg);
+  pointer-events: none;
+}
+
 #app-root {
   position: relative;
   z-index: 1;

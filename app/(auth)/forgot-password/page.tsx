@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
+import { applyTheme } from '@/lib/client/native-system-bars'
 
 export default function ForgotPasswordPage() {
   const { authResolved, isAuthenticated, theme } = useAppStore()
@@ -16,7 +17,7 @@ export default function ForgotPasswordPage() {
   const [resetLink, setResetLink] = useState('')
   const [deliverySummary, setDeliverySummary] = useState('')
 
-  useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
+  useEffect(() => { applyTheme(theme) }, [theme])
   useEffect(() => { if (authResolved && isAuthenticated) router.push('/dashboard') }, [authResolved, isAuthenticated, router])
 
   async function handleSubmit(event: React.FormEvent) {

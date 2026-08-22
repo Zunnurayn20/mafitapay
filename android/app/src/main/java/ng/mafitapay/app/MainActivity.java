@@ -331,9 +331,15 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BiometricAuthPlugin.class);
+        registerPlugin(SystemBarsPlugin.class);
         super.onCreate(savedInstanceState);
 
         makeNavigationBarTransparent();
+
+        // The bar has no background of its own, so the icons are only legible if their colour
+        // matches the page. Start on light icons for the dark splash and dark default palette;
+        // the web layer corrects this the moment it knows the persisted theme.
+        SystemBarsPlugin.applyNavigationBarAppearance(this, false);
 
         connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         registerNetworkCallback();
