@@ -32,6 +32,15 @@
   --page-bg: #0c0907;
   --gold-soft: rgba(202, 165, 96, 0.28);
   --gold-tint: rgba(202, 165, 96, 0.16);
+  --auth-glow: rgba(202, 165, 96, .26);
+  --danger-text: #f07a5c;
+  --danger-ring: rgba(224, 80, 48, .12);
+  --success-text: var(--green2);
+  --success-ring: rgba(72, 204, 120, .30);
+  --btn-gold-from: #e3c78d;
+  --btn-gold-mid: #caa560;
+  --btn-gold-to: #b88f48;
+  --btn-gold-text: #1d1409;
 }
 
 [data-theme="light"] {
@@ -58,6 +67,11 @@
   --page-bg: #f4ede2;
   --gold-soft: rgba(185, 138, 67, 0.34);
   --gold-tint: rgba(185, 138, 67, 0.14);
+  --auth-glow: rgba(185, 138, 67, .16);
+  --danger-text: #b23a1f;
+  --danger-ring: rgba(196, 52, 26, .12);
+  --success-text: #1e8a44;
+  --success-ring: rgba(30, 138, 68, .28);
 }
 
 * {
