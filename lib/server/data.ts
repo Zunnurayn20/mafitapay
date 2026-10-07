@@ -6811,6 +6811,19 @@ export async function createPasswordResetToken(userId: string, metadata?: { user
   }
 }
 
+export async function getLatestEmailVerificationCreatedAt(userId: string): Promise<string | null> {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ created_at: string }>(
+      'SELECT created_at FROM email_verification_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]
+    )
+    return result.rows[0]?.created_at ?? null
+  }
+  const row = getDb().prepare(
+    'SELECT created_at FROM email_verification_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(userId) as { created_at: string } | undefined
+  return row?.created_at ?? null
+}
 export async function createEmailVerificationToken(userId: string, metadata?: { userAgent?: string; ipAddress?: string }) {
   await ensureDbReady()
   const now = new Date()
@@ -6981,7 +6994,7 @@ export async function activateUserAccount(userId: string) {
 }
 
 export async function consumeAuthRateLimitAttempt(input: {
-  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email'
+  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend'
   scopes: string[]
   limit: number
   windowMinutes: number
@@ -7075,7 +7088,7 @@ export async function consumeAuthRateLimitAttempt(input: {
 }
 
 export async function clearAuthRateLimitAttempts(input: {
-  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email'
+  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend'
   scopes: string[]
 }) {
   await ensureDbReady()
