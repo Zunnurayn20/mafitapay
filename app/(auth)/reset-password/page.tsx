@@ -1,11 +1,15 @@
 'use client'
-
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { Check } from 'lucide-react'
+import { AuthSplitShell } from '@/components/auth/AuthSplitShell'
+import { AuthBrandHeader, AuthTopNav } from '@/components/auth/AuthBrand'
+import { PasswordInput } from '@/components/auth/PasswordInput'
+import { PasswordStrength } from '@/components/auth/PasswordStrength'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
 import { applyTheme } from '@/lib/client/native-system-bars'
+import { isPasswordValid } from '@/lib/auth/validation'
 
 export default function ResetPasswordPage() {
   const { authResolved, isAuthenticated, theme } = useAppStore()
@@ -17,96 +21,38 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [touched, setTouched] = useState(false)
+  const match = !!confirmPassword && password === confirmPassword
 
   useEffect(() => { applyTheme(theme) }, [theme])
-  useEffect(() => { if (authResolved && isAuthenticated) router.push('/dashboard') }, [authResolved, isAuthenticated, router])
-
+  useEffect(() => { if (authResolved && isAuthenticated) router.replace('/dashboard') }, [authResolved, isAuthenticated, router])
   async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault()
-    setLoading(true)
-    setError('')
-    setMessage('')
-
-    if (!token) {
-      setError('This reset link is missing its token.')
-      setLoading(false)
-      return
-    }
-    if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-      setError('Password must be at least 8 characters and include both letters and numbers.')
-      setLoading(false)
-      return
-    }
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.')
-      setLoading(false)
-      return
-    }
-
+    event.preventDefault(); setLoading(true); setError(''); setMessage(''); setTouched(true)
+    if (!token) { setError('This reset link is missing its token.'); setLoading(false); return }
+    if (!isPasswordValid(password)) { setError('Use at least 8 characters with a letter and a number.'); setLoading(false); return }
+    if (!match) { setError("Passwords don't match."); setLoading(false); return }
     try {
-      const response = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password }),
-      })
+      const response = await fetch('/api/auth/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password }) })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Unable to reset password.')
       setMessage(payload.data?.message || 'Password reset successful.')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to reset password.')
-    } finally {
-      setLoading(false)
-    }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to reset password.') }
+    finally { setLoading(false) }
   }
 
-  return (
-    <div className="relative z-[1] flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden">
-            <img src="/mafitapay-logo.png" alt="MafitaPay logo" className="h-20 w-20 object-contain" />
-          </div>
-          <div className="font-display text-3xl font-black text-[var(--text)]">MafitaPay</div>
-          <div className="mt-1 text-[10px] uppercase tracking-widest text-[var(--muted)]">Set New Password</div>
-        </div>
-
-        <div className="border border-[var(--border)] bg-[var(--coal)]">
-          <div className="ank-strip" />
-          <div className="p-7">
-            <div className="mb-1 font-display text-[22px] font-black text-[var(--text)]">Choose a New Password</div>
-            <div className="mb-6 text-[12px] text-[var(--muted)]">Use at least 8 characters with both letters and numbers.</div>
-
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <Input
-                label="New Password"
-                type="password"
-                placeholder="At least 8 chars with letters and numbers"
-                value={password}
-                onChange={event => setPassword(event.target.value)}
-              />
-              <Input
-                label="Confirm New Password"
-                type="password"
-                placeholder="Repeat new password"
-                value={confirmPassword}
-                onChange={event => setConfirmPassword(event.target.value)}
-              />
-
-              {error && <div className="border border-[rgba(196,52,26,.2)] bg-[rgba(196,52,26,.08)] px-3 py-2 text-[11px] text-[var(--red2)]">{error}</div>}
-              {message && <div className="border border-[var(--border)] bg-[var(--clay)] px-3 py-3 text-[11px] text-[var(--text2)]">{message}</div>}
-
-              <Button type="submit" loading={loading} className="mt-1 w-full py-3.5">Reset Password</Button>
-            </form>
-
-            <div className="mt-5 text-center text-[12px] text-[var(--muted)]">
-              Back to{' '}
-              <span className="cursor-pointer font-bold text-[var(--gold2)]" onClick={() => router.push('/login')}>
-                sign in →
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+  return <AuthSplitShell compactHeader={<AuthBrandHeader />}><div className="flex min-h-full flex-col">
+    <AuthTopNav onBack={() => router.push('/login')} />
+    <div className="my-auto py-8">
+      <h1 className="font-display text-[29px] md:text-[24px] font-bold text-[var(--text)]">Choose a new password</h1>
+      <p className="mt-3 text-[15px] text-[var(--text2)]">Use at least 8 characters with both letters and numbers.</p>
+      <form onSubmit={handleSubmit} className="mt-7 flex flex-col gap-5">
+        <PasswordInput label="New password" autoComplete="new-password" placeholder="Create a password" value={password} onChange={event => setPassword(event.target.value)} onBlur={() => setTouched(true)} aria-describedby="reset-strength" error={touched && !isPasswordValid(password) ? 'Use at least 8 characters with a letter and a number.' : undefined} />
+        <PasswordStrength id="reset-strength" password={password} />
+        <PasswordInput label="Confirm new password" autoComplete="new-password" placeholder="Repeat new password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} status={match ? 'success' : 'default'} statusIcon={match ? <Check size={20} className="text-[var(--success-text)]" /> : undefined} hint={match ? 'Passwords match' : undefined} hintTone="success" error={touched && !match ? "Passwords don't match" : undefined} />
+        {error ? <div role="alert" className="text-[13.5px] text-[var(--danger-text)]">{error}</div> : null}
+        {message ? <div role="status" className="text-[13.5px] text-[var(--success-text)]">{message}</div> : null}
+        <Button type="submit" variant="gold" size="xl" loading={loading} className="w-full">Reset password</Button>
+      </form>
     </div>
-  )
+  </div></AuthSplitShell>
 }

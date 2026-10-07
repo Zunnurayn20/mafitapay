@@ -1,7 +1,9 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Mail } from 'lucide-react'
+import { AuthSplitShell } from '@/components/auth/AuthSplitShell'
+import { AuthBrandHeader, AuthTopNav } from '@/components/auth/AuthBrand'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
@@ -16,93 +18,38 @@ export default function ForgotPasswordPage() {
   const [message, setMessage] = useState('')
   const [resetLink, setResetLink] = useState('')
   const [deliverySummary, setDeliverySummary] = useState('')
+  const [touched, setTouched] = useState(false)
 
   useEffect(() => { applyTheme(theme) }, [theme])
-  useEffect(() => { if (authResolved && isAuthenticated) router.push('/dashboard') }, [authResolved, isAuthenticated, router])
+  useEffect(() => { if (authResolved && isAuthenticated) router.replace('/dashboard') }, [authResolved, isAuthenticated, router])
 
   async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault()
-    setLoading(true)
-    setError('')
-    setMessage('')
-    setResetLink('')
-    setDeliverySummary('')
-
+    event.preventDefault(); setLoading(true); setError(''); setMessage(''); setResetLink(''); setDeliverySummary('')
     try {
-      const response = await fetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      })
+      const response = await fetch('/api/auth/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim().toLowerCase() }) })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Unable to start password reset.')
       setMessage(payload.data?.message || 'Password reset instructions prepared.')
       if (typeof payload.data?.resetLink === 'string') setResetLink(payload.data.resetLink)
-      if (Array.isArray(payload.data?.delivery?.attempts)) {
-        const summary = payload.data.delivery.attempts
-          .map((item: { channel: string; provider: string; delivered: boolean }) => `${item.channel}:${item.delivered ? 'sent' : 'skipped'} (${item.provider})`)
-          .join(' · ')
-        setDeliverySummary(summary)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to start password reset.')
-    } finally {
-      setLoading(false)
-    }
+      if (Array.isArray(payload.data?.delivery?.attempts)) setDeliverySummary(payload.data.delivery.attempts.map((item: { channel: string; provider: string; delivered: boolean }) => `${item.channel}:${item.delivered ? 'sent' : 'skipped'} (${item.provider})`).join(' · '))
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to start password reset.') }
+    finally { setLoading(false) }
   }
 
-  return (
-    <div className="relative z-[1] flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden">
-            <img src="/mafitapay-logo.png" alt="MafitaPay logo" className="h-20 w-20 object-contain" />
-          </div>
-          <div className="font-display text-3xl font-black text-[var(--text)]">MafitaPay</div>
-          <div className="mt-1 text-[10px] uppercase tracking-widest text-[var(--muted)]">Password Recovery</div>
-        </div>
-
-        <div className="border border-[var(--border)] bg-[var(--coal)]">
-          <div className="ank-strip" />
-          <div className="p-7">
-            <div className="mb-1 font-display text-[22px] font-black text-[var(--text)]">Reset Password</div>
-            <div className="mb-6 text-[12px] text-[var(--muted)]">Enter your email address to generate a reset link.</div>
-
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <Input
-                label="Email Address"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={event => setEmail(event.target.value)}
-              />
-
-              {error && <div className="border border-[rgba(196,52,26,.2)] bg-[rgba(196,52,26,.08)] px-3 py-2 text-[11px] text-[var(--red2)]">{error}</div>}
-              {message && <div className="border border-[var(--border)] bg-[var(--clay)] px-3 py-3 text-[11px] text-[var(--text2)]">{message}</div>}
-              {resetLink && (
-                <div className="border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.08)] px-3 py-3 text-[11px] text-[var(--text2)]">
-                  <div className="font-bold text-[var(--gold2)]">Local fallback reset link</div>
-                  <a className="mt-2 block break-all underline" href={resetLink}>{resetLink}</a>
-                </div>
-              )}
-              {deliverySummary && (
-                <div className="border border-[var(--border)] bg-[var(--clay)] px-3 py-3 text-[10px] text-[var(--muted)]">
-                  Delivery: {deliverySummary}
-                </div>
-              )}
-
-              <Button type="submit" loading={loading} className="mt-1 w-full py-3.5">Generate Reset Link</Button>
-            </form>
-
-            <div className="mt-5 text-center text-[12px] text-[var(--muted)]">
-              Remembered your password?{' '}
-              <span className="cursor-pointer font-bold text-[var(--gold2)]" onClick={() => router.push('/login')}>
-                Back to sign in →
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+  return <AuthSplitShell compactHeader={<AuthBrandHeader />}><div className="flex min-h-full flex-col">
+    <AuthTopNav onBack={() => router.push('/login')} />
+    <div className="my-auto py-8">
+      <h1 className="font-display text-[29px] md:text-[24px] font-bold text-[var(--text)]">Reset your password</h1>
+      <p className="mt-3 text-[15px] leading-relaxed text-[var(--text2)]">Enter your email address and we will send instructions to reset your password.</p>
+      <form onSubmit={handleSubmit} className="mt-7 flex flex-col gap-5">
+        <Input variant="auth" label="Email address" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" placeholder="you@example.com" leadingIcon={<Mail size={20} />} value={email} onChange={event => setEmail(event.target.value)} onBlur={() => setTouched(true)} error={touched && !/^\S+@\S+\.\S+$/.test(email.trim()) ? (email.trim() ? "That email doesn't look right" : 'Enter your email address') : undefined} />
+        {error ? <div role="alert" className="text-[13.5px] text-[var(--danger-text)]">{error}</div> : null}
+        {message ? <div role="status" className="text-[13.5px] text-[var(--text2)]">{message}</div> : null}
+        {process.env.NODE_ENV !== 'production' && resetLink ? <div className="break-all rounded-xl border border-dashed border-[var(--border)] p-3 text-[13px]"><b>Dev only — local reset link</b><a className="mt-2 block text-[var(--gold2)] underline" href={resetLink}>{resetLink}</a></div> : null}
+        {process.env.NODE_ENV !== 'production' && deliverySummary ? <div className="text-[13px] text-[var(--muted)]">Delivery: {deliverySummary}</div> : null}
+        <Button type="submit" variant="gold" size="xl" loading={loading} className="w-full">Send reset instructions</Button>
+      </form>
     </div>
-  )
+    <p className="mt-auto pt-5 text-center text-[15px] text-[var(--text2)]">Remembered your password? <button type="button" className="inline-flex min-h-11 items-center font-semibold text-[var(--gold2)]" onClick={() => router.push('/login')}>Sign in</button></p>
+  </div></AuthSplitShell>
 }
