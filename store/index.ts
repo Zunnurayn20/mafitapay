@@ -4,7 +4,7 @@ import { readJsonResponse } from '@/lib/client/http'
 import { applyTheme } from '@/lib/client/native-system-bars'
 import { CryptoDepositAddress, FundingAccountEligibility, Theme, Transaction, User, Wallet } from '@/types'
 
-interface SessionData {
+export interface SessionData {
   user: User
   wallet: Wallet | null
   transactions: Transaction[]
@@ -77,6 +77,8 @@ interface AppStore {
   isAuthenticated: boolean
   user: User | null
   bootstrap: () => Promise<void>
+  acceptSession: (data: SessionData) => void
+  acceptAuthenticatedUser: (user: User) => void
   login: (email: string, password: string) => Promise<void>
   register: (payload: { name: string; email: string; phone: string; password: string; referralCode?: string }) => Promise<RegisterResult>
   logout: () => Promise<void>
@@ -218,6 +220,8 @@ export const useAppStore = create<AppStore>()(
           // after a withdrawal or deposit, where callers refresh to pick up the new balance.
         }
       },
+      acceptSession: data => applySessionData(set, data),
+      acceptAuthenticatedUser: user => set({ authResolved: true, isAuthenticated: true, user }),
       login: async (email: string, password: string) => {
         const res = await fetch('/api/auth', {
           method: 'POST',
