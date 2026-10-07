@@ -11,6 +11,11 @@ type EmailVerificationDeliveryInput = {
   expiresAt: string
 }
 
+export function shouldExposeDevAuthLinks() {
+  return process.env.NODE_ENV !== 'production'
+    && process.env.MAFITAPAY_EXPOSE_DEV_AUTH_LINKS === '1'
+}
+
 type NotificationDeliveryInput = {
   email: string
   title: string
@@ -92,8 +97,22 @@ type DeliveryAttempt = {
   error?: string
 }
 
+export function getMafitaPayAppUrl(requestOrigin?: string) {
+  const configuredUrl = process.env.MAFITAPAY_APP_URL?.trim().replace(/\/+$/, '')
+  const vercelUrl = process.env.VERCEL_URL?.trim()
+  const isVercel = Boolean(process.env.VERCEL || vercelUrl)
+  const configuredIsLocal = configuredUrl
+    ? ['localhost', '127.0.0.1', '::1'].includes(new URL(configuredUrl).hostname)
+    : false
+
+  if (configuredUrl && !(isVercel && configuredIsLocal)) return configuredUrl
+  if (vercelUrl) return `https://${vercelUrl}`
+  if (requestOrigin) return requestOrigin.replace(/\/+$/, '')
+  return configuredUrl || 'http://localhost:3000'
+}
+
 function getAppUrl() {
-  return (process.env.MAFITAPAY_APP_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
+  return getMafitaPayAppUrl()
 }
 
 function getResendConfig() {

@@ -5,40 +5,21 @@ import {
   consumeAuthRateLimitAttempt,
   createEmailVerificationToken,
   createUser,
-  ensureCryptoMarketAutoRefreshScheduler,
-  kickCryptoMarketRefresh,
 } from '@/lib/server/data'
-import { deliverEmailVerification } from '@/lib/server/auth-delivery'
-import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
-import { ensureFlutterwavePayoutSyncScheduler } from '@/lib/server/payout-sync-batch'
-import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
+import { deliverEmailVerification, getMafitaPayAppUrl, shouldExposeDevAuthLinks } from '@/lib/server/auth-delivery'
+import { EMAIL_RE, normalizePhone, PHONE_RE, isPasswordValid } from '@/lib/auth/validation'
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
 }
 
-function normalizePhone(value: unknown) {
-  if (typeof value !== 'string') return ''
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  const normalized = trimmed.replace(/[^\d+]/g, '')
-  if (normalized.startsWith('+')) return normalized
-  if (normalized.startsWith('0')) return `+234${normalized.slice(1)}`
-  if (normalized.startsWith('234')) return `+${normalized}`
-  return normalized
-}
 
-function isValidEmail(email: string) {
-  return /^\S+@\S+\.\S+$/.test(email)
-}
 
-function isValidPhone(phone: string) {
-  return /^\+?[1-9]\d{9,14}$/.test(phone)
-}
+function isValidEmail(email: string) { return EMAIL_RE.test(email) }
 
-function isStrongEnoughPassword(password: string) {
-  return password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password)
-}
+function isValidPhone(phone: string) { return PHONE_RE.test(phone) }
+
+function isStrongEnoughPassword(password: string) { return isPasswordValid(password) }
 
 function getRequestIpAddress(req: Request) {
   const forwarded = req.headers.get('x-forwarded-for') ?? ''
@@ -47,21 +28,11 @@ function getRequestIpAddress(req: Request) {
 
 function buildEmailVerificationLink(token: string, req: Request) {
   const requestOrigin = new URL(req.url).origin
-  const configuredBaseUrl = process.env.MAFITAPAY_APP_URL
-  const baseUrl = (process.env.NODE_ENV === 'production'
-    ? configuredBaseUrl ?? requestOrigin
-    : requestOrigin
-  ).replace(/\/+$/, '')
+  const baseUrl = getMafitaPayAppUrl(requestOrigin)
   return `${baseUrl}/verify-email?token=${encodeURIComponent(token)}`
 }
 
 export async function GET() {
-  ensureCryptoMarketAutoRefreshScheduler()
-  void kickCryptoMarketRefresh()
-  ensureFlutterwaveBillSyncScheduler()
-  ensureFlutterwavePayoutSyncScheduler()
-  void kickPendingFlutterwaveBillSync()
-  ensureCryptoDepositScannerWatchdog()
   const user = await getCurrentUser()
   if (!user) {
     await destroySession()
@@ -72,12 +43,6 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  ensureCryptoMarketAutoRefreshScheduler()
-  void kickCryptoMarketRefresh()
-  ensureFlutterwaveBillSyncScheduler()
-  ensureFlutterwavePayoutSyncScheduler()
-  void kickPendingFlutterwaveBillSync()
-  ensureCryptoDepositScannerWatchdog()
   const body = await req.json()
   const email = normalizeEmail(body.email)
   const password = typeof body.password === 'string' ? body.password : ''
@@ -130,16 +95,10 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
-  ensureCryptoMarketAutoRefreshScheduler()
-  void kickCryptoMarketRefresh()
-  ensureFlutterwaveBillSyncScheduler()
-  ensureFlutterwavePayoutSyncScheduler()
-  void kickPendingFlutterwaveBillSync()
-  ensureCryptoDepositScannerWatchdog()
   const body = await req.json()
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const email = normalizeEmail(body.email)
-  const phone = normalizePhone(body.phone)
+  const phone = typeof body.phone === 'string' ? normalizePhone(body.phone) : ''
   const password = typeof body.password === 'string' ? body.password : ''
   const referralCode = typeof body.referralCode === 'string' ? body.referralCode.trim().toUpperCase() : ''
 
@@ -176,8 +135,8 @@ export async function PUT(req: Request) {
         message: 'Account created. Verify your email address before signing in.',
         requiresEmailVerification: true,
         email: user.email,
-        verificationLink: process.env.NODE_ENV === 'production' ? undefined : verificationLink,
-        delivery: process.env.NODE_ENV === 'production' ? undefined : delivery,
+        verificationLink: shouldExposeDevAuthLinks() && !delivery.delivered ? verificationLink : undefined,
+        delivery: shouldExposeDevAuthLinks() ? delivery : undefined,
       },
       success: true,
     }, { status: 201 })

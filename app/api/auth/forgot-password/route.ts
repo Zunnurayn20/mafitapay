@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { consumeAuthRateLimitAttempt, createPasswordResetToken, getUserByEmail } from '@/lib/server/data'
-import { deliverPasswordReset } from '@/lib/server/auth-delivery'
+import { deliverPasswordReset, getMafitaPayAppUrl, shouldExposeDevAuthLinks } from '@/lib/server/auth-delivery'
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -10,8 +10,8 @@ function isValidEmail(email: string) {
   return /^\S+@\S+\.\S+$/.test(email)
 }
 
-function buildResetLink(token: string) {
-  const baseUrl = (process.env.MAFITAPAY_APP_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
+function buildResetLink(token: string, requestOrigin: string) {
+  const baseUrl = getMafitaPayAppUrl(requestOrigin)
   return `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`
 }
 
@@ -66,7 +66,7 @@ export async function POST(req: Request) {
       userAgent: req.headers.get('user-agent') ?? undefined,
       ipAddress: ipAddress || undefined,
     })
-    const resetLink = buildResetLink(reset.token)
+    const resetLink = buildResetLink(reset.token, new URL(req.url).origin)
     const delivery = await deliverPasswordReset({
       email: user.email,
       phone: user.phone,
@@ -77,9 +77,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       data: {
         message: genericMessage,
-        resetLink: process.env.NODE_ENV === 'production' || delivery.delivered ? undefined : resetLink,
+        resetLink: shouldExposeDevAuthLinks() && !delivery.delivered ? resetLink : undefined,
         expiresAt: process.env.NODE_ENV === 'production' ? undefined : reset.expiresAt,
-        delivery: process.env.NODE_ENV === 'production' ? undefined : delivery,
+        delivery: shouldExposeDevAuthLinks() ? delivery : undefined,
       },
       success: true,
     })

@@ -1,38 +1,32 @@
 'use client'
 
 import { ReactNode, useEffect, useState } from 'react'
-import { ArrowLeftRight, BadgeCheck, Receipt, ShieldCheck } from 'lucide-react'
+import { ArrowLeftRight, Receipt, ShieldCheck } from 'lucide-react'
 import { isNativeApp } from '@/lib/client/native-app'
 
 interface AuthSplitShellProps {
   children: ReactNode
+  compactHeader?: ReactNode
 }
 
 const features = [
   {
     icon: ArrowLeftRight,
     title: 'Send & Receive Money',
-    description: 'Instant transfers to anyone, anytime.',
   },
   {
     icon: ShieldCheck,
     title: 'Secure Wallet',
-    description: 'Your funds are protected with bank-level security.',
   },
   {
     icon: Receipt,
     title: 'Pay Bills',
-    description: 'Top up airtime, data and pay bills seamlessly.',
-  },
-  {
-    icon: BadgeCheck,
-    title: 'Trusted & Reliable',
-    description: 'Join thousands of users who trust MafitaPay every day.',
   },
 ]
 
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=ng.mafitapay.app'
-const APP_STORE_URL = 'https://apps.apple.com/app/mafitapay/id0000000000'
+const APP_STORE_URL = process.env.NEXT_PUBLIC_IOS_APP_STORE_URL?.trim() || ''
+const hasRealAppStoreUrl = /^https:\/\/apps\.apple\.com\/.+\/id[1-9]\d{5,}$/.test(APP_STORE_URL)
 
 function FormCard({ children }: { children: ReactNode }) {
   return (
@@ -42,27 +36,27 @@ function FormCard({ children }: { children: ReactNode }) {
   )
 }
 
-export function AuthSplitShell({ children }: AuthSplitShellProps) {
-  const [nativeApp, setNativeApp] = useState(false)
+export function AuthSplitShell({ children, compactHeader }: AuthSplitShellProps) {
+  const nativeApp = isNativeApp()
   const [compact, setCompact] = useState(true)
 
   useEffect(() => {
-    setNativeApp(isNativeApp())
     const mq = window.matchMedia('(max-width: 1023px)')
     const apply = () => setCompact(mq.matches || isNativeApp())
-    apply()
+    const frame = window.requestAnimationFrame(apply)
     mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
+    return () => { window.cancelAnimationFrame(frame); mq.removeEventListener('change', apply) }
   }, [])
 
-  // Mobile + native app: form card only
+  // Mobile + native app: full-bleed scrollable auth canvas
   if (compact || nativeApp) {
     return (
-      <div className="relative z-[1] flex min-h-screen items-center justify-center bg-[var(--page-bg)] px-4 py-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(202,165,96,.1),transparent_42%)]" />
-        <div className="relative w-full max-w-[400px]">
-          <FormCard>{children}</FormCard>
-        </div>
+      <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain bg-[var(--page-bg)]">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[60vh] bg-[radial-gradient(120%_55%_at_50%_-8%,var(--auth-glow)_0%,transparent_66%)]" />
+        <main className="relative mx-auto flex min-h-full w-full max-w-[440px] flex-col px-6 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
+          {compactHeader}
+          {children}
+        </main>
       </div>
     )
   }
@@ -96,35 +90,26 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
           </div>
 
           <div className="mt-10 max-w-2xl">
-            <h1 className="font-display text-[2.8rem] font-black leading-[0.95] text-[var(--text)] lg:text-[4.7rem]">
-              Your Money.
+            <h1 className="font-display text-[2.8rem] font-black leading-[0.98] text-[var(--text)] lg:text-[4.5rem]">
+              Money,
               <br />
-              Your Way.
-              <br />
-              <span className="bg-[linear-gradient(90deg,var(--green2),#9df0be)] bg-clip-text text-transparent">
-                Limitless Possibilities.
-              </span>
+              made simpler.
             </h1>
-            <p className="mt-5 max-w-xl text-[15px] leading-7 text-[var(--text2)]">
-              Send, receive, save and grow your money with MafitaPay. Fast, secure, reliable and built for you.
+            <p className="mt-4 max-w-lg text-[14px] leading-6 text-[var(--text2)]">
+              Send money, manage your wallet, and pay bills in one place.
             </p>
           </div>
 
-          <div className="mt-8 grid gap-3 sm:grid-cols-2">
+          <div className="mt-7 flex flex-wrap gap-2">
             {features.map(item => {
               const Icon = item.icon
               return (
                 <div
                   key={item.title}
-                  className="flex items-start gap-3 rounded-[1.4rem] border border-[rgba(202,165,96,.16)] bg-[var(--clay)] px-4 py-4 shadow-[0_16px_36px_rgba(0,0,0,.12)]"
+                  className="inline-flex items-center gap-2 rounded-full border border-[rgba(202,165,96,.16)] bg-[var(--clay)] px-3.5 py-2.5"
                 >
-                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(202,165,96,.12)] text-[var(--gold2)]">
-                    <Icon size={18} />
-                  </span>
-                  <div>
-                    <div className="text-[13px] font-bold text-[var(--text)]">{item.title}</div>
-                    <div className="mt-1 text-[12px] leading-6 text-[var(--text2)]">{item.description}</div>
-                  </div>
+                  <Icon size={15} className="text-[var(--gold2)]" />
+                  <span className="text-[11px] font-bold text-[var(--text)]">{item.title}</span>
                 </div>
               )
             })}
@@ -134,9 +119,7 @@ export function AuthSplitShell({ children }: AuthSplitShellProps) {
             <a href={PLAY_STORE_URL} target="_blank" rel="noopener noreferrer" aria-label="Get MafitaPay on Google Play">
               <img src="/google-play.png" alt="Get it on Google Play" className="h-12 w-auto object-contain" />
             </a>
-            <a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" aria-label="Download on the App Store">
-              <img src="/app-store.png" alt="Download on the App Store" className="h-12 w-auto object-contain" />
-            </a>
+            {hasRealAppStoreUrl ? (<a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" aria-label="Download on the App Store"><img src="/app-store.png" alt="Download on the App Store" className="h-12 w-auto object-contain" /></a>) : null}
           </div>
         </section>
 
