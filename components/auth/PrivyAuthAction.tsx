@@ -7,6 +7,7 @@ import { useAppStore, type SessionData } from '@/store'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { phoneFromChipInput, validateProfileFields } from '@/lib/auth/validation'
+import { DEVICE_LOGIN_ENROLL_EVENT } from '@/lib/client/device-login'
 
 type PrivyAuthActionProps = {
   intent: 'login' | 'register'
@@ -46,6 +47,7 @@ export function PrivyAuthAction({ intent, email = '', onCodeSentChange, profile 
       if (!response.ok) throw new Error(typeof payload?.error === 'string' ? payload.error : 'Unable to sign in with Privy.')
       if (!payload?.data?.user) throw new Error('MafitaPay could not load your account. Please try again.')
       acceptAuthenticatedUser(payload.data.user as SessionData['user'])
+      if (intent === 'login') window.dispatchEvent(new Event(DEVICE_LOGIN_ENROLL_EVENT))
       router.replace('/dashboard')
       void refreshSession()
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to sign in with Privy.') }

@@ -74,6 +74,21 @@ export interface EmailVerificationTokenRecord {
   ipAddress?: string
 }
 
+export interface DeviceLoginTokenRecord {
+  id: string
+  userId: string
+  tokenHash: string
+  previousTokenHash?: string | null
+  deviceLabel: string
+  platform: 'android'
+  createdAt: string
+  lastUsedAt?: string | null
+  expiresAt: string
+  revokedAt?: string | null
+  userAgent?: string | null
+  ipAddress?: string | null
+}
+
 interface AuthRateLimitRecord {
   id: string
   action: string
@@ -1765,6 +1780,28 @@ function initSchema(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_created_at
       ON email_verification_tokens(user_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS device_login_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      previous_token_hash TEXT,
+      device_label TEXT NOT NULL,
+      platform TEXT NOT NULL CHECK (platform = 'android'),
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      user_agent TEXT,
+      ip_address TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_device_login_tokens_user_created_at
+      ON device_login_tokens(user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_device_login_tokens_active_user
+      ON device_login_tokens(user_id, expires_at)
+      WHERE revoked_at IS NULL;
+
     CREATE TABLE IF NOT EXISTS auth_rate_limit_attempts (
       id TEXT PRIMARY KEY,
       action TEXT NOT NULL,
@@ -3000,6 +3037,99 @@ function seedCatalogTables(db: DatabaseSync) {
   }
 }
 
+async function seedPostgresCatalogTables() {
+  const now = new Date().toISOString()
+
+  await withPostgresTransaction(async client => {
+    const cryptoCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM crypto_pairs')
+    if (Number(cryptoCount.rows[0]?.count ?? 0) === 0) {
+      for (const asset of CRYPTO_ASSETS) {
+        const executionRail = getConfigurableAssetExecutionRail(asset)
+        const routedConfig = isRoutedTreasuryPairId(asset.id) ? getRoutedTreasuryPairConfigForAsset({
+          ...asset,
+          executionRail,
+        }) : null
+        const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+        const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+        const marketPriceUsd = asset.marketPriceUsd ?? 0
+        await queryPostgresClient(client, `
+          INSERT INTO crypto_pairs (
+            id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd,
+            market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps,
+            buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn,
+            quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain,
+            routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn,
+            max_quote_drift_percent, change_24h, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'seed', ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO NOTHING
+        `, [
+          asset.id, asset.symbol, asset.name, asset.network, asset.icon, asset.marketSourceId,
+          asset.marketPriceUsd ?? null, asset.marketRate,
+          computeBuyRate(marketPriceUsd, asset.marketRate, buyMargin),
+          computeSellRate(marketPriceUsd, asset.marketRate, sellMargin), buyMargin, sellMargin,
+          asset.buyNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id),
+          asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
+          asset.quoteTtlSeconds, asset.isActive !== false, asset.baseExecutionEnabled === true,
+          executionRail ?? null, routedConfig?.toChain ?? null, routedConfig?.toToken ?? null,
+          routedConfig?.decimals ?? null, routedConfig?.addressFamily ?? null,
+          routedConfig?.minimumBuyNgn ?? null, routedConfig?.maxQuoteDriftPercent ?? null,
+          asset.change24h, now, now,
+        ])
+      }
+    }
+
+    const billProviderCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM bill_providers')
+    if (Number(billProviderCount.rows[0]?.count ?? 0) === 0) {
+      for (const provider of BILL_PROVIDERS) {
+        await queryPostgresClient(client, `
+          INSERT INTO bill_providers (
+            id, name, icon, type, account_label, account_placeholder, helper_text, min_amount,
+            max_amount, requires_network, requires_account, is_active, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO NOTHING
+        `, [
+          provider.id, provider.name, provider.icon, provider.type, provider.accountLabel ?? null,
+          provider.accountPlaceholder ?? null, provider.helperText ?? null, provider.minAmount ?? null,
+          provider.maxAmount ?? null, provider.requiresNetwork === true, provider.requiresAccount !== false,
+          provider.isActive !== false, now, now,
+        ])
+      }
+    }
+
+    const networkProviderCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM network_providers')
+    if (Number(networkProviderCount.rows[0]?.count ?? 0) === 0) {
+      for (const provider of NETWORK_PROVIDERS) {
+        await queryPostgresClient(client, `
+          INSERT INTO network_providers (name, icon, created_at, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(name) DO NOTHING
+        `, [provider.name, provider.icon, now, now])
+      }
+    }
+
+    const rewardRuleCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM reward_rules')
+    if (Number(rewardRuleCount.rows[0]?.count ?? 0) === 0) {
+      for (const rule of DEFAULT_REWARD_RULES) {
+        await queryPostgresClient(client, `
+          INSERT INTO reward_rules (
+            id, name, description, kind, trigger_event, audience, amount_ngn, requires_referral,
+            allowed_transaction_types, excluded_transaction_types, daily_payout_cap_ngn,
+            manual_approval_required, is_active, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO NOTHING
+        `, [
+          rule.id, rule.name, rule.description ?? null, rule.kind, rule.triggerEvent, rule.audience,
+          rule.amountNgn, rule.requiresReferral === true,
+          rule.allowedTransactionTypes ? JSON.stringify(rule.allowedTransactionTypes) : null,
+          rule.excludedTransactionTypes ? JSON.stringify(rule.excludedTransactionTypes) : null,
+          rule.dailyPayoutCapNgn ?? null, rule.manualApprovalRequired === true,
+          rule.isActive !== false, rule.createdAt, rule.updatedAt,
+        ])
+      }
+    }
+  })
+}
+
 function writeSnapshotSync(db: DatabaseSync, snapshot: AppDatabase) {
   db.exec('BEGIN')
 
@@ -3223,7 +3353,16 @@ async function loadSeedSnapshot(): Promise<AppDatabase> {
 
 async function ensureDbReady() {
   if (!dbReady) {
-    dbReady = (async () => {
+    const initialization = (async () => {
+      // Vercel's function filesystem is ephemeral and the PostgreSQL path must
+      // not create or seed a local SQLite database on every cold start. The
+      // PostgreSQL schema is provisioned separately; built-in catalogs are seeded below.
+      if (isPostgresEnabled()) {
+        await queryPostgres('SELECT 1')
+        await seedPostgresCatalogTables()
+        return
+      }
+
       await mkdir(DATA_DIR, { recursive: true })
       const db = getDb()
       initSchema(db)
@@ -3236,6 +3375,12 @@ async function ensureDbReady() {
       seedCatalogTables(db)
       seedLedgerFromWalletSnapshots(db)
     })()
+    dbReady = initialization.catch(error => {
+      // A transient database timeout must not leave this warm function instance
+      // stuck with a rejected initialization promise for every later request.
+      dbReady = null
+      throw error
+    })
   }
 
   await dbReady
@@ -3271,6 +3416,45 @@ export async function getUserByEmail(email: string): Promise<StoredUser | null> 
     .prepare('SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1')
     .get(email.trim()) as UserRow | undefined
   return row ?? null
+}
+
+export async function getUserByPrivyId(privyUserId: string): Promise<StoredUser | null> {
+  await ensureDbReady()
+  if (!isPostgresEnabled()) {
+    throw new Error('Privy authentication requires PostgreSQL.')
+  }
+  const result = await queryPostgres<{ user_id: string }>(
+    'SELECT user_id FROM privy_auth_links WHERE privy_user_id = ? LIMIT 1',
+    [privyUserId]
+  )
+  const userId = result.rows[0]?.user_id
+  return userId ? getUserById(userId) : null
+}
+
+export async function linkPrivyIdentityToUser(userId: string, privyUserId: string) {
+  await ensureDbReady()
+  if (!isPostgresEnabled()) {
+    throw new Error('Privy authentication requires PostgreSQL.')
+  }
+
+  const inserted = await queryPostgres<{ user_id: string }>(`
+    INSERT INTO privy_auth_links (user_id, privy_user_id)
+    VALUES (?, ?)
+    ON CONFLICT DO NOTHING
+    RETURNING user_id
+  `, [userId, privyUserId])
+  if (inserted.rows[0]?.user_id === userId) return
+
+  const existing = await queryPostgres<{ user_id: string; privy_user_id: string }>(`
+    SELECT user_id, privy_user_id
+    FROM privy_auth_links
+    WHERE user_id = ? OR privy_user_id = ?
+  `, [userId, privyUserId])
+  if (existing.rows.length === 1
+      && existing.rows[0].user_id === userId
+      && existing.rows[0].privy_user_id === privyUserId) return
+
+  throw new Error('This Privy identity is already linked to another MafitaPay account.')
 }
 
 export async function getUserByPhone(phone: string): Promise<StoredUser | null> {
@@ -6994,7 +7178,7 @@ export async function activateUserAccount(userId: string) {
 }
 
 export async function consumeAuthRateLimitAttempt(input: {
-  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend'
+  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend' | 'device_login' | 'device_login_enroll'
   scopes: string[]
   limit: number
   windowMinutes: number
@@ -7088,7 +7272,7 @@ export async function consumeAuthRateLimitAttempt(input: {
 }
 
 export async function clearAuthRateLimitAttempts(input: {
-  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend'
+  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend' | 'device_login' | 'device_login_enroll'
   scopes: string[]
 }) {
   await ensureDbReady()
@@ -7225,6 +7409,151 @@ export async function revokeOtherUserSessions(userId: string, currentToken?: str
   return Number(result.changes ?? 0)
 }
 
+function mapDeviceLoginTokenRow(row: {
+  id: string
+  user_id: string
+  token_hash: string
+  previous_token_hash: string | null
+  device_label: string
+  platform: string
+  created_at: string | Date
+  last_used_at: string | Date | null
+  expires_at: string | Date
+  revoked_at: string | Date | null
+  user_agent: string | null
+  ip_address: string | null
+}): DeviceLoginTokenRecord {
+  const iso = (value: string | Date | null) => value == null ? null : new Date(value).toISOString()
+  return {
+    id: row.id,
+    userId: row.user_id,
+    tokenHash: row.token_hash,
+    previousTokenHash: row.previous_token_hash,
+    deviceLabel: row.device_label,
+    platform: 'android',
+    createdAt: iso(row.created_at)!,
+    lastUsedAt: iso(row.last_used_at),
+    expiresAt: iso(row.expires_at)!,
+    revokedAt: iso(row.revoked_at),
+    userAgent: row.user_agent,
+    ipAddress: row.ip_address,
+  }
+}
+
+export async function createDeviceLoginToken(input: DeviceLoginTokenRecord) {
+  await ensureDbReady()
+  const now = input.createdAt
+  if (isPostgresEnabled()) {
+    return withPostgresTransaction(async client => {
+      const owner = await queryPostgresClient<{ id: string }>(client, 'SELECT id FROM users WHERE id = ? FOR UPDATE', [input.userId])
+      if (!owner.rows[0]) return { created: false as const, reason: 'user_not_found' as const }
+      const count = await queryPostgresClient<{ count: string }>(client,
+        'SELECT COUNT(*) AS count FROM device_login_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?',
+        [input.userId, now])
+      if (Number(count.rows[0]?.count ?? 0) >= 5) return { created: false as const, reason: 'device_limit' as const }
+      await queryPostgresClient(client, `
+        INSERT INTO device_login_tokens
+          (id, user_id, token_hash, previous_token_hash, device_label, platform, created_at, last_used_at, expires_at, revoked_at, user_agent, ip_address)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [input.id, input.userId, input.tokenHash, input.previousTokenHash ?? null, input.deviceLabel, input.platform, input.createdAt,
+        input.lastUsedAt ?? null, input.expiresAt, input.revokedAt ?? null, input.userAgent ?? null, input.ipAddress ?? null])
+      return { created: true as const }
+    })
+  }
+
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const owner = db.prepare('SELECT id FROM users WHERE id = ?').get(input.userId)
+    if (!owner) { db.exec('ROLLBACK'); return { created: false as const, reason: 'user_not_found' as const } }
+    const count = db.prepare('SELECT COUNT(*) AS count FROM device_login_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?')
+      .get(input.userId, now) as { count?: number } | undefined
+    if (Number(count?.count ?? 0) >= 5) { db.exec('ROLLBACK'); return { created: false as const, reason: 'device_limit' as const } }
+    db.prepare(`
+      INSERT INTO device_login_tokens
+        (id, user_id, token_hash, previous_token_hash, device_label, platform, created_at, last_used_at, expires_at, revoked_at, user_agent, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(input.id, input.userId, input.tokenHash, input.previousTokenHash ?? null, input.deviceLabel, input.platform, input.createdAt,
+      input.lastUsedAt ?? null, input.expiresAt, input.revokedAt ?? null, input.userAgent ?? null, input.ipAddress ?? null)
+    db.exec('COMMIT')
+    return { created: true as const }
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export async function getDeviceLoginTokenById(id: string) {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<Parameters<typeof mapDeviceLoginTokenRow>[0]>('SELECT * FROM device_login_tokens WHERE id = ? LIMIT 1', [id])
+    return result.rows[0] ? mapDeviceLoginTokenRow(result.rows[0]) : null
+  }
+  const row = getDb().prepare('SELECT * FROM device_login_tokens WHERE id = ? LIMIT 1').get(id) as Parameters<typeof mapDeviceLoginTokenRow>[0] | undefined
+  return row ? mapDeviceLoginTokenRow(row) : null
+}
+
+export async function listDeviceLoginTokensForUser(userId: string, now = new Date().toISOString()) {
+  await ensureDbReady()
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<Parameters<typeof mapDeviceLoginTokenRow>[0]>(
+      'SELECT * FROM device_login_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC', [userId, now])).rows
+    : getDb().prepare('SELECT * FROM device_login_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC')
+      .all(userId, now) as Parameters<typeof mapDeviceLoginTokenRow>[0][]
+  return rows.map(mapDeviceLoginTokenRow)
+}
+
+export async function rotateDeviceLoginToken(id: string, expectedHash: string, nextHash: string, now: string, expiresAt: string) {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<Parameters<typeof mapDeviceLoginTokenRow>[0]>(`
+      UPDATE device_login_tokens SET previous_token_hash = token_hash, token_hash = ?, last_used_at = ?, expires_at = ?
+      WHERE id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?
+      RETURNING *
+    `, [nextHash, now, expiresAt, id, expectedHash, now])
+    return result.rows[0] ? mapDeviceLoginTokenRow(result.rows[0]) : null
+  }
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = db.prepare(`
+      UPDATE device_login_tokens SET previous_token_hash = token_hash, token_hash = ?, last_used_at = ?, expires_at = ?
+      WHERE id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?
+    `).run(nextHash, now, expiresAt, id, expectedHash, now)
+    if (!result.changes) { db.exec('ROLLBACK'); return null }
+    const row = db.prepare('SELECT * FROM device_login_tokens WHERE id = ?').get(id) as Parameters<typeof mapDeviceLoginTokenRow>[0] | undefined
+    db.exec('COMMIT')
+    return row ? mapDeviceLoginTokenRow(row) : null
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export async function revokeDeviceLoginTokenById(id: string, userId?: string, now = new Date().toISOString()) {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = userId
+      ? await queryPostgres('UPDATE device_login_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL', [now, id, userId])
+      : await queryPostgres('UPDATE device_login_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', [now, id])
+    return Number(result.rowCount ?? 0) > 0
+  }
+  const result = userId
+    ? getDb().prepare('UPDATE device_login_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL').run(now, id, userId)
+    : getDb().prepare('UPDATE device_login_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now, id)
+  return Number(result.changes ?? 0) > 0
+}
+
+export async function revokeDeviceLoginTokensForUser(userId: string, now = new Date().toISOString()) {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres('UPDATE device_login_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [now, userId])
+    return Number(result.rowCount ?? 0)
+  }
+  const result = getDb().prepare('UPDATE device_login_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now, userId)
+  return Number(result.changes ?? 0)
+}
+
 export async function updateUserAccountStatus(input: {
   userId: string
   status: User['accountStatus']
@@ -7237,7 +7566,10 @@ export async function updateUserAccountStatus(input: {
     if (!current) return null
     await withPostgresTransaction(async client => {
       await queryPostgresClient(client, 'UPDATE users SET "accountStatus" = ? WHERE id = ?', [input.status, input.userId])
-      if (input.status === 'deactivated') await queryPostgresClient(client, 'DELETE FROM sessions WHERE user_id = ?', [input.userId])
+      if (input.status === 'deactivated') {
+        await queryPostgresClient(client, 'DELETE FROM sessions WHERE user_id = ?', [input.userId])
+        await queryPostgresClient(client, 'UPDATE device_login_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [new Date().toISOString(), input.userId])
+      }
     })
     await insertAuditLog({ userId: input.userId, actorUserId: input.actorUserId ?? input.userId, action: input.status === 'deactivated' ? 'account.deactivated' : 'account.reactivated', entityType: 'user', entityId: input.userId, metadata: input.reason ? { reason: input.reason } : undefined })
     return getUserById(input.userId)
@@ -7253,6 +7585,8 @@ export async function updateUserAccountStatus(input: {
 
     if (input.status === 'deactivated') {
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(input.userId)
+      db.prepare('UPDATE device_login_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL')
+        .run(new Date().toISOString(), input.userId)
     }
 
     db.exec('COMMIT')
@@ -7308,13 +7642,24 @@ export async function updateUserPassword(userId: string, password: string) {
   await ensureDbReady()
   const { passwordHash, passwordSalt } = createPasswordRecord(password)
   if (isPostgresEnabled()) {
-    await queryPostgres('UPDATE users SET "passwordHash" = ?, "passwordSalt" = ? WHERE id = ?', [passwordHash, passwordSalt, userId])
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'UPDATE users SET "passwordHash" = ?, "passwordSalt" = ? WHERE id = ?', [passwordHash, passwordSalt, userId])
+      await queryPostgresClient(client, 'UPDATE device_login_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [new Date().toISOString(), userId])
+    })
     await insertAuditLog({ userId, actorUserId: userId, action: 'security.password_changed', entityType: 'user', entityId: userId })
     return
   }
-  getDb()
-    .prepare('UPDATE users SET passwordHash = ?, passwordSalt = ? WHERE id = ?')
-    .run(passwordHash, passwordSalt, userId)
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('UPDATE users SET passwordHash = ?, passwordSalt = ? WHERE id = ?').run(passwordHash, passwordSalt, userId)
+    db.prepare('UPDATE device_login_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL')
+      .run(new Date().toISOString(), userId)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 
   await insertAuditLog({
     userId,
@@ -9822,7 +10167,6 @@ export async function createUser(input: { name: string; email: string; phone: st
     passwordSalt,
   }
   await ensureDbReady()
-  const db = getDb()
   const wallet = {
     balance: 0,
     lockedBalance: 0,
@@ -9854,6 +10198,7 @@ export async function createUser(input: { name: string; email: string; phone: st
     return user
   }
 
+  const db = getDb()
   db.exec('BEGIN')
   try {
     db.prepare(`

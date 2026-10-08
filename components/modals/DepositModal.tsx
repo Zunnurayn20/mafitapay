@@ -37,9 +37,13 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null)
   const [selectedProvider, setSelectedProvider] = useState<FundingProvider>('palmpay')
   const [networkPickerSymbol, setNetworkPickerSymbol] = useState<string | null>(null)
-  const hasApprovedFundingIdentity = Boolean(
+  const hasSubmittedFundingIdentity = Boolean(
     kycSubmission
-    && kycSubmission.status === 'approved'
+    && kycSubmission.status !== 'rejected'
+    && (kycSubmission.documentType === 'bvn' || kycSubmission.documentType === 'nin')
+  )
+  const hasRejectedFundingIdentity = Boolean(
+    kycSubmission?.status === 'rejected'
     && (kycSubmission.documentType === 'bvn' || kycSubmission.documentType === 'nin')
   )
 
@@ -220,11 +224,13 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     <>
     <Modal open={open} onClose={onClose} title="Deposit Funds">
       <div className="flex flex-col gap-3.5 p-5">
-        {!hasApprovedFundingIdentity ? (
+        {!hasSubmittedFundingIdentity ? (
           <div className="flex gap-3 rounded-xl border border-amber-200/80 bg-amber-50 p-4">
             <Shield size={18} className="mt-0.5 shrink-0 text-amber-700" />
             <div className="text-xs leading-relaxed text-amber-900">
-              Funding accounts need approved BVN or NIN KYC. Complete verification to unlock bank top-up.
+              {hasRejectedFundingIdentity
+                ? 'Your BVN or NIN was rejected. Submit a valid BVN or NIN to create a funding account.'
+                : 'Submit a BVN or NIN to request a funding account. Generation can start while KYC review continues.'}
               <button
                 type="button"
                 onClick={goToKyc}
@@ -273,8 +279,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             title: 'PalmPay funding account',
             description: 'Primary wallet top-up route.',
             provider: 'palmpay',
-            eligible: hasApprovedFundingIdentity,
-            blockedMessage: 'Submit approved BVN or NIN to unlock PalmPay.',
+            eligible: hasSubmittedFundingIdentity,
+            blockedMessage: hasRejectedFundingIdentity
+              ? 'Your BVN or NIN was rejected. Submit a valid BVN or NIN to unlock PalmPay.'
+              : 'Submit a BVN or NIN to unlock PalmPay.',
           })
         ) : (
           renderGeneratePanel({

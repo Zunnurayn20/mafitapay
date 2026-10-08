@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { AppBootstrap } from '@/components/app/AppBootstrap'
+import { AppProviders } from '@/components/app/AppProviders'
 import './globals.css'
 
 export const viewport: Viewport = {
@@ -29,11 +30,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <AppBootstrap />
-        <div id="app-root">{children}</div>
+        <AppProviders>
+          <AppBootstrap />
+          <div id="app-root">{children}</div>
+        </AppProviders>
       </body>
     </html>
   )
 }
-
 

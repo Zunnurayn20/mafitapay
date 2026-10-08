@@ -1,6 +1,6 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
-const productionServerUrl = 'https://mafitapay.com'
+const productionServerUrl = 'https://mafitapay.vercel.app'
 const serverUrl = process.env.MAFITAPAY_MOBILE_SERVER_URL?.trim() || productionServerUrl
 const serverHost = new URL(serverUrl).hostname
 
@@ -16,7 +16,7 @@ const config: CapacitorConfig = {
     // it loads with no network; it gets no Capacitor plugins, hence plain HTML/CSS/JS.
     errorPath: 'offline.html',
     // Keep reconnect navigation to the MafitaPay origin inside the Capacitor WebView.
-    allowNavigation: [serverHost, 'mafitapay.com', '*.mafitapay.com'],
+    allowNavigation: [serverHost, '*.mafitapay.vercel.app'],
   },
   android: {
     allowMixedContent: false,

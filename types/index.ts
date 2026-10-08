@@ -473,8 +473,7 @@ export interface FundingAccountEligibility {
   eligible: boolean
   reason:
     | 'ready'
-    | 'approved_identity_required'
-    | 'identity_under_review'
+    | 'identity_required'
     | 'identity_rejected'
     | 'unsupported_identity_type'
     | 'account_already_assigned'

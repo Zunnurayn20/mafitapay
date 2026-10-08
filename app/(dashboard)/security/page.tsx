@@ -19,6 +19,7 @@ import {
   writeBiometricSetting,
 } from '@/lib/client/native-biometric'
 import { useAppStore } from '@/store'
+import { DeviceLoginSettings } from '@/components/auth/DeviceLoginSettings'
 
 interface BiometricCredentialItem {
   id: string
@@ -721,6 +722,8 @@ export default function SecurityPage() {
             </div>
           ) : null}
         </Card>
+
+        <DeviceLoginSettings />
 
         <Card className="mb-4 border-[rgba(46,170,92,.18)] p-6">
           <div className="flex items-center justify-between gap-3">

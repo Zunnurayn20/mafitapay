@@ -38,11 +38,12 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-  const { authResolved, isAuthenticated, refreshSession, theme, user, wallet, securitySettings, kycSubmission, cryptoDepositAddresses } = useAppStore()
+  const { authResolved, isAuthenticated, refreshSession, showToast, theme, user, wallet, securitySettings, kycSubmission, cryptoDepositAddresses } = useAppStore()
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
   const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
+  const [initialSecuritySetupActive, setInitialSecuritySetupActive] = useState(false)
   const fundingProvisionKeyRef = useRef('')
   const cryptoDepositProvisionKeyRef = useRef('')
   const isAdminRoute = pathname.startsWith('/admin')
@@ -81,7 +82,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }, [authResolved, isAuthenticated, router])
 
   useEffect(() => {
-    if (!authResolved || !isAuthenticated || !biometricSupportResolved) return
+    if (!authResolved || !isAuthenticated || !biometricSupportResolved || initialSecuritySetupActive) return
     if (pathname === '/security') return
     if (user?.accountStatus === 'active' && !kycSubmission && pathname !== '/kyc') return
 
@@ -89,7 +90,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (needsPin) {
       router.replace('/security?setup=1')
     }
-  }, [authResolved, biometricSupportResolved, isAuthenticated, kycSubmission, pathname, router, securitySettings, user?.accountStatus])
+  }, [authResolved, biometricSupportResolved, initialSecuritySetupActive, isAuthenticated, kycSubmission, pathname, router, securitySettings, user?.accountStatus])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated) return
@@ -136,6 +137,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return
     if (!kycSubmission || (kycSubmission.documentType !== 'bvn' && kycSubmission.documentType !== 'nin')) return
+    if (kycSubmission.status === 'rejected') return
 
     const permanentAccounts = wallet?.virtualAccounts.filter(item => item.isPermanent) ?? []
     const missingProviders = (['palmpay', 'flutterwave'] as const).filter(
@@ -149,6 +151,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
     let cancelled = false
     void (async () => {
+      const failedProviders: typeof missingProviders = []
       for (const provider of missingProviders) {
         try {
           const response = await fetch('/api/wallet/deposit/account', {
@@ -157,24 +160,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             credentials: 'include',
             body: JSON.stringify({ provider }),
           })
-          if (!response.ok) {
-            const payload = await response.json().catch(() => null)
-            // console.warn('[funding-account-provision] failed', { ... }) // silenced for crypto deposit focus
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || payload?.success === false) {
+            failedProviders.push(provider)
           }
-        } catch (error) {
-          // console.warn('[funding-account-provision] request_error', { ... }) // silenced for crypto deposit focus
+        } catch {
+          failedProviders.push(provider)
         }
       }
 
       if (!cancelled) {
         await refreshSession()
+        if (failedProviders.length === missingProviders.length) {
+          const providerNames = failedProviders.map(provider => provider === 'palmpay' ? 'PalmPay' : 'Flutterwave').join(' and ')
+          showToast(`We couldn't create your ${providerNames} funding account yet. Open Deposit Funds to retry.`, 'error')
+        }
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [authResolved, isAuthenticated, kycSubmission, refreshSession, user, wallet?.virtualAccounts])
+  }, [authResolved, isAuthenticated, kycSubmission, refreshSession, showToast, user, wallet?.virtualAccounts])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return
@@ -276,7 +283,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     )
   }
 
-  if (biometricSupportResolved && pathname !== '/security' && !requiresInitialKycSubmission) {
+  if (biometricSupportResolved && pathname !== '/security' && !requiresInitialKycSubmission && !initialSecuritySetupActive) {
     const needsPin = securitySettings?.hasTransactionPin !== true
     if (needsPin) {
       return (
@@ -315,7 +322,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <MobileNav />
             </div>
           )}
-          {requiresInitialKycSubmission ? <KycRequiredModal /> : null}
+          {requiresInitialKycSubmission || initialSecuritySetupActive ? (
+            <KycRequiredModal onSecuritySetupChange={setInitialSecuritySetupActive} />
+          ) : null}
           <ModalManager />
           <Toast />
         </div>

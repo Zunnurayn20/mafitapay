@@ -177,7 +177,7 @@ export default function KycPage() {
                 <div className="mt-3 space-y-2 text-[10px] text-[var(--muted)]">
                   <div>BVN and NIN can be submitted with just the number. Document upload is optional.</div>
                   <div>Passport, Driver License, and Voter Card require both the document number and an uploaded file.</div>
-                  <div>BVN or NIN approval is required if you want to unlock a secondary Flutterwave funding account.</div>
+                  <div>After you submit a BVN or NIN, MafitaPay requests your funding account while KYC review continues.</div>
                 </div>
               </div>
               <div className="space-y-4">

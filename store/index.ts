@@ -149,9 +149,9 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
       kycSubmission: null,
       fundingAccountEligibility: {
         eligible: false,
-        reason: 'approved_identity_required',
+        reason: 'identity_required',
         hasPermanentAccount: false,
-        message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
+        message: 'Submit a BVN or NIN before creating a secondary Flutterwave funding account.',
       },
       cryptoDepositAddresses: [],
       transferFeeMarginNgn: null,
@@ -266,9 +266,9 @@ export const useAppStore = create<AppStore>()(
       kycSubmission: null,
       fundingAccountEligibility: {
         eligible: false,
-        reason: 'approved_identity_required',
+        reason: 'identity_required',
         hasPermanentAccount: false,
-        message: 'Submit BVN or NIN KYC and get it approved before creating a secondary Flutterwave funding account.',
+        message: 'Submit a BVN or NIN before creating a secondary Flutterwave funding account.',
       },
       cryptoDepositAddresses: [],
       transferFeeMarginNgn: null,

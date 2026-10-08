@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+.env.backup-*
+.vercel
+.git
+node_modules
+.gradle
+android/.gradle
+android/app/build
+android/build
+android/.idea
+android/local.properties
+data/*.db
+data/*.db-*
+data/uploads
+.migration-backups

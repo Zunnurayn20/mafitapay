@@ -48,16 +48,39 @@ function getFundingIdentityPayload(
   if (
     !submittedIdentity
     || !sensitiveIdentity
+    || sensitiveIdentity.submissionId !== submittedIdentity.id
     || sensitiveIdentity.documentType !== submittedIdentity.documentType
+    || submittedIdentity.status === 'rejected'
     || (sensitiveIdentity.documentType !== 'bvn' && sensitiveIdentity.documentType !== 'nin')
   ) {
     return null
   }
 
   return {
+    documentType: sensitiveIdentity.documentType,
+    documentNumber: sensitiveIdentity.documentNumber,
     identityType: sensitiveIdentity.documentType === 'nin' ? 'personal_nin' as const : 'personal' as const,
     licenseNumber: sensitiveIdentity.documentNumber,
   }
+}
+
+function getFundingIdentityError(
+  submittedIdentity: Awaited<ReturnType<typeof getLatestKycSubmissionByUserId>>,
+  sensitiveIdentity: Awaited<ReturnType<typeof getLatestSensitiveKycIdentityByUserId>>,
+) {
+  if (
+    submittedIdentity?.status === 'rejected'
+    && (submittedIdentity.documentType === 'bvn' || submittedIdentity.documentType === 'nin')
+  ) {
+    return { error: 'Your BVN or NIN submission was rejected. Submit a valid number before creating a funding account.', status: 403 }
+  }
+  if (!submittedIdentity || (submittedIdentity.documentType !== 'bvn' && submittedIdentity.documentType !== 'nin')) {
+    return { error: 'Submit BVN or NIN before creating a funding account.', status: 403 }
+  }
+  if (!sensitiveIdentity || sensitiveIdentity.submissionId !== submittedIdentity.id) {
+    return { error: 'Funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.', status: 503 }
+  }
+  return { error: 'Funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.', status: 503 }
 }
 
 export async function POST(req: Request) {
@@ -96,12 +119,8 @@ export async function POST(req: Request) {
     const palmpayIdentity = getFundingIdentityPayload(submittedIdentity, sensitiveIdentity)
     if (!palmpayIdentity) {
       // logDepositAccount('palmpay.eligibility_blocked', { ... }) // silenced
-      return NextResponse.json({
-        error: sensitiveIdentity
-          ? 'Submit BVN or NIN before creating a PalmPay funding account.'
-          : 'Funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.',
-        success: false,
-      }, { status: sensitiveIdentity ? 403 : 503 })
+      const eligibility = getFundingIdentityError(submittedIdentity, sensitiveIdentity)
+      return NextResponse.json({ error: eligibility.error, success: false }, { status: eligibility.status })
     }
 
     const providerAccount = await createPalmPayVirtualAccount({
@@ -176,19 +195,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Flutterwave funding accounts are not configured.', success: false }, { status: 503 })
   }
 
-  if (!submittedIdentity || (submittedIdentity.documentType !== 'bvn' && submittedIdentity.documentType !== 'nin')) {
+  const flutterwaveIdentity = getFundingIdentityPayload(submittedIdentity, sensitiveIdentity)
+  if (!flutterwaveIdentity) {
     // logDepositAccount('flutterwave.eligibility_blocked', { ... }) // silenced
-    return NextResponse.json({
-      error: 'Submit BVN or NIN before creating a Flutterwave funding account.',
-      success: false,
-    }, { status: 403 })
-  }
-
-  if (!sensitiveIdentity || sensitiveIdentity.documentType !== submittedIdentity.documentType) {
-    return NextResponse.json({
-      error: 'Funding identity is not available in secure storage. Configure secure identity storage and resubmit BVN/NIN if needed.',
-      success: false,
-    }, { status: 503 })
+    const eligibility = getFundingIdentityError(submittedIdentity, sensitiveIdentity)
+    return NextResponse.json({ error: eligibility.error, success: false }, { status: eligibility.status })
   }
 
   const providerAccount = await createFlutterwaveStaticVirtualAccount({
@@ -198,8 +209,8 @@ export async function POST(req: Request) {
     firstName: firstName || user.name.trim() || 'User',
     lastName: restNames.join(' ') || 'Mafitapay',
     narration: `${user.name.trim()} MAFITAPAY`.slice(0, 35),
-    identityType: sensitiveIdentity.documentType,
-    identityNumber: sensitiveIdentity.documentNumber,
+    identityType: flutterwaveIdentity.documentType,
+    identityNumber: flutterwaveIdentity.documentNumber,
   })
 
   if (providerAccount.status === 'failed' || !providerAccount.accountNumber || !providerAccount.bankName) {
@@ -233,7 +244,7 @@ export async function POST(req: Request) {
     entityId: user.id,
     metadata: {
       provider: 'flutterwave',
-      identityType: sensitiveIdentity.documentType,
+        identityType: flutterwaveIdentity.documentType,
       accountNumber: nextAccount.accountNumber,
       bankName: nextAccount.bank,
     },

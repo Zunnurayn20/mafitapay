@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { Lock, Mail } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fingerprint, Lock, Mail } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { AuthSplitShell } from '@/components/auth/AuthSplitShell'
 import { AuthBrandHeader } from '@/components/auth/AuthBrand'
@@ -14,11 +14,12 @@ import { CheckEmailPanel } from '@/components/auth/CheckEmailPanel'
 import { EMAIL_RE } from '@/lib/auth/validation'
 import { applyTheme } from '@/lib/client/native-system-bars'
 import { useAppStore } from '@/store'
+import { canBridgeDeviceLogin, DEVICE_LOGIN_ENROLL_EVENT, forgetFingerprintLogin, getDeviceLoginHint, signInWithFingerprint, type DeviceLoginHint } from '@/lib/client/device-login'
 
 const privyEnabled = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID)
 
 export default function LoginPage() {
-  const { authResolved, login, isAuthenticated, theme } = useAppStore()
+  const { authResolved, login, isAuthenticated, theme, acceptSession } = useAppStore()
   const router = useRouter()
   const emailRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
@@ -33,9 +34,43 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [canResendVerification, setCanResendVerification] = useState(false)
   const [showCheckEmail, setShowCheckEmail] = useState(false)
+  const [deviceHint, setDeviceHint] = useState<DeviceLoginHint | null>(null)
+  const [deviceLoginLoading, setDeviceLoginLoading] = useState(false)
+  const [deviceLoginError, setDeviceLoginError] = useState('')
+  const fingerprintAttempted = useRef(false)
 
   useEffect(() => { applyTheme(theme) }, [theme])
   useEffect(() => { if (authResolved && isAuthenticated) router.replace('/dashboard') }, [authResolved, isAuthenticated, router])
+  const handleFingerprintLogin = useCallback(async () => {
+    if (deviceLoginLoading) return
+    setDeviceLoginLoading(true)
+    setDeviceLoginError('')
+    try {
+      const session = await signInWithFingerprint()
+      acceptSession(session)
+      router.replace('/dashboard')
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Fingerprint sign-in could not be completed.'
+      if (!/cancel|canceled|cancelled/i.test(message)) setDeviceLoginError(message)
+      if (!getDeviceLoginHint()) setDeviceHint(null)
+    } finally { setDeviceLoginLoading(false) }
+  }, [acceptSession, deviceLoginLoading, router])
+
+  useEffect(() => {
+    if (!authResolved || isAuthenticated || !canBridgeDeviceLogin()) return
+    const hint = getDeviceLoginHint()
+    setDeviceHint(hint)
+    if (!hint || fingerprintAttempted.current) return
+    fingerprintAttempted.current = true
+    void handleFingerprintLogin()
+    // Auto-prompt once for this page visit; failures leave the email and password form usable.
+  }, [authResolved, handleFingerprintLogin, isAuthenticated])
+
+  async function handleForgetFingerprint() {
+    await forgetFingerprintLogin()
+    setDeviceHint(null)
+    setDeviceLoginError('')
+  }
 
   const normalizedEmail = email.trim().toLowerCase()
   const emailError = (emailTouched || submitAttempted) ? (!normalizedEmail ? 'Enter your email address' : !EMAIL_RE.test(normalizedEmail) ? "That email doesn't look right" : '') : ''
@@ -52,6 +87,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(normalizedEmail, password)
+      window.dispatchEvent(new Event(DEVICE_LOGIN_ENROLL_EVENT))
       router.replace('/dashboard')
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : 'Unable to sign in.'
@@ -68,6 +104,17 @@ export default function LoginPage() {
         <h1 className="font-display text-[32px] md:text-[24px] font-bold leading-[1.12] tracking-[-.4px] text-[var(--text)]">Welcome back</h1>
         <p className="mt-3 text-[15px] leading-[1.5] text-[var(--text2)]">Sign in to send, receive and pay bills from your secure wallet.</p>
       </header>
+
+      {deviceHint ? <section className="rounded-2xl border border-[var(--gold)]/35 bg-[var(--coal)] p-4 text-center">
+        <p className="text-sm font-semibold text-[var(--text)]">Welcome back, {deviceHint.emailMasked}</p>
+        <button type="button" aria-label="Sign in with fingerprint" onClick={() => void handleFingerprintLogin()} disabled={deviceLoginLoading} className="mx-auto mt-3 grid h-16 w-16 place-items-center rounded-full border-2 border-[var(--gold)] bg-[var(--gold-tint)] text-[var(--gold2)] shadow-[0_0_0_6px_var(--gold-tint)] disabled:opacity-60">
+          <Fingerprint size={30} />
+        </button>
+        <p className="mt-3 text-xs text-[var(--muted)]">{deviceLoginLoading ? 'Checking fingerprint…' : 'Use your fingerprint to sign in'}</p>
+        <button type="button" onClick={() => void handleForgetFingerprint()} className="mt-2 inline-flex min-h-11 items-center text-xs font-semibold text-[var(--gold2)]">Not you? Use email instead</button>
+        {deviceLoginError ? <p role="alert" className="mt-2 text-sm text-[var(--danger-text)]">{deviceLoginError}</p> : null}
+      </section> : null}
+      {!deviceHint && deviceLoginError ? <p role="alert" className="text-center text-sm text-[var(--danger-text)]">{deviceLoginError}</p> : null}
 
       {privyEnabled ? <SegmentedControl value={mode} onChange={value => { setMode(value as 'code' | 'password'); setError(''); setEmailCodeSent(false) }} options={[
         { value: 'code', label: 'Email code', icon: <Mail size={17} /> },

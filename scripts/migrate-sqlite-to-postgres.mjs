@@ -3,13 +3,22 @@ import { Client } from 'pg'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const sourcePath = resolve(process.argv[2] || '.migration-backups/production-app-20260812.db')
-// Railway exposes DATABASE_URL on its private network and DATABASE_PUBLIC_URL for local tools.
-// Prefer the latter for this operator-run importer; the deployed app will use DATABASE_URL.
-const connectionString = process.env.DATABASE_PUBLIC_URL || process.env.POSTGRES_URL || process.env.DATABASE_URL
+const args = process.argv.slice(2)
+const schemaOnly = args.includes('--schema-only')
+const sourceArgument = args.find(argument => argument !== '--schema-only')
+const sourcePath = resolve(sourceArgument || '.migration-backups/production-app-20260812.db')
+// Prefer the explicitly scoped Supabase migration URL so a local DATABASE_URL
+// for another environment cannot accidentally become the migration target.
+const connectionString = schemaOnly
+  ? process.env.SUPABASE_MIGRATION_URL
+  : process.env.SUPABASE_MIGRATION_URL || process.env.DATABASE_PUBLIC_URL || process.env.POSTGRES_URL || process.env.DATABASE_URL
 
 if (!existsSync(sourcePath)) throw new Error(`SQLite source not found: ${sourcePath}`)
-if (!connectionString) throw new Error('DATABASE_PUBLIC_URL, DATABASE_URL, or POSTGRES_URL is required.')
+if (!connectionString) {
+  throw new Error(schemaOnly
+    ? 'SUPABASE_MIGRATION_URL is required for schema-only setup.'
+    : 'SUPABASE_MIGRATION_URL, DATABASE_PUBLIC_URL, DATABASE_URL, or POSTGRES_URL is required.')
+}
 
 function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`
@@ -57,7 +66,21 @@ const tableNames = sqlite.prepare(`
 await client.connect()
 
 try {
+  if (schemaOnly) {
+    const existing = await client.query(`
+      SELECT tablename
+      FROM pg_tables
+      WHERE schemaname = current_schema()
+    `)
+    const existingNames = new Set(existing.rows.map(row => row.tablename))
+    const conflicts = tableNames.filter(table => existingNames.has(table))
+    if (conflicts.length > 0) {
+      throw new Error(`Schema-only setup stopped: target already contains MafitaPay tables: ${conflicts.join(', ')}`)
+    }
+  }
+
   await client.query('BEGIN')
+  const schemaOnlyConstraints = []
 
   for (const table of tableNames) {
     const columns = sqlite.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all()
@@ -73,10 +96,13 @@ try {
       definitions.push(`PRIMARY KEY (${primaryKeyColumns.map(quoteIdentifier).join(', ')})`)
     }
 
-    await client.query(`DROP TABLE IF EXISTS ${quoteIdentifier(table)} CASCADE`)
+    if (!schemaOnly) {
+      await client.query(`DROP TABLE IF EXISTS ${quoteIdentifier(table)} CASCADE`)
+    }
     await client.query(`CREATE TABLE ${quoteIdentifier(table)} (${definitions.join(', ')})`)
 
-    const rows = sqlite.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all()
+    // Schema-only setup must not read or transfer application records.
+    const rows = schemaOnly ? [] : sqlite.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all()
     if (rows.length > 0) {
       const names = columns.map(column => column.name)
       const placeholders = names.map((_, index) => `$${index + 1}`).join(', ')
@@ -102,11 +128,42 @@ try {
       const postgresIndexName = `ux_${table}_${indexColumns.join('_')}`.replaceAll(/[^a-zA-Z0-9_]/g, '_')
       await client.query(`CREATE UNIQUE INDEX ${quoteIdentifier(postgresIndexName)} ON ${quoteIdentifier(table)} (${indexColumns.map(quoteIdentifier).join(', ')})`)
     }
-    console.log(`${table}: ${imported}`)
+
+    if (schemaOnly) {
+      const foreignKeys = sqlite.prepare(`PRAGMA foreign_key_list(${quoteIdentifier(table)})`).all()
+      const groups = new Map()
+      for (const foreignKey of foreignKeys) {
+        const group = groups.get(foreignKey.id) ?? []
+        group.push(foreignKey)
+        groups.set(foreignKey.id, group)
+      }
+      for (const [id, group] of groups) {
+        group.sort((left, right) => Number(left.seq) - Number(right.seq))
+        const constraintName = `fk_${table}_${id}`.replaceAll(/[^a-zA-Z0-9_]/g, '_').slice(0, 63)
+        const sourceColumns = group.map(foreignKey => quoteIdentifier(foreignKey.from)).join(', ')
+        const targetColumns = group.map(foreignKey => foreignKey.to ? quoteIdentifier(foreignKey.to) : null)
+        const targetColumnSql = targetColumns.every(Boolean) ? ` (${targetColumns.join(', ')})` : ''
+        const onUpdate = String(group[0].on_update).toUpperCase()
+        const onDelete = String(group[0].on_delete).toUpperCase()
+        const updateSql = onUpdate === 'NO ACTION' ? '' : ` ON UPDATE ${onUpdate}`
+        const deleteSql = onDelete === 'NO ACTION' ? '' : ` ON DELETE ${onDelete}`
+        schemaOnlyConstraints.push(
+          `ALTER TABLE ${quoteIdentifier(table)} ADD CONSTRAINT ${quoteIdentifier(constraintName)} FOREIGN KEY (${sourceColumns}) REFERENCES ${quoteIdentifier(group[0].table)}${targetColumnSql}${updateSql}${deleteSql}`,
+        )
+      }
+    }
+    console.log(schemaOnly ? `${table}: schema created` : `${table}: ${imported}`)
+  }
+
+  // Add foreign keys after all tables exist so references to later-sorted tables work.
+  for (const statement of schemaOnlyConstraints) {
+    await client.query(statement)
   }
 
   await client.query('COMMIT')
-  console.log(`Migration complete: ${tableNames.length} tables imported from ${sourcePath}.`)
+  console.log(schemaOnly
+    ? `Schema setup complete: ${tableNames.length} tables created from ${sourcePath}; no rows were copied.`
+    : `Migration complete: ${tableNames.length} tables imported from ${sourcePath}.`)
 } catch (error) {
   await client.query('ROLLBACK').catch(() => {})
   throw error
