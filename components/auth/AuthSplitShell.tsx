@@ -30,7 +30,7 @@ const hasRealAppStoreUrl = /^https:\/\/apps\.apple\.com\/.+\/id[1-9]\d{5,}$/.tes
 
 function FormCard({ children }: { children: ReactNode }) {
   return (
-    <div className="w-full max-w-[400px] rounded-2xl border border-[rgba(202,165,96,.16)] bg-[var(--coal)] p-5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:p-6">
+    <div className="w-full max-w-[400px] rounded-2xl border border-[var(--gold-soft)] bg-[var(--coal)] p-5 shadow-[0_24px_70px_rgba(0,0,0,.45)] sm:p-6">
       {children}
     </div>
   )
@@ -51,8 +51,7 @@ export function AuthSplitShell({ children, compactHeader }: AuthSplitShellProps)
   // Mobile + native app: full-bleed scrollable auth canvas
   if (compact || nativeApp) {
     return (
-      <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain bg-[var(--page-bg)]">
-        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[60vh] bg-[radial-gradient(120%_55%_at_50%_-8%,var(--auth-glow)_0%,transparent_66%)]" />
+      <div className="auth-screen relative z-[1] flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain bg-[var(--page-bg)]">
         <main className="relative mx-auto flex min-h-full w-full max-w-[440px] flex-col px-6 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
           {compactHeader}
           {children}
@@ -63,16 +62,7 @@ export function AuthSplitShell({ children, compactHeader }: AuthSplitShellProps)
 
   // Desktop web: marketing + form
   return (
-    <div className="relative z-[1] min-h-screen overflow-hidden bg-[var(--page-bg)] px-4 py-6 lg:px-8 lg:py-8">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(202,165,96,.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(46,170,92,.12),transparent_28%),linear-gradient(135deg,rgba(140,107,49,.08),transparent_44%,rgba(202,165,96,.03))]" />
-      <div
-        className="absolute inset-0 opacity-45"
-        style={{
-          backgroundImage:
-            'repeating-linear-gradient(45deg, rgba(202,165,96,.06) 0, rgba(202,165,96,.06) 2px, transparent 2px, transparent 24px), repeating-linear-gradient(-45deg, rgba(140,107,49,.05) 0, rgba(140,107,49,.05) 2px, transparent 2px, transparent 28px)',
-        }}
-      />
-
+    <div className="auth-screen relative z-[1] min-h-screen overflow-hidden bg-[var(--page-bg)] px-4 py-6 lg:px-8 lg:py-8">
       <div className="relative mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-7xl items-center gap-14 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,.92fr)]">
         <section className="relative pt-2">
           <div className="flex items-center gap-4">

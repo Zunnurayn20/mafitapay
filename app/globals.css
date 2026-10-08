@@ -74,6 +74,50 @@
   --success-ring: rgba(30, 138, 68, .28);
 }
 
+/* Keep the login and registration flow dark and green, independent of the app theme. */
+.auth-screen {
+  color-scheme: dark;
+  --char: #000000;
+  --coal: #080b09;
+  --clay: #0d130f;
+  --clay2: #141d17;
+  --border: #26382c;
+  --border2: #395341;
+  --gold: #22c55e;
+  --gold2: #4ade80;
+  --terra: #166534;
+  --terra2: #15803d;
+  --green: #22c55e;
+  --green2: #4ade80;
+  --text: #f2f5f3;
+  --text2: #c1cdc4;
+  --muted: #89988e;
+  --muted2: #26382c;
+  --page-bg: #000000;
+  --gold-soft: rgba(34, 197, 94, 0.28);
+  --gold-tint: rgba(34, 197, 94, 0.14);
+  --auth-glow: rgba(34, 197, 94, 0.18);
+  --btn-gold-from: #4ade80;
+  --btn-gold-mid: #22c55e;
+  --btn-gold-to: #16a34a;
+  --btn-gold-text: #031108;
+  background-color: #000000;
+  color: var(--text);
+}
+
+html:has(.auth-screen),
+html:has(.auth-screen) body {
+  background-color: #000000;
+}
+
+html:has(.auth-screen) body::before {
+  background-image: none;
+}
+
+html:has(.auth-screen) body::after {
+  background-color: #000000;
+}
+
 * {
   box-sizing: border-box;
 }
