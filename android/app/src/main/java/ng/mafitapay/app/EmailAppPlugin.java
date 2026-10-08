@@ -1,4 +1,4 @@
-﻿package ng.mafitapay.app;
+package ng.mafitapay.app;
 
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
