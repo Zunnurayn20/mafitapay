@@ -4,6 +4,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core'
 
 export const BIOMETRIC_UNLOCK_KEY = 'mfp-biometric-unlock'
 export const BIOMETRIC_TRANSACTION_KEY = 'mfp-biometric-transaction'
+export const BIOMETRIC_SETTING_CHANGED_EVENT = 'mfp-biometric-setting-changed'
 /** Session flag so we don't re-prompt on every client navigation */
 export const BIOMETRIC_SESSION_OK_KEY = 'mfp-biometric-session-ok'
 
@@ -89,6 +90,7 @@ export function readBiometricSetting(key: string, fallback = false) {
 export function writeBiometricSetting(key: string, enabled: boolean) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(key, enabled ? '1' : '0')
+  window.dispatchEvent(new CustomEvent(BIOMETRIC_SETTING_CHANGED_EVENT, { detail: { key } }))
 }
 
 export function markBiometricSessionUnlocked() {
