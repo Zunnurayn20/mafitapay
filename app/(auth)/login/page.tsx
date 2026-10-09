@@ -98,8 +98,8 @@ export default function LoginPage() {
   }
 
   const compactHeader = !showCheckEmail && (mode === 'password' || !emailCodeSent) ? <AuthBrandHeader /> : null
-  return <AuthSplitShell compactHeader={compactHeader}>
-    {showCheckEmail ? <CheckEmailPanel email={normalizedEmail} onBack={() => setShowCheckEmail(false)} /> : <div className="mt-8 flex flex-col gap-6">
+  return <AuthSplitShell compactHeader={compactHeader} centered={Boolean(deviceHint)}>
+    {showCheckEmail ? <CheckEmailPanel email={normalizedEmail} onBack={() => setShowCheckEmail(false)} /> : <div className={`flex flex-col gap-6 ${deviceHint ? 'mt-0' : 'mt-8'}`}>
       {!deviceHint ? <header className="text-center">
         <h1 className="font-display text-[32px] md:text-[24px] font-bold leading-[1.12] tracking-[-.4px] text-[var(--text)]">Welcome back</h1>
         <p className="mt-3 text-[15px] leading-[1.5] text-[var(--text2)]">Sign in to send, receive and pay bills from your secure wallet.</p>

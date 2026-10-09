@@ -7,6 +7,7 @@ import { isNativeApp } from '@/lib/client/native-app'
 interface AuthSplitShellProps {
   children: ReactNode
   compactHeader?: ReactNode
+  centered?: boolean
 }
 
 const features = [
@@ -36,7 +37,7 @@ function FormCard({ children }: { children: ReactNode }) {
   )
 }
 
-export function AuthSplitShell({ children, compactHeader }: AuthSplitShellProps) {
+export function AuthSplitShell({ children, compactHeader, centered = false }: AuthSplitShellProps) {
   const nativeApp = isNativeApp()
   const [compact, setCompact] = useState(true)
 
@@ -52,7 +53,7 @@ export function AuthSplitShell({ children, compactHeader }: AuthSplitShellProps)
   if (compact || nativeApp) {
     return (
       <div className="auth-screen relative z-[1] flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain bg-[var(--page-bg)]">
-        <main className="relative mx-auto flex min-h-full w-full max-w-[440px] flex-col px-6 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
+        <main className={`relative mx-auto flex min-h-full w-full max-w-[440px] flex-col px-6 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] ${centered ? 'justify-center' : ''}`}>
           {compactHeader}
           {children}
         </main>
