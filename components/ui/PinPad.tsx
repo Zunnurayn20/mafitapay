@@ -21,6 +21,8 @@ interface PinPadProps {
   secondaryActionIconOnly?: boolean
   onSecondaryAction?: () => void
   secondaryActionPending?: boolean
+  onBiometric?: () => void
+  biometricBusy?: boolean
   /**
    * After PIN / biometric, the keypad is replaced with processing, then success or error.
    * Details stay visible so the confirmation sheet does not go blank.
@@ -155,6 +157,8 @@ export function PinPad({
   secondaryActionIconOnly = false,
   onSecondaryAction,
   secondaryActionPending = false,
+  onBiometric,
+  biometricBusy = false,
   status = 'pin',
   statusTitle,
   statusMessage,
@@ -166,7 +170,7 @@ export function PinPad({
   onSecondaryDone,
 }: PinPadProps) {
   const [pin, setPin] = useState('')
-  const locked = status !== 'pin'
+  const locked = biometricBusy || status !== 'pin'
 
   const addDigit = (d: number) => {
     if (locked) return
@@ -185,7 +189,7 @@ export function PinPad({
     '1', '2', '3',
     '4', '5', '6',
     '7', '8', '9',
-    '',
+    onBiometric ? 'bio' : '',
     '0',
     'back',
   ]
@@ -231,9 +235,26 @@ export function PinPad({
                 <span key={i} className={cn('h-3 w-3 rounded-full transition-all', i < pin.length ? 'scale-110 bg-[var(--gold)] shadow-[0_0_0_4px_rgba(202,165,96,.13)]' : 'bg-[var(--clay2)]')} />
               ))}
             </div>
+            {onBiometric && <div className="mb-3 text-[10px] text-[var(--muted)]">Enter your PIN, or use fingerprint / passkey.</div>}
             <div className="grid grid-cols-3 gap-2.5 px-1 sm:px-4">
               {keys.map((k, i) => {
                 if (k === '') return <div key={i} className="h-14" />
+
+                if (k === 'bio') {
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={onBiometric}
+                      disabled={locked}
+                      className="flex h-12 items-center justify-center rounded-2xl border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.12)] text-[var(--gold2)] transition-all active:scale-95 disabled:opacity-60"
+                      aria-label="Confirm with fingerprint or passkey"
+                      title="Use fingerprint or passkey"
+                    >
+                      <Fingerprint size={24} strokeWidth={1.75} className={biometricBusy ? 'animate-pulse' : ''} />
+                    </button>
+                  )
+                }
 
                 if (k === 'back') {
                   return (

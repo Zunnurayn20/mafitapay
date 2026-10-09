@@ -33,6 +33,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [formError, setFormError] = useState('')
   const [reference, setReference] = useState('')
@@ -155,12 +156,16 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   async function handleBiometricApproval() {
+    if (biometricBusy) return
+    setBiometricBusy(true)
     try {
       const approval = await createBiometricApproval()
       await submitWithdrawal({ biometricApprovalToken: approval.token })
     } catch (error) {
       setConfirmError(toUserMessage(error, 'Biometric approval failed.'))
       setConfirmStatus('error')
+    } finally {
+      setBiometricBusy(false)
     }
   }
 
@@ -243,9 +248,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
               ← Edit withdrawal
             </button>
           )}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
-          secondaryActionIconOnly
-          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          biometricBusy={biometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Withdrawal submitted!' : undefined}
           statusMessage={confirmStatus === 'processing'

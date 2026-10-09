@@ -22,6 +22,7 @@ import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
+import android.util.Log;
 
 import androidx.annotation.RequiresApi;
 import androidx.core.view.WindowCompat;
@@ -29,6 +30,8 @@ import androidx.core.view.WindowCompat;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
+import androidx.webkit.WebSettingsCompat;
+import androidx.webkit.WebViewFeature;
 
 public class MainActivity extends BridgeActivity {
     private static final String OFFLINE_ASSET = "file:///android_asset/public/offline.html";
@@ -365,6 +368,15 @@ public class MainActivity extends BridgeActivity {
 
         WebView webView = bridge.getWebView();
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+            WebSettingsCompat.setWebAuthenticationSupport(
+                webView.getSettings(),
+                WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP
+            );
+            Log.i("MafitaPay", "WebView passkey support enabled");
+        } else {
+            Log.w("MafitaPay", "This Android System WebView does not support passkeys");
+        }
 
         webView.setWebViewClient(
             new BridgeWebViewClient(bridge) {

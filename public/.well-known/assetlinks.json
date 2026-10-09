@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ng.mafitapay.app",
+      "sha256_cert_fingerprints": [
+        "6A:09:5D:E4:52:AF:78:8E:36:9B:FF:C7:6D:66:90:1F:ED:69:F3:F9:B9:66:6D:4D:B7:F2:F9:36:DF:63:C2:5E"
+      ]
+    }
+  }
+]

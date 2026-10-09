@@ -265,6 +265,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [reference, setReference] = useState('')
@@ -620,6 +621,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   }
 
   async function handleBiometricApproval() {
+    if (biometricBusy) return
+    setBiometricBusy(true)
     try {
       const approval = await createBiometricApproval()
       await confirm({
@@ -629,6 +632,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Biometric approval failed.')
       setConfirmStatus('error')
+    } finally {
+      setBiometricBusy(false)
     }
   }
 
@@ -1107,9 +1112,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               ← Edit payment
             </button>
           )}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
-          secondaryActionIconOnly
-          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          biometricBusy={biometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? `${serviceName} submitted` : undefined}
           statusMessage={confirmStatus === 'processing'

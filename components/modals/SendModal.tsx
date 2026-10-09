@@ -35,6 +35,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [pinVersion, setPinVersion] = useState(0)
   const [verifying, setVerifying]   = useState(false)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [formError, setFormError] = useState('')
 
@@ -195,12 +196,16 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   }
 
   async function handleBiometricApproval() {
+    if (biometricBusy) return
+    setBiometricBusy(true)
     try {
       const approval = await createBiometricApproval()
       await submitTransfer({ biometricApprovalToken: approval.token })
     } catch (error) {
       setConfirmError(toUserMessage(error, 'Biometric approval failed.'))
       setConfirmStatus('error')
+    } finally {
+      setBiometricBusy(false)
     }
   }
 
@@ -338,9 +343,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
               ← Edit transfer
             </button>
           )}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
-          secondaryActionIconOnly
-          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          biometricBusy={biometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing'
             ? 'Processing payment'

@@ -77,6 +77,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const [lockingQuote, setLockingQuote] = useState(false)
   const [submittingOrder, setSubmittingOrder] = useState(false)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [lastUsedAddress, setLastUsedAddress] = useState('')
   const addressInputRef = useRef<HTMLInputElement>(null)
@@ -311,12 +312,16 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   }
 
   async function handleBiometricApproval() {
+    if (biometricBusy) return
+    setBiometricBusy(true)
     try {
       const approval = await createBiometricApproval()
       await submitBuyOrder({ biometricApprovalToken: approval.token })
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Biometric approval failed.')
       setConfirmStatus('error')
+    } finally {
+      setBiometricBusy(false)
     }
   }
 
@@ -503,9 +508,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             { label: 'Total debit', value: formatNGN(totalDebit), emphasis: true },
             ...(fee > 0 ? [{ label: 'Network fee', value: formatNGN(fee) }] : []),
           ]}
-          secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
-          secondaryActionIconOnly
-          onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          biometricBusy={biometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Order placed!' : undefined}
           statusMessage={confirmStatus === 'processing'
