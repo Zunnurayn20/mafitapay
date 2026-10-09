@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
-import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
 import { readClipboardText } from '@/lib/clipboard'
 import { useCryptoAssets } from '@/lib/client/catalogs'
@@ -63,7 +62,6 @@ function writeLastUsedBuyAddress(pairId: CryptoPairId, address: string) {
 
 export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { refreshSession, showToast, modalData, securitySettings } = useAppStore()
-  const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const assets = useCryptoAssets()
   const [step, setStep]       = useState<Step>('form')
   const [pairId, setPairId]   = useState<CryptoPairId>('USDT_BSC')
@@ -264,7 +262,6 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   async function submitBuyOrder(input: {
     transactionPin?: string
     biometricApprovalToken?: string
-    confirmWithBiometric?: boolean
   }) {
     if (submittingOrder) return
     setSubmittingOrder(true)
@@ -321,21 +318,6 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       setConfirmError(error instanceof Error ? error.message : 'Biometric approval failed.')
       setConfirmStatus('error')
     }
-  }
-
-  async function handleNativeBiometricApproval() {
-    const result = await confirmWithNativeBiometric({
-      title: 'Confirm crypto purchase',
-      subtitle: 'Use fingerprint or face instead of PIN',
-    })
-    if (!result.verified) {
-      if (!result.cancelled) {
-        setConfirmError(result.message || 'Biometric verification failed.')
-        setConfirmStatus('error')
-      }
-      return
-    }
-    await submitBuyOrder({ confirmWithBiometric: true })
   }
 
   return (
@@ -514,7 +496,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           key={pinVersion}
           onComplete={handlePin}
           title={`Buy ${asset.symbol}`}
-          subtitle={nativeTransactionBiometricEnabled ? 'PIN or biometrics to confirm your order.' : 'Enter your PIN to confirm your order.'}
+          subtitle="Enter your PIN to confirm your order."
           details={[
             { label: 'Asset', value: `${asset.symbol} · ${asset.network}` },
             { label: 'Receive', value: formatCrypto(crypto, asset.symbol) },
@@ -524,8 +506,6 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
-          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
-          biometricBusy={nativeBiometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Order placed!' : undefined}
           statusMessage={confirmStatus === 'processing'

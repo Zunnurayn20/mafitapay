@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
-import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/http'
 import { useAppStore } from '@/store'
@@ -20,7 +19,6 @@ const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { refreshSession, securitySettings, transferFeeMarginNgn } = useAppStore()
-  const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [step, setStep] = useState<Step>('form')
   const [mode, setMode] = useState<'internal' | 'bank'>('bank')
@@ -168,7 +166,6 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
   async function submitTransfer(input: {
     transactionPin?: string
     biometricApprovalToken?: string
-    confirmWithBiometric?: boolean
   }) {
     if (confirmStatus === 'processing') return
     setConfirmError('')
@@ -207,23 +204,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
     }
   }
 
-  async function handleNativeBiometricApproval() {
-    const result = await confirmWithNativeBiometric({
-      title: 'Confirm transfer',
-      subtitle: 'Use fingerprint or face instead of PIN',
-    })
-    if (!result.verified) {
-      if (!result.cancelled) {
-        setConfirmError(result.message || 'Biometric verification failed.')
-        setConfirmStatus('error')
-      }
-      return
-    }
-    await submitTransfer({ confirmWithBiometric: true })
-  }
-
   const titles: Record<Step, string> = {
-    form: 'Bank Transfer', pin: nativeTransactionBiometricEnabled ? 'Confirm' : 'Confirm with PIN',
+    form: 'Bank Transfer', pin: 'Confirm with PIN',
   }
   const confirmTitle = confirmStatus === 'processing'
     ? 'Processing…'
@@ -342,7 +324,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
         <PinPad
           key={pinVersion}
           onComplete={handlePin}
-          title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
+          title="Confirm Transaction PIN"
           subtitle={mode === 'internal'
             ? 'Check the details, then enter your PIN to send.'
             : 'Check the details, then enter your PIN. Funds stay locked until payout settles.'}
@@ -359,8 +341,6 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
           secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
-          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
-          biometricBusy={nativeBiometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing'
             ? 'Processing payment'

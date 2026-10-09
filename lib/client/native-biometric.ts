@@ -3,7 +3,6 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 
 export const BIOMETRIC_UNLOCK_KEY = 'mfp-biometric-unlock'
-export const BIOMETRIC_TRANSACTION_KEY = 'mfp-biometric-transaction'
 export const BIOMETRIC_SETTING_CHANGED_EVENT = 'mfp-biometric-setting-changed'
 /** Session flag so we don't re-prompt on every client navigation */
 export const BIOMETRIC_SESSION_OK_KEY = 'mfp-biometric-session-ok'

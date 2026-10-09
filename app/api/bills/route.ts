@@ -104,7 +104,6 @@ async function handleBillPayment(req: Request) {
   const provider = typeof body.provider === 'string' ? body.provider : undefined
   const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
   const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
-  const confirmWithBiometric = body.confirmWithBiometric === true
   const billerCode = typeof body.billerCode === 'string' ? body.billerCode.trim() : undefined
   const itemCode = typeof body.itemCode === 'string' ? body.itemCode.trim() : undefined
   const providerPlanId = typeof body.providerPlanId === 'string' ? body.providerPlanId.trim() : undefined
@@ -270,7 +269,7 @@ async function handleBillPayment(req: Request) {
   }
 
   try {
-    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken, confirmWithBiometric })
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval failed.', success: false }, { status: 400 })
   }

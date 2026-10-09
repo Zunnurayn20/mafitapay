@@ -23,7 +23,6 @@ export async function POST(req: Request) {
   const { amount } = body
   const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
   const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
-  const confirmWithBiometric = body.confirmWithBiometric === true
   if (!amount) {
     return NextResponse.json({ error: 'amount, bankName, accountNumber, and accountName are required' }, { status: 400 })
   }
@@ -58,7 +57,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken, confirmWithBiometric })
+    await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval failed.', success: false }, { status: 400 })
   }

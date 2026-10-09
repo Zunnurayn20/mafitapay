@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/Input'
 import { canUseBiometrics, enrollBiometricCredential } from '@/lib/client/biometric'
 import {
   authenticateBiometric,
-  BIOMETRIC_TRANSACTION_KEY,
   BIOMETRIC_UNLOCK_KEY,
   biometricUnavailableHint,
   clearBiometricSession,
@@ -61,7 +60,6 @@ export default function SecurityPage() {
   const [deactivating, setDeactivating] = useState(false)
   const [nativeBiometricAvailable, setNativeBiometricAvailable] = useState(false)
   const [nativeBiometricUnlock, setNativeBiometricUnlock] = useState(false)
-  const [nativeBiometricTransaction, setNativeBiometricTransaction] = useState(false)
   const [nativeBiometricBusy, setNativeBiometricBusy] = useState(false)
   const [nativeBiometricHint, setNativeBiometricHint] = useState<string | null>(null)
   const [nativeBiometricError, setNativeBiometricError] = useState<string | null>(null)
@@ -94,7 +92,6 @@ export default function SecurityPage() {
         availability.available ? null : biometricUnavailableHint(availability.statusLabel),
       )
       setNativeBiometricUnlock(readBiometricSetting(BIOMETRIC_UNLOCK_KEY, false))
-      setNativeBiometricTransaction(readBiometricSetting(BIOMETRIC_TRANSACTION_KEY, false))
     })()
     return () => {
       cancelled = true
@@ -689,27 +686,6 @@ export default function SecurityPage() {
               />
             </label>
 
-            <label className={`flex items-center justify-between gap-3 ${!nativeBiometricAvailable ? 'opacity-60' : ''}`}>
-              <span>
-                <span className="block text-sm font-semibold text-[var(--text)]">Verify transactions</span>
-                <span className="mt-0.5 block text-xs text-[var(--muted)]">
-                  Show fingerprint key on the PIN pad for send, bills, and crypto.
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={nativeBiometricTransaction}
-                disabled={!nativeBiometricAvailable || nativeBiometricBusy}
-                onChange={event =>
-                  void toggleNativeBiometric(
-                    BIOMETRIC_TRANSACTION_KEY,
-                    event.target.checked,
-                    setNativeBiometricTransaction,
-                  )
-                }
-                className="h-5 w-5 accent-[var(--gold)]"
-              />
-            </label>
           </div>
 
           {nativeBiometricError ? (

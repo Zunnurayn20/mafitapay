@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval } from '@/lib/client/biometric'
-import { useNativeTransactionBiometric } from '@/hooks/useNativeTransactionBiometric'
 import { useBankDirectory } from '@/lib/client/catalogs'
 import { parseJsonBody, readJsonResponse, toUserMessage } from '@/lib/client/http'
 import { useAppStore } from '@/store'
@@ -19,7 +18,6 @@ type Step = 'form' | 'pin'
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const refreshSession = useAppStore(state => state.refreshSession)
   const securitySettings = useAppStore(state => state.securitySettings)
-  const { nativeTransactionBiometricEnabled, nativeBiometricBusy, confirmWithNativeBiometric } = useNativeTransactionBiometric()
   const banks = useBankDirectory('NG')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([])
   const [amount, setAmount] = useState('')
@@ -97,7 +95,6 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   async function submitWithdrawal(input: {
     transactionPin?: string
     biometricApprovalToken?: string
-    confirmWithBiometric?: boolean
   }) {
     const amt = parseFloat(amount) || 0
     if (!amt) {
@@ -167,21 +164,6 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
     }
   }
 
-  async function handleNativeBiometricApproval() {
-    const result = await confirmWithNativeBiometric({
-      title: 'Confirm withdrawal',
-      subtitle: 'Use fingerprint or face instead of PIN',
-    })
-    if (!result.verified) {
-      if (!result.cancelled) {
-        setConfirmError(result.message || 'Biometric verification failed.')
-        setConfirmStatus('error')
-      }
-      return
-    }
-    await submitWithdrawal({ confirmWithBiometric: true })
-  }
-
   return (
     <Modal
       open={open}
@@ -243,7 +225,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         <PinPad
           key={pinVersion}
           onComplete={(pin) => void submitWithdrawal({ transactionPin: pin })}
-          title={nativeTransactionBiometricEnabled ? 'PIN or biometrics' : 'Confirm Transaction PIN'}
+          title="Confirm Transaction PIN"
           subtitle="Check the details, then enter your PIN. Funds stay locked until payout settles."
           details={[
             { label: 'To', value: accountName || 'Bank beneficiary' },
@@ -264,8 +246,6 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           secondaryActionLabel={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? 'Use passkey' : undefined}
           secondaryActionIconOnly
           onSecondaryAction={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
-          onBiometric={nativeTransactionBiometricEnabled ? () => void handleNativeBiometricApproval() : undefined}
-          biometricBusy={nativeBiometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Withdrawal submitted!' : undefined}
           statusMessage={confirmStatus === 'processing'
