@@ -74,33 +74,31 @@
   --success-ring: rgba(30, 138, 68, .28);
 }
 
-/* Keep the login and registration flow dark and green, independent of the app theme. */
+/* Keep the login and registration flow black with muted brown accents, independent of app theme. */
 .auth-screen {
   color-scheme: dark;
   --char: #000000;
-  --coal: #080b09;
-  --clay: #0d130f;
-  --clay2: #141d17;
-  --border: #26382c;
-  --border2: #395341;
-  --gold: #176b40;
-  --gold2: #369765;
-  --terra: #145c38;
-  --terra2: #1b7548;
-  --green: #176b40;
-  --green2: #369765;
-  --text: #f2f5f3;
-  --text2: #c1cdc4;
-  --muted: #89988e;
-  --muted2: #26382c;
+  --coal: #0b0907;
+  --clay: #15110c;
+  --clay2: #201910;
+  --border: #392d1e;
+  --border2: #57442b;
+  --gold: #8c6b31;
+  --gold2: #b98a43;
+  --terra: #725226;
+  --terra2: #8c6b31;
+  --text: #f2eee8;
+  --text2: #c5b7a3;
+  --muted: #8d7b66;
+  --muted2: #392d1e;
   --page-bg: #000000;
-  --gold-soft: rgba(54, 151, 101, 0.2);
-  --gold-tint: rgba(54, 151, 101, 0.1);
-  --auth-glow: rgba(54, 151, 101, 0.1);
-  --btn-gold-from: #23804e;
-  --btn-gold-mid: #196b41;
-  --btn-gold-to: #125735;
-  --btn-gold-text: #eef7f1;
+  --gold-soft: rgba(140, 107, 49, 0.2);
+  --gold-tint: rgba(140, 107, 49, 0.1);
+  --auth-glow: rgba(140, 107, 49, 0.1);
+  --btn-gold-from: #a47a38;
+  --btn-gold-mid: #8c6b31;
+  --btn-gold-to: #684d25;
+  --btn-gold-text: #fff8ed;
   background-color: #000000;
   color: var(--text);
 }
