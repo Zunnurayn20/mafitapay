@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { CheckCircle2, Delete, XCircle } from 'lucide-react'
+import { CheckCircle2, Delete, Fingerprint, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export type PinPadStatus = 'pin' | 'processing' | 'success' | 'error'
