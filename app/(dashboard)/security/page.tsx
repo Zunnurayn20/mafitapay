@@ -12,7 +12,6 @@ import {
   biometricUnavailableHint,
   clearBiometricSession,
   getBiometricAvailability,
-  isNativeBiometricPlatform,
   markBiometricSessionUnlocked,
   readBiometricSetting,
   writeBiometricSetting,
@@ -141,7 +140,7 @@ export default function SecurityPage() {
     }
   }, [securitySettings?.hasBiometricCredential, securitySettings?.hasTransactionPin, setupMode])
 
-  async function updateSetting(key: 'twoFactorEnabled' | 'biometricEnabled', value: boolean) {
+  async function updateSetting(key: 'twoFactorEnabled', value: boolean) {
     setUpdatingSetting(key)
     try {
       const response = await fetch('/api/security/settings', {
@@ -203,6 +202,14 @@ export default function SecurityPage() {
     } finally {
       setUpdatingSetting(null)
     }
+  }
+
+  async function setTransactionBiometricEnabled(value: boolean) {
+    if (value && securitySettings?.hasBiometricCredential !== true) {
+      await registerBiometric()
+      return
+    }
+    await toggleBiometricEnabled(value)
   }
 
   async function registerBiometric() {
@@ -661,149 +668,95 @@ export default function SecurityPage() {
             <div className="min-w-0 flex-1">
               <div className="text-[14px] font-black text-[var(--text)]">Device biometrics</div>
               <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
-                Fingerprint or face unlock in the Android app
-                {isNativeBiometricPlatform() && nativeBiometricAvailable ? ' — ready on this device.' : '.'}
+                Use fingerprint or face to unlock this app and approve transactions.
               </p>
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="mt-5 space-y-4">
             <label className={`flex items-center justify-between gap-3 ${!nativeBiometricAvailable ? 'opacity-60' : ''}`}>
               <span>
                 <span className="block text-sm font-semibold text-[var(--text)]">Unlock app</span>
-                <span className="mt-0.5 block text-xs text-[var(--muted)]">
-                  Ask for fingerprint or face when opening the app.
-                </span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">Ask for fingerprint or face when opening the app.</span>
               </span>
               <input
                 type="checkbox"
                 checked={nativeBiometricUnlock}
                 disabled={!nativeBiometricAvailable || nativeBiometricBusy}
-                onChange={event =>
-                  void toggleNativeBiometric(BIOMETRIC_UNLOCK_KEY, event.target.checked, setNativeBiometricUnlock)
-                }
+                onChange={event => void toggleNativeBiometric(BIOMETRIC_UNLOCK_KEY, event.target.checked, setNativeBiometricUnlock)}
                 className="h-5 w-5 accent-[var(--gold)]"
               />
             </label>
 
+            <label className={`flex items-center justify-between gap-3 ${!biometricSupported ? 'opacity-60' : ''}`}>
+              <span>
+                <span className="block text-sm font-semibold text-[var(--text)]">Confirm transactions</span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">Use your device passkey instead of entering your transaction PIN.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={Boolean(securitySettings?.hasBiometricCredential && securitySettings.biometricEnabled)}
+                disabled={(!biometricSupported && !securitySettings?.biometricEnabled) || savingBiometric || updatingSetting === 'biometricEnabled'}
+                onChange={event => void setTransactionBiometricEnabled(event.target.checked)}
+                className="h-5 w-5 accent-[var(--gold)]"
+              />
+            </label>
           </div>
 
-          {nativeBiometricError ? (
-            <div className="mt-4 text-xs text-[var(--red2)]">{nativeBiometricError}</div>
-          ) : null}
+          {nativeBiometricError ? <div className="mt-4 text-xs text-[var(--red2)]">{nativeBiometricError}</div> : null}
           {!nativeBiometricAvailable ? (
             <div className="mt-4 text-xs leading-relaxed text-[var(--muted)]">
-              {nativeBiometricHint ||
-                'Biometric security needs the Android app on a device with fingerprint or face unlock set up.'}
+              {nativeBiometricHint || 'App unlock requires the Android app on a device with fingerprint or face unlock set up.'}
+            </div>
+          ) : null}
+          {!loadingBiometricSupport && !biometricSupported ? (
+            <div className="mt-4 text-xs leading-relaxed text-[var(--muted)]">This device does not offer a passkey authenticator. You can still confirm transactions with your PIN.</div>
+          ) : null}
+
+          <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
+            <span className="text-[10px] text-[var(--muted)]">
+              {securitySettings?.hasBiometricCredential
+                ? `${securitySettings.biometricCredentialCount} passkey device(s) enrolled`
+                : 'No transaction passkey enrolled'}
+            </span>
+            <Button size="sm" variant={managingBiometric ? 'secondary' : 'primary'} onClick={() => setManagingBiometric(current => !current)}>
+              {managingBiometric ? 'Close' : 'Manage passkeys'}
+            </Button>
+          </div>
+
+          {managingBiometric ? (
+            <div className="mt-4">
+              {loadingBiometricSupport ? (
+                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Checking passkey support…</div>
+              ) : loadingBiometricCredentials ? (
+                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Loading passkeys…</div>
+              ) : biometricCredentials.length > 0 ? (
+                <div className="space-y-2">
+                  {biometricCredentials.map(credential => (
+                    <div key={credential.id} className="flex items-center justify-between gap-3 rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3">
+                      <div>
+                        <div className="text-[11px] font-semibold text-[var(--text)]">{credential.label || 'This device'}</div>
+                        <div className="mt-1 text-[9px] text-[var(--muted)]">
+                          {credential.lastUsedAt ? `Last used ${new Date(credential.lastUsedAt).toLocaleString('en-NG')}` : `Added ${new Date(credential.createdAt).toLocaleString('en-NG')}`}
+                        </div>
+                      </div>
+                      <Button size="sm" variant="secondary" onClick={() => void removeBiometricCredentialById(credential.credentialId)} disabled={removingBiometricId === credential.credentialId}>
+                        {removingBiometricId === credential.credentialId ? 'Removing…' : 'Remove'}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">No passkeys enrolled.</div>
+              )}
+              <Button className="mt-4 w-full py-3" onClick={() => void registerBiometric()} disabled={savingBiometric || !biometricSupported}>
+                {savingBiometric ? 'Enrolling…' : securitySettings?.hasBiometricCredential ? 'Add another passkey' : 'Enroll a passkey'}
+              </Button>
             </div>
           ) : null}
         </Card>
 
         <DeviceLoginSettings />
-
-        <Card className="mb-4 border-[rgba(46,170,92,.18)] p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <Fingerprint size={25} className={`mt-0.5 shrink-0 ${securitySettings?.hasBiometricCredential ? 'text-[var(--green2)]' : 'text-[var(--gold2)]'}`} />
-              <div className="min-w-0">
-              <div className="text-[14px] font-black text-[var(--text)]">Passkey / WebAuthn</div>
-              <div className="mt-1 text-[10px] text-[var(--muted)]">
-                Use Face ID, fingerprint, or passkey as a WebAuthn approval path for sensitive transactions.
-              </div>
-              <div className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] ${securitySettings?.hasBiometricCredential ? 'bg-[rgba(46,170,92,.14)] text-[var(--green2)]' : 'bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'}`}>
-                {securitySettings?.hasBiometricCredential ? <CheckCircle2 size={12} /> : <Sparkles size={12} />}
-                {securitySettings?.hasBiometricCredential ? 'Configured' : 'Not set'}
-              </div>
-              </div>
-            </div>
-            <Button
-              size="sm"
-              variant={managingBiometric ? 'secondary' : 'primary'}
-              onClick={() => setManagingBiometric(current => !current)}
-            >
-              {managingBiometric ? 'Close' : securitySettings?.hasBiometricCredential ? 'Manage' : 'Set Up'}
-            </Button>
-          </div>
-
-          {managingBiometric ? (
-            <>
-              <div className="mt-5 rounded border border-[var(--border)] bg-[var(--clay)] p-4 text-[10px] text-[var(--text2)]">
-                {loadingBiometricSupport
-                  ? 'Checking device support…'
-                  : biometricSupported
-                    ? 'This device supports platform biometrics. You can enroll the current device and use it instead of typing your transaction PIN.'
-                    : 'This browser/device does not expose a platform authenticator. Use transaction PIN on this device.'}
-              </div>
-
-              {securitySettings?.hasBiometricCredential ? (
-                <div className="mt-4 flex items-center justify-between gap-3 rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3">
-                  <div>
-                    <div className="text-[11px] font-bold text-[var(--text)]">Approval Status</div>
-                    <div className="mt-1 text-[9px] text-[var(--muted)]">
-                      {securitySettings.biometricEnabled
-                        ? `Enabled across ${securitySettings.biometricCredentialCount} enrolled device(s).`
-                        : `Disabled, but ${securitySettings.biometricCredentialCount} device(s) remain enrolled.`}
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void toggleBiometricEnabled(!(securitySettings?.biometricEnabled ?? false))}
-                    disabled={updatingSetting === 'biometricEnabled'}
-                  >
-                    {updatingSetting === 'biometricEnabled'
-                      ? 'Saving…'
-                      : securitySettings?.biometricEnabled
-                        ? 'Disable'
-                        : 'Enable'}
-                  </Button>
-                </div>
-              ) : null}
-
-              <div className="mt-4">
-                <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">Enrolled Devices</div>
-                {loadingBiometricCredentials ? (
-                  <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Loading devices…</div>
-                ) : biometricCredentials.length > 0 ? (
-                  <div className="space-y-2">
-                    {biometricCredentials.map(credential => (
-                      <div key={credential.id} className="flex items-center justify-between gap-3 rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3">
-                        <div>
-                          <div className="text-[11px] font-semibold text-[var(--text)]">{credential.label || 'This device'}</div>
-                          <div className="mt-1 text-[9px] text-[var(--muted)]">
-                            {credential.lastUsedAt
-                              ? `Last used ${new Date(credential.lastUsedAt).toLocaleString('en-NG')}`
-                              : `Added ${new Date(credential.createdAt).toLocaleString('en-NG')}`}
-                          </div>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => void removeBiometricCredentialById(credential.credentialId)}
-                          disabled={removingBiometricId === credential.credentialId}
-                        >
-                          {removingBiometricId === credential.credentialId ? 'Removing…' : 'Remove'}
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">No biometric devices enrolled yet.</div>
-                )}
-              </div>
-
-              <div className="mt-5">
-                <Button
-                  className="w-full py-3"
-                  onClick={() => void registerBiometric()}
-                  disabled={savingBiometric || !biometricSupported}
-                >
-                  {savingBiometric ? 'Enrolling…' : securitySettings?.hasBiometricCredential ? 'Add This Device' : 'Enroll This Device'}
-                </Button>
-              </div>
-            </>
-          ) : null}
-        </Card>
         </div>
 
         <Card className="mb-4">
