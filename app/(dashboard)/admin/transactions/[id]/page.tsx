@@ -133,7 +133,7 @@ export default async function AdminTransactionDetailPage({
                   <div className="divide-y divide-[var(--border)]">
                     {providerFees.map(fee => (
                       <div key={fee.id} className="flex flex-wrap justify-between gap-2 px-3 py-2 text-sm">
-                        <span className="capitalize text-[var(--text2)]">Provider quote · {fee.type} estimate</span>
+                        <span className="capitalize text-[var(--text2)]">Li.Fi quote · {fee.type} estimate{fee.count > 1 ? ` (${fee.count} items combined)` : ''}</span>
                         <span className="font-mono text-[var(--text)]">
                           {fee.amountNgn !== null ? formatNaira(fee.amountNgn) : `${fee.amount ?? '—'} ${fee.symbol ?? ''}`}
                         </span>

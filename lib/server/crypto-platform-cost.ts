@@ -68,11 +68,16 @@ export function getActualNativeFee(order: CryptoOrder) {
 }
 
 export function getProviderFeeEstimate(order: CryptoOrder) {
+  // `providerFeeCosts` is only populated by LI.FI routed quotes. Do not trust
+  // similarly named or stale payload fields on direct treasury deliveries
+  // (for example BNB/USDT from the BSC treasury).
+  if (order.provider !== 'lifi') return []
+
   const payload = order.providerPayload ?? {}
   const cost = getPlatformCryptoCost(order)
   const rawFees = Array.isArray(payload.providerFeeCosts) ? payload.providerFeeCosts : []
 
-  return rawFees.flatMap((value, index) => {
+  const parsedFees = rawFees.flatMap((value, index) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return []
     const fee = value as { type?: unknown; amount?: unknown; amountUSD?: unknown; token?: { symbol?: unknown } }
     const amount = typeof fee.amount === 'string' ? fee.amount : null
@@ -89,4 +94,26 @@ export function getProviderFeeEstimate(order: CryptoOrder) {
       amountNgn,
     }]
   })
+
+  const groupedFees = new Map<string, (typeof parsedFees)[number] & { count: number }>()
+  for (const fee of parsedFees) {
+    const currency = fee.amountNgn !== null ? 'NGN' : fee.symbol ?? 'unknown'
+    const key = `${fee.type.toLowerCase()}|${currency}`
+    const existing = groupedFees.get(key)
+    if (!existing) {
+      groupedFees.set(key, { ...fee, count: 1 })
+      continue
+    }
+    existing.count += 1
+    if (existing.amountNgn !== null && fee.amountNgn !== null) {
+      existing.amountNgn += fee.amountNgn
+    }
+    const priorAmount = Number(existing.amount)
+    const nextAmount = Number(fee.amount)
+    if (Number.isFinite(priorAmount) && Number.isFinite(nextAmount)) {
+      existing.amount = String(priorAmount + nextAmount)
+    }
+  }
+
+  return [...groupedFees.values()]
 }
