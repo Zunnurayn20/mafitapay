@@ -111,12 +111,18 @@ export default async function AdminTransactionsPage({
                     <div className="text-xs text-[var(--muted)]">{row.customerContact}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-[var(--text)]">{row.description}</div>
+                    {row.kind === 'transaction' ? (
+                      <Link href={`/admin/transactions/${encodeURIComponent(row.id)}`} className="font-medium text-[var(--text)] hover:text-[var(--gold2)] hover:underline">
+                        {row.description}
+                      </Link>
+                    ) : (
+                      <div className="font-medium text-[var(--text)]">{row.description}</div>
+                    )}
                     <div className="text-xs text-[var(--muted)]">{row.type} / {row.reference}</div>
                     {row.failureReason ? <div className="mt-1 text-xs text-[var(--red2)]">{row.failureReason}</div> : null}
                   </td>
                   <td className="px-4 py-3 text-xs text-[var(--text2)]">{row.provider || '—'}</td>
-                  <td className={`px-4 py-3 font-mono font-semibold ${row.amount == null ? 'text-[var(--muted)]' : row.isCredit ? 'text-emerald-700' : 'text-red-700'}`}>
+                  <td className={`px-4 py-3 font-mono font-semibold ${row.amount == null ? 'text-[var(--muted)]' : row.isCredit ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
                     {row.amount == null ? '—' : `${row.isCredit ? '+' : ''}${formatNaira(row.amount)}`}
                   </td>
                   <td className="px-4 py-3">
