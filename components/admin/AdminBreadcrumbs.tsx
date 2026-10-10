@@ -58,8 +58,8 @@ export function AdminBreadcrumbs() {
           if (index !== 1) return null
           return (
             <div key="collapsed" className="flex shrink-0 items-center gap-1">
-              <ChevronRight size={13} className="text-slate-300" />
-              <button type="button" onClick={() => setExpanded(true)} className="rounded-md px-2 py-1 font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-900" aria-label="Show full breadcrumb path">…</button>
+              <ChevronRight size={13} className="text-[var(--muted)]" />
+              <button type="button" onClick={() => setExpanded(true)} className="rounded-md px-2 py-1 font-bold text-[var(--muted)] hover:bg-[var(--clay)] hover:text-[var(--text)]" aria-label="Show full breadcrumb path">…</button>
             </div>
           )
         }
@@ -67,14 +67,14 @@ export function AdminBreadcrumbs() {
         const current = index === segments.length - 1
         return (
           <div key={href} className="flex shrink-0 items-center gap-1">
-            {index > 0 && <ChevronRight size={13} className="text-slate-300" />}
+            {index > 0 && <ChevronRight size={13} className="text-[var(--muted)]" />}
             {current ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 font-semibold text-slate-700" aria-current="page">
+              <span className="inline-flex items-center gap-1 rounded-md bg-[rgba(202,165,96,.1)] px-2 py-1 font-semibold text-[var(--gold2)]" aria-current="page">
                 {index === 0 && <Home size={12} />}
                 {labelFor(segment)}
               </span>
             ) : (
-              <Link href={href} className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">
+              <Link href={href} className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-[var(--muted)] hover:bg-[var(--clay)] hover:text-[var(--text)]">
                 {index === 0 && <Home size={12} />}
                 {labelFor(segment)}
               </Link>

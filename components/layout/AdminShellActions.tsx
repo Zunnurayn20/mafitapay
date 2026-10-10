@@ -18,7 +18,7 @@ export function AdminShellActions() {
     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
       <Link
         href="/dashboard"
-        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-50 sm:w-fit"
+        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--clay)] px-3 text-sm font-semibold text-[var(--text)] transition-colors hover:border-[var(--gold2)] hover:bg-[var(--clay2)] sm:w-fit"
       >
         <ArrowLeft size={16} />
         Customer app
@@ -26,7 +26,7 @@ export function AdminShellActions() {
       <button
         type="button"
         onClick={() => void handleLogout()}
-        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-900 sm:w-fit"
+        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-transparent px-3 text-sm font-semibold text-[var(--muted)] transition-colors hover:border-[var(--border2)] hover:bg-[var(--clay)] hover:text-[var(--text)] sm:w-fit"
       >
         <LogOut size={16} />
         Sign out

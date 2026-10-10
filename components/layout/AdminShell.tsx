@@ -1,4 +1,3 @@
-import { ShieldCheck } from 'lucide-react'
 import { AdminNav } from '@/components/admin/AdminNav'
 import { AdminBreadcrumbs } from '@/components/admin/AdminBreadcrumbs'
 import { AdminShellActions } from '@/components/layout/AdminShellActions'
@@ -17,24 +16,20 @@ export function AdminShell({
   const roleLabel = isAdmin ? 'Owner / Superuser' : 'Operator'
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f5f7fb] text-slate-900">
+    <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       <div className="mx-auto flex h-full min-h-0 w-full flex-1 flex-col px-3 py-3 sm:px-5 lg:px-6 lg:py-6">
-        <header className="shrink-0 rounded-lg border border-slate-200 bg-white shadow-[0_10px_30px_-18px_rgba(15,23,42,0.35)]">
+        <header className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--coal)] shadow-[0_10px_30px_-18px_rgba(0,0,0,0.55)]">
           <div className="grid gap-4 px-4 py-4 sm:px-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-md bg-[rgba(202,165,96,.16)] px-2.5 py-1 text-xs font-bold text-[#8c6b31]">
-                  <ShieldCheck size={14} />
-                  Admin Control Center
-                </span>
-                <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                <span className="rounded-md bg-[rgba(202,165,96,.12)] px-2.5 py-1 text-xs font-bold text-[var(--gold2)]">
                   {roleLabel}
                 </span>
               </div>
-              <h1 className="mt-3 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              <h1 className="mt-2 text-2xl font-bold tracking-tight text-[var(--text)] sm:text-3xl">
                 Operations workspace
               </h1>
-              <p className="mt-1 max-w-full truncate text-sm text-slate-500">
+              <p className="mt-1 max-w-full truncate text-sm text-[var(--muted)]">
                 {email || name || 'Administrator'}
               </p>
               <AdminBreadcrumbs />

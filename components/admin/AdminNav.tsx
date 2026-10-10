@@ -130,7 +130,7 @@ export function AdminNav() {
             className={`flex h-10 w-full items-center justify-between rounded-lg px-3 text-left text-sm font-bold transition-colors xl:rounded-none xl:px-5 xl:text-[12px] ${
               activeGroup === group.label
                 ? 'bg-[rgba(202,165,96,.12)] text-[var(--gold2)]'
-                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 xl:text-[var(--text2)] xl:hover:bg-[var(--clay)] xl:hover:text-[var(--text)]'
+                : 'text-[var(--muted)] hover:bg-[var(--clay)] hover:text-[var(--text)]'
             }`}
           >
             <span className="uppercase tracking-[.08em] xl:text-[9px] xl:tracking-[1.4px]">{group.label}</span>
@@ -150,7 +150,7 @@ export function AdminNav() {
                 className={`inline-flex h-9 w-full items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors xl:rounded-none xl:px-7 xl:py-2 xl:text-[13px] xl:transition-all xl:duration-150 xl:group ${
                   active
                     ? 'bg-[var(--gold)] text-[var(--char)] shadow-[0_8px_20px_-10px_rgba(202,165,96,.55)] xl:border-r-[3px] xl:border-r-[var(--gold)] xl:bg-[rgba(79,70,229,.12)] xl:text-[var(--gold2)] xl:shadow-none'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 xl:text-[var(--text2)] xl:hover:bg-[var(--clay)] xl:hover:text-[var(--text)]'
+                    : 'text-[var(--text2)] hover:bg-[var(--clay)] hover:text-[var(--text)]'
                 }`}
               >
                 <Icon
