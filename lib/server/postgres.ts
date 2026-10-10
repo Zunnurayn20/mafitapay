@@ -23,10 +23,10 @@ export function getPostgresPool() {
       connectionString: getConnectionString(),
       // Railway's private service connection is TLS-free. Public URLs are TLS-enabled.
       ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined,
-      // Vercel functions are short-lived and scale horizontally. Set this to 1
-      // there so each warm function instance does not reserve a large pool.
-      // Persistent hosts such as Railway can keep the default of 10.
-      max: Math.max(1, Number(process.env.MAFITAPAY_POSTGRES_POOL_MAX ?? 10) || 10),
+      // Vercel functions scale horizontally, so keep each warm instance's pool
+      // small by default. Persistent hosts can use the larger default, and an
+      // explicit environment value still overrides either default.
+      max: Math.max(1, Number(process.env.MAFITAPAY_POSTGRES_POOL_MAX ?? (process.env.VERCEL ? 1 : 10)) || 10),
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
     })

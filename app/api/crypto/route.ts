@@ -3,18 +3,18 @@ import { appendNotification, createNotification, requireUser, unauthorized } fro
 import { applyWalletMutation, consumeCryptoQuote, createCryptoOrder, createCryptoQuote, ensureCryptoMarketAutoRefreshScheduler, getCryptoAssets, getCryptoOrderById, getWalletByUserId, kickCryptoMarketRefresh, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { assertBaseTreasuryCanExecuteBuy } from '@/lib/server/base-executor'
 import { getExecutionRailForAsset } from '@/lib/crypto-execution'
-import { ensureBscReceiptAutoSyncWatchdog, kickBscReceiptAutoSync } from '@/lib/server/bsc-receipt-sync'
-import { ensureBaseReceiptAutoSyncWatchdog, kickBaseReceiptAutoSync } from '@/lib/server/base-receipt-sync'
+import { ensureBscReceiptAutoSyncWatchdog } from '@/lib/server/bsc-receipt-sync'
+import { ensureBaseReceiptAutoSyncWatchdog } from '@/lib/server/base-receipt-sync'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { triggerCryptoOrderExecution } from '@/lib/server/crypto-order-execution'
 import { assertLifiRouteCanExecuteBuy, assertLifiTreasuryCanExecuteBuy, getLifiQuotedReceiveForBuy } from '@/lib/server/lifi'
 import { assertNearIntentsTreasuryCanExecuteBuy, getNearQuotedReceiveForBuy } from '@/lib/server/near-intents'
-import { ensureNearReceiptAutoSyncWatchdog, kickNearReceiptAutoSync } from '@/lib/server/near-receipt-sync'
-import { ensureRoutedReceiptAutoSyncWatchdog, kickRoutedReceiptAutoSync } from '@/lib/server/routed-receipt-sync'
-import { ensureSuiReceiptAutoSyncWatchdog, kickSuiReceiptAutoSync } from '@/lib/server/sui-receipt-sync'
+import { ensureNearReceiptAutoSyncWatchdog } from '@/lib/server/near-receipt-sync'
+import { ensureRoutedReceiptAutoSyncWatchdog } from '@/lib/server/routed-receipt-sync'
+import { ensureSuiReceiptAutoSyncWatchdog } from '@/lib/server/sui-receipt-sync'
 import { assertSuiTreasuryCanExecuteBuy, getSuiQuotedReceiveForBuy } from '@/lib/server/sui-treasury'
 import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
-import { ensureTonReceiptAutoSyncWatchdog, kickTonReceiptAutoSync } from '@/lib/server/ton-receipt-sync'
+import { ensureTonReceiptAutoSyncWatchdog } from '@/lib/server/ton-receipt-sync'
 import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
 import { createPlatformCryptoCostSnapshot } from '@/lib/server/crypto-platform-cost'
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
@@ -123,17 +123,11 @@ export async function POST(req: Request) {
   ensureCryptoDepositScannerWatchdog()
   void kickCryptoMarketRefresh()
   ensureBaseReceiptAutoSyncWatchdog()
-  await kickBaseReceiptAutoSync()
   ensureBscReceiptAutoSyncWatchdog()
-  await kickBscReceiptAutoSync()
   ensureRoutedReceiptAutoSyncWatchdog()
-  await kickRoutedReceiptAutoSync()
   ensureSuiReceiptAutoSyncWatchdog()
-  await kickSuiReceiptAutoSync()
   ensureNearReceiptAutoSyncWatchdog()
-  await kickNearReceiptAutoSync()
   ensureTonReceiptAutoSyncWatchdog()
-  await kickTonReceiptAutoSync()
   const user = await requireUser()
   if (!user) return unauthorized()
 
