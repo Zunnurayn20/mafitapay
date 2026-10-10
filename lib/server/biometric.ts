@@ -20,17 +20,13 @@ import {
   touchBiometricCredential,
   upsertSecuritySettings,
 } from './data'
+import { acceptedCeremonyOrigins, resolveWebAuthnTarget } from './webauthn-origin'
 
 const REGISTER_PURPOSE = 'registration'
 const APPROVAL_PURPOSE = 'transaction_approval'
 
 function getWebAuthnConfig(origin: string) {
-  const url = new URL(process.env.MAFITAPAY_APP_URL || origin)
-  return {
-    origin: url.origin,
-    rpID: process.env.MAFITAPAY_WEBAUTHN_RP_ID || url.hostname,
-    rpName: process.env.MAFITAPAY_WEBAUTHN_RP_NAME || 'MafitaPay',
-  }
+  return resolveWebAuthnTarget(origin)
 }
 
 function createCredentialLabel(userAgent?: string) {
@@ -39,7 +35,7 @@ function createCredentialLabel(userAgent?: string) {
 }
 
 export async function beginBiometricRegistration(user: User, origin: string) {
-  const { rpID, rpName } = getWebAuthnConfig(origin)
+  const { rpID, rpName, origin: webOrigin } = getWebAuthnConfig(origin)
   const existingCredentials = await getBiometricCredentialsByUserId(user.id)
   const options = await generateRegistrationOptions({
     rpID,
@@ -65,7 +61,7 @@ export async function beginBiometricRegistration(user: User, origin: string) {
     purpose: REGISTER_PURPOSE,
     challenge: options.challenge,
     rpId: rpID,
-    origin: getWebAuthnConfig(origin).origin,
+    origin: webOrigin,
   })
 
   return options
@@ -81,7 +77,7 @@ export async function finishBiometricRegistration(input: {
   const verification = await verifyRegistrationResponse({
     response: input.response,
     expectedChallenge: challenge.challenge,
-    expectedOrigin: challenge.origin,
+    expectedOrigin: acceptedCeremonyOrigins(challenge.origin),
     expectedRPID: challenge.rp_id,
     requireUserVerification: true,
   })
@@ -107,7 +103,7 @@ export async function finishBiometricRegistration(input: {
 }
 
 export async function beginBiometricApproval(user: User, origin: string) {
-  const { rpID } = getWebAuthnConfig(origin)
+  const { rpID, origin: webOrigin } = getWebAuthnConfig(origin)
   const credentials = await getBiometricCredentialsByUserId(user.id)
   if (!credentials.length) {
     throw new Error('Set up biometric approval first.')
@@ -128,7 +124,7 @@ export async function beginBiometricApproval(user: User, origin: string) {
     purpose: APPROVAL_PURPOSE,
     challenge: options.challenge,
     rpId: rpID,
-    origin: getWebAuthnConfig(origin).origin,
+    origin: webOrigin,
   })
 
   return options
@@ -147,7 +143,7 @@ export async function finishBiometricApproval(input: {
   const verification = await verifyAuthenticationResponse({
     response: input.response,
     expectedChallenge: challenge.challenge,
-    expectedOrigin: challenge.origin,
+    expectedOrigin: acceptedCeremonyOrigins(challenge.origin),
     expectedRPID: challenge.rp_id,
     requireUserVerification: true,
     credential: {
