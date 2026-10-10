@@ -22,6 +22,11 @@ export async function POST(req: Request) {
 
     if (intent === 'register_options') {
       const options = await beginBiometricRegistration(user, origin)
+      console.info('[webauthn] registration target', {
+        requestOrigin: origin,
+        requestHost: req.headers.get('host'),
+        rpID: options.rp.id,
+      })
       return NextResponse.json({ data: { options }, success: true })
     }
 
