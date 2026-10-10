@@ -2245,6 +2245,25 @@ function initSchema(db: DatabaseSync) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS owner_finance_entries (
+      id TEXT PRIMARY KEY,
+      direction TEXT NOT NULL CHECK (direction IN ('income', 'expense')),
+      category TEXT NOT NULL,
+      amount_ngn NUMERIC NOT NULL CHECK (amount_ngn > 0),
+      description TEXT NOT NULL,
+      counterparty TEXT,
+      reference TEXT,
+      occurred_at TEXT NOT NULL,
+      recorded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      voided_at TEXT,
+      voided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      void_reason TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_owner_finance_entries_occurred_at
+      ON owner_finance_entries(occurred_at DESC) WHERE voided_at IS NULL;
+
     CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
       ON audit_logs(created_at DESC);
 
@@ -4274,6 +4293,118 @@ export async function listRecentTransactions(limit = 40): Promise<Array<{ userId
     userId: row.user_id,
     transaction: mapTransactionRow(row),
   }))
+}
+
+export type OwnerFinanceEntry = {
+  id: string
+  direction: 'income' | 'expense'
+  category: string
+  amountNgn: number
+  description: string
+  counterparty: string | null
+  reference: string | null
+  occurredAt: string
+  createdAt: string
+}
+
+type OwnerFinanceEntryRow = {
+  id: string
+  direction: 'income' | 'expense'
+  category: string
+  amount_ngn: number | string
+  description: string
+  counterparty: string | null
+  reference: string | null
+  occurred_at: string
+  created_at: string
+}
+
+function mapOwnerFinanceEntry(row: OwnerFinanceEntryRow): OwnerFinanceEntry {
+  return {
+    id: row.id,
+    direction: row.direction,
+    category: row.category,
+    amountNgn: Number(row.amount_ngn),
+    description: row.description,
+    counterparty: row.counterparty,
+    reference: row.reference,
+    occurredAt: row.occurred_at,
+    createdAt: row.created_at,
+  }
+}
+
+export async function listOwnerFinanceEntries(from: string, toExclusive: string, limit = 200) {
+  await ensureDbReady()
+  const sql = `SELECT id, direction, category, amount_ngn, description, counterparty, reference, occurred_at, created_at
+    FROM owner_finance_entries WHERE voided_at IS NULL AND occurred_at >= ? AND occurred_at < ?
+    ORDER BY occurred_at DESC LIMIT ?`
+  if (isPostgresEnabled()) {
+    return (await queryPostgres<OwnerFinanceEntryRow>(sql, [from, toExclusive, limit])).rows.map(mapOwnerFinanceEntry)
+  }
+  return (getDb().prepare(sql).all(from, toExclusive, limit) as OwnerFinanceEntryRow[]).map(mapOwnerFinanceEntry)
+}
+
+export async function summarizeOwnerFinance(from: string, toExclusive: string) {
+  await ensureDbReady()
+  const entriesQuery = `SELECT direction, COALESCE(SUM(amount_ngn), 0) AS total, COUNT(*) AS count
+    FROM owner_finance_entries WHERE voided_at IS NULL AND occurred_at >= ? AND occurred_at < ? GROUP BY direction`
+  const feesQuery = `SELECT
+      COALESCE(SUM(CASE WHEN type <> 'crypto_buy' THEN fee ELSE 0 END), 0) AS customer_fees,
+      COALESCE(SUM(CASE WHEN type = 'crypto_buy' THEN fee ELSE 0 END), 0) AS crypto_fee_recovery,
+      COUNT(*) AS successful_transactions
+    FROM transactions WHERE status = 'success' AND created_at >= ? AND created_at < ?`
+  const [entries, fees] = isPostgresEnabled()
+    ? await Promise.all([
+        queryPostgres<{ direction: string; total: number | string; count: number | string }>(entriesQuery, [from, toExclusive]),
+        queryPostgres<{ customer_fees: number | string; crypto_fee_recovery: number | string; successful_transactions: number | string }>(feesQuery, [from, toExclusive]),
+      ])
+    : [
+        { rows: getDb().prepare(entriesQuery).all(from, toExclusive) as Array<{ direction: string; total: number | string; count: number | string }> },
+        { rows: getDb().prepare(feesQuery).all(from, toExclusive) as Array<{ customer_fees: number | string; crypto_fee_recovery: number | string; successful_transactions: number | string }> },
+      ]
+  const totals = { income: 0, expense: 0, incomeCount: 0, expenseCount: 0 }
+  for (const row of entries.rows) {
+    if (row.direction === 'income') { totals.income = Number(row.total); totals.incomeCount = Number(row.count) }
+    if (row.direction === 'expense') { totals.expense = Number(row.total); totals.expenseCount = Number(row.count) }
+  }
+  const fee = fees.rows[0]
+  return {
+    ...totals,
+    recordedNet: totals.income - totals.expense,
+    customerFees: Number(fee?.customer_fees ?? 0),
+    cryptoFeeRecovery: Number(fee?.crypto_fee_recovery ?? 0),
+    successfulTransactions: Number(fee?.successful_transactions ?? 0),
+  }
+}
+
+export async function createOwnerFinanceEntry(input: {
+  direction: 'income' | 'expense'
+  category: string
+  amountNgn: number
+  description: string
+  counterparty?: string
+  reference?: string
+  occurredAt: string
+  recordedBy: string
+}) {
+  await ensureDbReady()
+  const id = `fin_${randomBytes(9).toString('hex')}`
+  const createdAt = new Date().toISOString()
+  const sql = `INSERT INTO owner_finance_entries
+    (id, direction, category, amount_ngn, description, counterparty, reference, occurred_at, recorded_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  const values = [id, input.direction, input.category, input.amountNgn, input.description, input.counterparty ?? null, input.reference ?? null, input.occurredAt, input.recordedBy, createdAt]
+  if (isPostgresEnabled()) await queryPostgres(sql, values)
+  else getDb().prepare(sql).run(...values)
+  return id
+}
+
+export async function voidOwnerFinanceEntry(id: string, voidedBy: string, reason: string) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const sql = `UPDATE owner_finance_entries SET voided_at = ?, voided_by = ?, void_reason = ? WHERE id = ? AND voided_at IS NULL`
+  if (isPostgresEnabled()) return (await queryPostgres(sql + ' RETURNING id', [now, voidedBy, reason, id])).rowCount === 1
+  return getDb().prepare(sql).run(now, voidedBy, reason, id).changes === 1
 }
 
 export async function listTransactionsByStatuses(

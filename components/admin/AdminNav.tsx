@@ -49,6 +49,7 @@ export const ADMIN_NAV_GROUPS = [
     label: 'Money',
     items: [
       { href: '/admin/transactions', label: 'Transactions', icon: Activity },
+      { href: '/admin/finance', label: 'Revenue & expenses', icon: Coins },
       { href: '/admin/adjustments', label: 'Adjustments', icon: ClipboardCheck },
       { href: '/admin/operations/settlements', label: 'Settlements', icon: BadgeDollarSign },
     ],
