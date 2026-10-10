@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { ArrowRight } from 'lucide-react'
 import {
   AdminButton,
   AdminEmpty,
@@ -102,7 +103,7 @@ export default async function AdminTransactionsPage({
       >
         {filtered.length === 0 ? <AdminEmpty label="No transactions matched." /> : (
           <AdminTable>
-            <AdminThead columns={['Customer', 'Transaction', 'Provider', 'Amount', 'Status', 'Date']} />
+            <AdminThead columns={['Customer', 'Transaction', 'Provider', 'Amount', 'Status', 'Date', '']} />
             <tbody className="divide-y divide-[var(--border)]">
               {filtered.map(row => (
                 <tr key={row.id} className={row.needsAttention ? 'bg-[rgba(196,52,26,.06)]' : 'hover:bg-[var(--clay)]'}>
@@ -112,7 +113,7 @@ export default async function AdminTransactionsPage({
                   </td>
                   <td className="px-4 py-3">
                     {row.kind === 'transaction' ? (
-                      <Link href={`/admin/transactions/${encodeURIComponent(row.id)}`} className="font-medium text-[var(--text)] hover:text-[var(--gold2)] hover:underline">
+                      <Link href={`/admin/transactions/${encodeURIComponent(row.id)}`} className="font-semibold text-[var(--gold2)] underline decoration-[rgba(202,165,96,.35)] underline-offset-4 hover:decoration-[var(--gold2)]">
                         {row.description}
                       </Link>
                     ) : (
@@ -132,6 +133,16 @@ export default async function AdminTransactionsPage({
                     ) : null}
                   </td>
                   <td className="px-4 py-3 text-xs text-[var(--muted)]">{formatDate(row.createdAt)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {row.kind === 'transaction' ? (
+                      <Link
+                        href={`/admin/transactions/${encodeURIComponent(row.id)}`}
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--clay)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] transition-colors hover:border-[var(--gold2)] hover:text-[var(--gold2)]"
+                      >
+                        View details <ArrowRight size={13} />
+                      </Link>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
