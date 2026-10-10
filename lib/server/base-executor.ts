@@ -9,6 +9,7 @@ import {
   decodeEventLog,
   erc20Abi,
   fallback,
+  formatEther,
   getAddress,
   http,
   isAddress,
@@ -354,6 +355,9 @@ export async function getBaseTransactionReceiptState(hash: string) {
       blockNumber: receipt.blockNumber.toString(),
       transactionHash: receipt.transactionHash,
       gasUsed: receipt.gasUsed.toString(),
+      gasCostWei: (receipt.gasUsed * receipt.effectiveGasPrice).toString(),
+      gasCostNative: formatEther(receipt.gasUsed * receipt.effectiveGasPrice),
+      gasCostSymbol: 'ETH',
     }
   } catch (error) {
     if (error instanceof Error && error.message === 'Invalid Base transaction hash.') throw error
@@ -364,6 +368,9 @@ export async function getBaseTransactionReceiptState(hash: string) {
         blockNumber: null,
         transactionHash: hash,
         gasUsed: null,
+        gasCostWei: null,
+        gasCostNative: null,
+        gasCostSymbol: 'ETH',
       }
     }
 
@@ -375,6 +382,9 @@ export async function getBaseTransactionReceiptState(hash: string) {
         blockNumber: null,
         transactionHash: hash,
         gasUsed: null,
+        gasCostWei: null,
+        gasCostNative: null,
+        gasCostSymbol: 'ETH',
       }
     }
 

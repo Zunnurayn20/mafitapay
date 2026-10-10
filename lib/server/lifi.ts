@@ -87,6 +87,8 @@ type LifiQuoteResponse = {
     approvalAddress?: string
     toAmount?: string
     toAmountMin?: string
+    feeCosts?: Array<{ type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } }>
+    gasCosts?: Array<{ type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } }>
   }
   action?: {
     toToken?: {
@@ -416,6 +418,7 @@ export async function getLifiQuotedReceiveForBuy(input: {
       includedSteps: quote.includedSteps,
       transactionRequest: quote.transactionRequest,
       approvalAddress: quote.estimate?.approvalAddress,
+      providerFeeCosts: quote.estimate?.feeCosts ?? [],
       walletAddress: input.toAddress,
     },
   }

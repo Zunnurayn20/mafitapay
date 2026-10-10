@@ -8,6 +8,7 @@ import {
   decodeEventLog,
   erc20Abi,
   fallback,
+  formatEther,
   getAddress,
   http,
   isAddress,
@@ -256,6 +257,9 @@ export async function getBscTransactionReceiptState(hash: string) {
       blockNumber: receipt.blockNumber.toString(),
       transactionHash: receipt.transactionHash,
       gasUsed: receipt.gasUsed.toString(),
+      gasCostWei: (receipt.gasUsed * receipt.effectiveGasPrice).toString(),
+      gasCostNative: formatEther(receipt.gasUsed * receipt.effectiveGasPrice),
+      gasCostSymbol: 'BNB',
     }
   } catch (error) {
     if (error instanceof Error && error.message === 'Invalid BSC transaction hash.') throw error
@@ -266,6 +270,9 @@ export async function getBscTransactionReceiptState(hash: string) {
         blockNumber: null,
         transactionHash: hash,
         gasUsed: null,
+        gasCostWei: null,
+        gasCostNative: null,
+        gasCostSymbol: 'BNB',
       }
     }
     const normalized = normalizeBscRpcError(error)
@@ -276,6 +283,9 @@ export async function getBscTransactionReceiptState(hash: string) {
         blockNumber: null,
         transactionHash: hash,
         gasUsed: null,
+        gasCostWei: null,
+        gasCostNative: null,
+        gasCostSymbol: 'BNB',
       }
     }
     throw normalized

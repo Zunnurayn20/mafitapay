@@ -99,6 +99,7 @@ export async function syncBscReceiptForCryptoOrder(orderId: string, actorUserId:
   const outcome = receipt.status === 'success' ? 'fulfilled' : 'failed'
   const nextProviderPayload: Record<string, unknown> = {
     ...(order.providerPayload ?? {}),
+    deliveryReceipt: receipt,
   }
 
   if (outcome === 'fulfilled') {
@@ -130,6 +131,11 @@ export async function syncBscReceiptForCryptoOrder(orderId: string, actorUserId:
       providerPayload: nextProviderPayload,
     })
   }
+
+  await updateCryptoOrderProviderState({
+    id: order.id,
+    providerPayload: nextProviderPayload,
+  })
 
   const settled = await settleCryptoOrderTerminalState({
     order,

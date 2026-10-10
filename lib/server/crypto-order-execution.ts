@@ -82,6 +82,7 @@ export async function triggerCryptoOrderExecution(input: {
       providerReference: quote.zid ?? null,
       providerStatus: 'BROADCASTED',
       providerPayload: {
+        ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
         pairId: order.pairId,
         allowanceTarget: quote.allowanceTarget,
         buyAmount: quote.buyAmount,
@@ -142,6 +143,9 @@ export async function triggerCryptoOrderExecution(input: {
           approvalAddress: storedApprovalAddress ?? undefined,
           toAmount: typeof storedPayload.toAmount === 'string' ? storedPayload.toAmount : undefined,
           toAmountMin: typeof storedPayload.toAmountMin === 'string' ? storedPayload.toAmountMin : undefined,
+          feeCosts: Array.isArray(storedPayload.providerFeeCosts)
+            ? storedPayload.providerFeeCosts.filter((item): item is { type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } } => Boolean(item && typeof item === 'object'))
+            : undefined,
         },
       }
       treasuryUsdcAmount = typeof storedPayload.treasuryUsdcAmount === 'number' ? storedPayload.treasuryUsdcAmount : order.amountNgn
@@ -188,6 +192,8 @@ export async function triggerCryptoOrderExecution(input: {
         transactionId: quote.transactionId,
         explorerLink: quote.transactionId ? `https://explorer.li.fi/tx/${quote.transactionId}` : null,
         includedSteps: quote.includedSteps,
+        providerFeeCosts: quote.estimate?.feeCosts ?? [],
+        ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
       },
     })
   } else if (mode === 'sui_swap') {
@@ -202,7 +208,10 @@ export async function triggerCryptoOrderExecution(input: {
       providerOrderId: typeof suiExecution.providerPayload.quotedBridgeTransactionId === 'string' ? suiExecution.providerPayload.quotedBridgeTransactionId : null,
       providerReference: typeof suiExecution.providerPayload.bridge === 'string' ? suiExecution.providerPayload.bridge : null,
       providerStatus: 'ROUTE_BROADCASTED',
-      providerPayload: suiExecution.providerPayload,
+      providerPayload: {
+        ...suiExecution.providerPayload,
+        ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
+      },
     })
   } else if (mode === 'ton_swap') {
     const tonExecution = await buildTonSwapExecutionForOrder(order)
@@ -217,7 +226,10 @@ export async function triggerCryptoOrderExecution(input: {
       provider: 'ston',
       providerReference: tonExecution.routerAddress,
       providerStatus: 'SWAP_SUBMITTED',
-      providerPayload: tonExecution.providerPayload,
+      providerPayload: {
+        ...tonExecution.providerPayload,
+        ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
+      },
     })
   } else if (mode === 'near_swap') {
     const nearExecution = await submitNearIntentsDepositForOrder(order)
@@ -231,7 +243,10 @@ export async function triggerCryptoOrderExecution(input: {
       providerOrderId: typeof nearExecution.providerPayload.correlationId === 'string' ? nearExecution.providerPayload.correlationId : null,
       providerReference: typeof nearExecution.providerPayload.depositAddress === 'string' ? nearExecution.providerPayload.depositAddress : null,
       providerStatus: 'KNOWN_DEPOSIT_TX',
-      providerPayload: nearExecution.providerPayload,
+      providerPayload: {
+        ...nearExecution.providerPayload,
+        ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
+      },
     })
   } else if (order.executionRail === 'bsc_treasury') {
     execution = await broadcastBscDeliveryForOrder(order)

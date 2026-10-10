@@ -12,10 +12,12 @@ import {
 import { requireAdminPageUser } from '@/lib/server/admin-queries'
 import {
   getAnyTransactionById,
+  getCryptoOrderByTransactionId,
   getLedgerEntriesForTransaction,
   getProviderEventsByReference,
   getUserById,
 } from '@/lib/server/data'
+import { getActualNativeFee, getPlatformCryptoCost, getProviderFeeEstimate } from '@/lib/server/crypto-platform-cost'
 
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -53,9 +55,10 @@ export default async function AdminTransactionDetailPage({
   const record = await getAnyTransactionById(id)
   if (!record) notFound()
 
-  const [customer, ledgerEntries] = await Promise.all([
+  const [customer, ledgerEntries, cryptoOrder] = await Promise.all([
     getUserById(record.userId),
     getLedgerEntriesForTransaction(record.userId, record.transaction.id),
+    record.transaction.type === 'crypto_buy' ? getCryptoOrderByTransactionId(record.transaction.id) : Promise.resolve(null),
   ])
   const metadata = safeMetadata(record.transaction)
   const references = [...new Set([
@@ -69,6 +72,15 @@ export default async function AdminTransactionDetailPage({
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   const transaction = record.transaction
   const isCredit = ['deposit', 'transfer_in', 'crypto_sell', 'referral_bonus', 'reward_bonus', 'admin_credit', 'p2p_deposit'].includes(transaction.type)
+  const platformCost = cryptoOrder?.side === 'buy' ? getPlatformCryptoCost(cryptoOrder) : null
+  const providerFees = cryptoOrder?.side === 'buy' ? getProviderFeeEstimate(cryptoOrder) : []
+  const actualNativeFees = cryptoOrder?.side === 'buy' ? getActualNativeFee(cryptoOrder) ?? [] : []
+  const costFeeNgn = providerFees.reduce((sum, fee) => sum + (fee.amountNgn ?? 0), 0)
+    + actualNativeFees.reduce((sum, fee) => sum + (fee.amountNgnEstimate ?? 0), 0)
+  const deliveredPrincipalNgn = cryptoOrder?.status === 'failed' || cryptoOrder?.status === 'expired'
+    ? 0
+    : platformCost?.principalNgn ?? 0
+  const trackedPlatformCostNgn = platformCost ? deliveredPrincipalNgn + costFeeNgn : null
 
   return (
     <div className="space-y-4">
@@ -96,6 +108,58 @@ export default async function AdminTransactionDetailPage({
           </div>
         ) : null}
       </section>
+
+      {transaction.type === 'crypto_buy' && (
+        <AdminPageCard
+          title="Platform delivery cost"
+          description="Buy only · crypto value uses the saved market rate. Delivery fees are included only when the provider or chain reports them."
+        >
+          {!cryptoOrder ? (
+            <div className="p-4 text-sm text-[var(--muted)]">No matching crypto buy order was found.</div>
+          ) : !platformCost ? (
+            <div className="p-4 text-sm text-[var(--muted)]">No cost snapshot was recorded for this order. New buy orders will save one.</div>
+          ) : (
+            <div className="space-y-3 p-4">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Detail label="Crypto replacement value · estimate">{cryptoOrder.status === 'failed' || cryptoOrder.status === 'expired' ? 'Not delivered' : formatNaira(platformCost.principalNgn)}</Detail>
+                <Detail label={cryptoOrder.status === 'failed' || cryptoOrder.status === 'expired' ? 'Tracked delivery fees' : 'Total tracked cost · estimate'}>{formatNaira(trackedPlatformCostNgn ?? costFeeNgn)}</Detail>
+              </div>
+              <p className="text-xs text-[var(--muted)]">
+                Based on {cryptoOrder.cryptoAmount.toLocaleString('en-NG', { maximumFractionDigits: 10 })} {cryptoOrder.pairId.split('_')[0]} at ₦{platformCost.assetMarketRateNgn.toLocaleString('en-NG', { maximumFractionDigits: 4 })} per unit ({platformCost.assetMarketRateSource} market snapshot).
+              </p>
+              {providerFees.length > 0 || actualNativeFees.length > 0 ? (
+                <div className="rounded-lg border border-[var(--border)]">
+                  <div className="border-b border-[var(--border)] px-3 py-2 text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Delivery fee data</div>
+                  <div className="divide-y divide-[var(--border)]">
+                    {providerFees.map(fee => (
+                      <div key={fee.id} className="flex flex-wrap justify-between gap-2 px-3 py-2 text-sm">
+                        <span className="capitalize text-[var(--text2)]">Provider quote · {fee.type} estimate</span>
+                        <span className="font-mono text-[var(--text)]">
+                          {fee.amountNgn !== null ? formatNaira(fee.amountNgn) : `${fee.amount ?? '—'} ${fee.symbol ?? ''}`}
+                        </span>
+                      </div>
+                    ))}
+                    {actualNativeFees.map((fee, index) => (
+                      <div key={`${fee.symbol}-${index}`} className="flex flex-wrap justify-between gap-2 px-3 py-2 text-sm">
+                        <span className="text-[var(--text2)]">Actual on-chain gas</span>
+                        <span className="font-mono text-[var(--text)]">
+                          {fee.amount.toLocaleString('en-NG', { maximumFractionDigits: 12 })} {fee.symbol}
+                          {fee.amountNgnEstimate !== null ? ` · ${formatNaira(fee.amountNgnEstimate)} est.` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="rounded-lg bg-[var(--clay)] px-3 py-2 text-xs text-[var(--muted)]">
+                  Delivery fees are not yet available for this execution rail. The tracked amount currently includes the crypto replacement estimate only.
+                </p>
+              )}
+              <p className="text-[11px] text-[var(--muted)]">The total is an estimate: it combines market replacement value with reported quote fees and actual chain gas where available. Any naira conversion for chain gas uses the saved market rate. Customer network-fee recovery is excluded.</p>
+            </div>
+          )}
+        </AdminPageCard>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]">
         <AdminPageCard title="Transaction details">

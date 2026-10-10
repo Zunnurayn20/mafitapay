@@ -16,6 +16,7 @@ import { assertSuiTreasuryCanExecuteBuy, getSuiQuotedReceiveForBuy } from '@/lib
 import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
 import { ensureTonReceiptAutoSyncWatchdog, kickTonReceiptAutoSync } from '@/lib/server/ton-receipt-sync'
 import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
+import { createPlatformCryptoCostSnapshot } from '@/lib/server/crypto-platform-cost'
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
 import { createCexDepositIntent } from '@/lib/server/data'
 import { validateWalletAddressForAsset } from '@/lib/crypto-addresses'
@@ -443,6 +444,7 @@ export async function POST(req: Request) {
   const cryptoAmount = quote.cryptoAmount
   const ref = generateRef()
   let liveAsset = asset
+  let platformCostPayload: Record<string, unknown> | undefined
 
   let transaction
 
@@ -535,6 +537,18 @@ export async function POST(req: Request) {
         success: false,
       }, { status: 400 })
     }
+
+    const executionRail = getExecutionRailForAsset(liveAsset)
+    const assetsForCost = assets
+    const nativeAssetId = executionRail === 'bsc_treasury' ? 'BNB_BSC' : 'ETH_BASE'
+    const nativeAsset = assetsForCost.find(item => item.id === nativeAssetId)
+    const usdAsset = assetsForCost.find(item => item.id === 'USDC_BASE')
+    platformCostPayload = createPlatformCryptoCostSnapshot({
+      asset: liveAsset,
+      cryptoAmount,
+      nativeAsset,
+      usdAsset,
+    })
 
     // Same pattern as bank transfers: amount includes network fee because settlement
     // releases locked funds by |amount| and never reads the fee column.
@@ -650,7 +664,12 @@ export async function POST(req: Request) {
           : undefined
       : undefined,
     providerStatus: action === 'buy' && (getExecutionRailForAsset(liveAsset) === 'routed_treasury' || getExecutionRailForAsset(liveAsset) === 'sui_treasury' || getExecutionRailForAsset(liveAsset) === 'near_intents' || getExecutionRailForAsset(liveAsset) === 'ton_treasury') ? 'QUOTE_LOCKED' : undefined,
-    providerPayload: action === 'buy' && (getExecutionRailForAsset(liveAsset) === 'routed_treasury' || getExecutionRailForAsset(liveAsset) === 'sui_treasury' || getExecutionRailForAsset(liveAsset) === 'near_intents' || getExecutionRailForAsset(liveAsset) === 'ton_treasury') ? quote.providerPayload : undefined,
+    providerPayload: action === 'buy'
+      ? {
+          ...(quote.providerPayload ?? {}),
+          ...(platformCostPayload ? { platformCost: platformCostPayload } : {}),
+        }
+      : undefined,
     status: 'pending',
     executionRail: action === 'buy' ? getExecutionRailForAsset(liveAsset) ?? undefined : undefined,
     executionStatus: action === 'buy' ? 'awaiting_swap' : undefined,

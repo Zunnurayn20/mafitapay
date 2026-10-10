@@ -30,6 +30,8 @@ type LifiBridgeQuoteResponse = {
     approvalAddress?: string
     toAmount?: string
     toAmountMin?: string
+    feeCosts?: Array<{ type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } }>
+    gasCosts?: Array<{ type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } }>
   }
   transactionRequest?: {
     to?: string
@@ -589,6 +591,7 @@ export async function getSuiQuotedReceiveForBuy(input: {
       transactionRequest: bridgeQuote.quote.transactionRequest,
       approvalAddress: bridgeQuote.quote.estimate?.approvalAddress,
       includedSteps: bridgeQuote.quote.includedSteps,
+      providerFeeCosts: bridgeQuote.quote.estimate?.feeCosts ?? [],
     },
   }
 }

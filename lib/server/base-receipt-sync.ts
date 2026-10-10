@@ -144,6 +144,8 @@ export async function syncBaseReceiptForCryptoOrder(orderId: string, actorUserId
       providerStatus: outcome === 'fulfilled' ? 'ONCHAIN_SUCCESS' : 'ONCHAIN_REVERTED',
       providerPayload: nextProviderPayload,
     })
+  } else {
+    nextProviderPayload.deliveryReceipt = receipt
   }
 
   if (outcome === 'fulfilled' && order.provider === '0x' && (order.pairId === 'USDC_BASE' || order.pairId === 'ETH_BASE')) {
@@ -226,6 +228,7 @@ export async function syncBaseReceiptForCryptoOrder(orderId: string, actorUserId
     }
 
     if (deliveryReceipt.status !== 'success') {
+      nextProviderPayload.deliveryReceipt = deliveryReceipt
       await updateCryptoOrderProviderState({
         id: order.id,
         providerStatus: 'DELIVERY_REVERTED',
@@ -255,6 +258,7 @@ export async function syncBaseReceiptForCryptoOrder(orderId: string, actorUserId
         ...failed,
       }
     }
+    nextProviderPayload.deliveryReceipt = deliveryReceipt
 
     let deliveryEvidence: Record<string, unknown> | null = null
     if (order.pairId === 'USDC_BASE') {
@@ -294,6 +298,11 @@ export async function syncBaseReceiptForCryptoOrder(orderId: string, actorUserId
       providerPayload: nextProviderPayload,
     })
   }
+
+  await updateCryptoOrderProviderState({
+    id: order.id,
+    providerPayload: nextProviderPayload,
+  })
 
   const settled = await settleCryptoOrderTerminalState({
     order,
