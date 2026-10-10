@@ -8316,6 +8316,18 @@ export async function updateCryptoOrderProviderState(input: {
 export async function consumeCryptoQuote(userId: string, quoteId: string, side: 'buy' | 'sell') {
   await ensureDbReady()
   if (isPostgresEnabled()) {
+    // Resolve/hydrate the asset before reserving a pool connection for the
+    // quote transaction. getCryptoAssetById performs its own database queries;
+    // calling it from inside this transaction deadlocks when the serverless
+    // pool is correctly limited to one connection.
+    const initialResult = await queryPostgres<CryptoQuoteRow>(`
+      SELECT * FROM crypto_quotes WHERE id = ? AND user_id = ? AND side = ? LIMIT 1
+    `, [quoteId, userId, side])
+    const initialRow = initialResult.rows[0]
+    if (!initialRow) throw new Error('Quote not found.')
+    const asset = await getCryptoAssetById(mapCryptoQuoteRow(initialRow).pairId)
+    if (!asset) throw new Error('Crypto pair no longer exists.')
+
     return withPostgresTransaction(async client => {
       const result = await queryPostgresClient<CryptoQuoteRow>(client, `
         SELECT * FROM crypto_quotes WHERE id = ? AND user_id = ? AND side = ? LIMIT 1 FOR UPDATE
@@ -8325,10 +8337,9 @@ export async function consumeCryptoQuote(userId: string, quoteId: string, side: 
       const quote = mapCryptoQuoteRow(row)
       if (quote.usedAt) throw new Error('Quote has already been used.')
       if (new Date(quote.expiresAt).getTime() <= Date.now()) throw new Error('Quote has expired.')
+      if (quote.pairId !== asset.id) throw new Error('Crypto pair changed. Please request a new quote.')
       const usedAt = new Date().toISOString()
       await queryPostgresClient(client, 'UPDATE crypto_quotes SET used_at = ? WHERE id = ?', [usedAt, quoteId])
-      const asset = await getCryptoAssetById(quote.pairId)
-      if (!asset) throw new Error('Crypto pair no longer exists.')
       return { asset, quote: { ...quote, usedAt } }
     })
   }
