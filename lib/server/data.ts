@@ -5784,6 +5784,19 @@ export async function listCryptoDepositEvents(input: {
   return rows.map(mapCryptoDepositEventRow)
 }
 
+export async function listCryptoDepositEventsByTransactionIds(transactionIds: string[]): Promise<CryptoDepositEvent[]> {
+  await ensureDbReady()
+  const ids = [...new Set(transactionIds.filter(Boolean))].slice(0, 900)
+  if (ids.length === 0) return []
+  const placeholders = ids.map(() => '?').join(', ')
+  const sql = `SELECT * FROM crypto_deposit_events WHERE transaction_id IN (${placeholders}) ORDER BY created_at DESC`
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositEventRow>(sql, ids)
+    return result.rows.map(mapCryptoDepositEventRow)
+  }
+  return (getDb().prepare(sql).all(...ids) as CryptoDepositEventRow[]).map(mapCryptoDepositEventRow)
+}
+
 export async function getCryptoDepositAddressByAddress(address: string): Promise<CryptoDepositAddress | null> {
   await ensureDbReady()
   const normalized = address.toLowerCase()
@@ -6441,6 +6454,60 @@ export async function updateCryptoDepositEventConversion(externalEventId: string
         updated_at = ?
     WHERE external_event_id = ?
   `).run(JSON.stringify(payload), now, externalEventId)
+  return getCryptoDepositEventByExternalId(externalEventId)
+}
+
+export async function updateCryptoDepositEventSweepEconomics(externalEventId: string, costs: Record<string, unknown>[]) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const existing = await getCryptoDepositEventByExternalId(externalEventId)
+  if (!existing) return null
+  const prior = existing.payload?.sweepEconomics
+  const priorRecord = prior && typeof prior === 'object' && !Array.isArray(prior)
+    ? prior as Record<string, unknown>
+    : {}
+  const priorCosts = Array.isArray(priorRecord.costs) ? priorRecord.costs as Array<Record<string, unknown>> : []
+  const costsByKey = new Map<string, Record<string, unknown>>()
+  for (const cost of [...priorCosts, ...costs]) {
+    const key = `${String(cost.kind ?? '')}:${String(cost.txHash ?? '')}:${String(cost.assetId ?? '')}`
+    costsByKey.set(key, cost)
+  }
+  const payload = {
+    ...(existing.payload || {}),
+    sweepEconomics: {
+      version: 1,
+      capturedAt: now,
+      costs: [...costsByKey.values()],
+    },
+  }
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE crypto_deposit_events SET payload = ?, updated_at = ? WHERE external_event_id = ?', [JSON.stringify(payload), now, externalEventId])
+    return getCryptoDepositEventByExternalId(externalEventId)
+  }
+  getDb().prepare('UPDATE crypto_deposit_events SET payload = ?, updated_at = ? WHERE external_event_id = ?')
+    .run(JSON.stringify(payload), now, externalEventId)
+  return getCryptoDepositEventByExternalId(externalEventId)
+}
+
+export async function appendCryptoDepositEventTreasuryConversion(externalEventId: string, conversion: Record<string, unknown>) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const existing = await getCryptoDepositEventByExternalId(externalEventId)
+  if (!existing) return null
+  const prior = Array.isArray(existing.payload?.treasuryBatchConversions)
+    ? existing.payload.treasuryBatchConversions as Array<Record<string, unknown>> : []
+  const txHash = typeof conversion.txHash === 'string' ? conversion.txHash : ''
+  if (txHash && prior.some(item => item.txHash === txHash)) return existing
+  const payload = {
+    ...(existing.payload || {}),
+    treasuryBatchConversions: [...prior, conversion],
+  }
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE crypto_deposit_events SET payload = ?, updated_at = ? WHERE external_event_id = ?', [JSON.stringify(payload), now, externalEventId])
+    return getCryptoDepositEventByExternalId(externalEventId)
+  }
+  getDb().prepare('UPDATE crypto_deposit_events SET payload = ?, updated_at = ? WHERE external_event_id = ?')
+    .run(JSON.stringify(payload), now, externalEventId)
   return getCryptoDepositEventByExternalId(externalEventId)
 }
 
@@ -8028,6 +8095,18 @@ export async function getCryptoAssetById(id: string): Promise<CryptoAsset | null
     : await hydrateCryptoAssetPricing([persistedAsset])
   if (asset) await persistCryptoMarketSnapshots([asset])
   return asset ?? null
+}
+
+export async function getPersistedCryptoMarketSnapshots(ids: string[]): Promise<CryptoAsset[]> {
+  await ensureDbReady()
+  const pairIds = [...new Set(ids.filter(Boolean))].slice(0, 50)
+  if (pairIds.length === 0) return []
+  const placeholders = pairIds.map(() => '?').join(', ')
+  const sql = `SELECT * FROM crypto_pairs WHERE id IN (${placeholders})`
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<CryptoPairRow>(sql, pairIds)).rows
+    : getDb().prepare(sql).all(...pairIds) as CryptoPairRow[]
+  return rows.map(mapCryptoPairRow)
 }
 
 export async function getCryptoAssetBySymbol(symbol: string): Promise<CryptoAsset | null> {

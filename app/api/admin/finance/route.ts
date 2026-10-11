@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
-import { createOwnerFinanceEntry, getCryptoOrdersByTransactionIds, insertAuditLog, listOwnerFinanceEntries, listPurchaseTransactions, summarizeOwnerFinance, voidOwnerFinanceEntry } from '@/lib/server/data'
+import { createOwnerFinanceEntry, getCryptoOrdersByTransactionIds, insertAuditLog, listCryptoDepositEventsByTransactionIds, listOwnerFinanceEntries, listPurchaseTransactions, summarizeOwnerFinance, voidOwnerFinanceEntry } from '@/lib/server/data'
 import { getActualNativeFee, getPlatformCryptoCost, getProviderFeeEstimate } from '@/lib/server/crypto-platform-cost'
 
 const CATEGORIES = {
@@ -40,6 +40,8 @@ export async function GET(request: Request) {
     const metadata = transaction.metadata ?? {}
     return metadata.settlementFlow === 'direct_crypto_deposit' || metadata.settlementKind === 'crypto_sell_order'
   })
+  const depositEvents = await listCryptoDepositEventsByTransactionIds(depositRows.map(({ transaction }) => transaction.id))
+  const depositEventsByTransaction = new Map(depositEvents.flatMap(event => event.transactionId ? [[event.transactionId, event] as const] : []))
   const deposits = depositRows.map(({ transaction }) => {
     const metadata = transaction.metadata ?? {}
     const cryptoAmount = typeof metadata.amountCrypto === 'number'
@@ -50,9 +52,29 @@ export async function GET(request: Request) {
       ? Math.round(cryptoAmount * marketRate * 100) / 100
       : null
     const customerCreditNgn = Math.abs(transaction.amount)
+    const event = depositEventsByTransaction.get(transaction.id)
+    const payload = event?.payload ?? {}
+    const sweepEconomics = payload.sweepEconomics && typeof payload.sweepEconomics === 'object'
+      ? payload.sweepEconomics as Record<string, unknown> : null
+    const allSweepCosts = Array.isArray(sweepEconomics?.costs)
+      ? sweepEconomics.costs as Array<Record<string, unknown>>
+      : []
+    const sweepCosts = allSweepCosts.filter(cost => cost.status === 'actual')
+    const sweepCostCaptureIncomplete = allSweepCosts.some(cost => cost.status === 'unavailable')
+    const contributingSweepCosts = sweepCosts.filter(cost => cost.includedInTopup !== true)
+    const hasCompleteNgnCost = !sweepCostCaptureIncomplete && contributingSweepCosts.length > 0
+      && contributingSweepCosts.every(cost => typeof cost.amountNgnEstimate === 'number')
+    const actualSweepCostNgnEstimate = hasCompleteNgnCost
+      ? contributingSweepCosts.reduce((sum, cost) => sum + Number(cost.amountNgnEstimate), 0)
+      : null
+    const conversion = payload.conversion && typeof payload.conversion === 'object'
+      ? payload.conversion as Record<string, unknown> : null
+    const treasuryBatchConversions = Array.isArray(payload.treasuryBatchConversions)
+      ? payload.treasuryBatchConversions as Array<Record<string, unknown>> : []
     return {
       id: transaction.id,
       reference: transaction.reference,
+      pairId: typeof metadata.pairId === 'string' ? metadata.pairId : '',
       type: metadata.settlementFlow === 'direct_crypto_deposit' ? 'direct_deposit' : 'crypto_sell_order',
       description: transaction.description,
       status: transaction.status,
@@ -64,6 +86,22 @@ export async function GET(request: Request) {
       marketValueNgn,
       spreadNgn: marketValueNgn === null ? null : Math.round((marketValueNgn - customerCreditNgn) * 100) / 100,
       marketSnapshotSource: typeof metadata.marketSnapshotSource === 'string' ? metadata.marketSnapshotSource : null,
+      sweepStatus: event?.sweepStatus ?? null,
+      sweepCostCaptureIncomplete,
+      sweepCosts: sweepCosts.map(cost => ({
+        kind: typeof cost.kind === 'string' ? cost.kind : 'delivery_cost',
+        operation: typeof cost.operation === 'string' ? cost.operation : null,
+        symbol: typeof cost.symbol === 'string' ? cost.symbol : null,
+        amountCrypto: typeof cost.amountCrypto === 'number' ? cost.amountCrypto : null,
+        amountNgnEstimate: typeof cost.amountNgnEstimate === 'number' ? cost.amountNgnEstimate : null,
+        payer: typeof cost.payer === 'string' ? cost.payer : null,
+        includedInTopup: cost.includedInTopup === true,
+      })),
+      actualSweepCostNgnEstimate: actualSweepCostNgnEstimate === null ? null : Math.round(actualSweepCostNgnEstimate * 100) / 100,
+      conversionFeeCosts: Array.isArray(conversion?.quotedFeeCosts) ? conversion.quotedFeeCosts : [],
+      conversionGasCosts: Array.isArray(conversion?.quotedGasCosts) ? conversion.quotedGasCosts : [],
+      conversionUsdcEstimate: typeof conversion?.targetUsdcAmount === 'string' ? conversion.targetUsdcAmount : null,
+      treasuryBatchConversions,
     }
   })
   const purchases = purchaseRows.filter(({ transaction }) => transaction.type !== 'crypto_sell').map(({ transaction }) => {
@@ -139,6 +177,12 @@ export async function GET(request: Request) {
     marketValueNgn: successfulDeposits.reduce((sum, deposit) => sum + (deposit.marketValueNgn ?? 0), 0),
     estimatedSpreadNgn: successfulDeposits.filter(deposit => deposit.spreadNgn !== null).reduce((sum, deposit) => sum + (deposit.spreadNgn ?? 0), 0),
     missingMarketSnapshotCount: successfulDeposits.filter(deposit => deposit.marketValueNgn === null).length,
+    actualSweepCostNgnEstimate: successfulDeposits.reduce((sum, deposit) => sum + (deposit.actualSweepCostNgnEstimate ?? 0), 0),
+    sweepCostMissingCount: successfulDeposits.filter(deposit => deposit.sweepStatus === 'swept' && deposit.actualSweepCostNgnEstimate === null).length,
+    spreadAfterCapturedSweepCostNgn: successfulDeposits
+      .filter(deposit => deposit.spreadNgn !== null && deposit.actualSweepCostNgnEstimate !== null)
+      .reduce((sum, deposit) => sum + (deposit.spreadNgn! - deposit.actualSweepCostNgnEstimate!), 0),
+    contributionCount: successfulDeposits.filter(deposit => deposit.spreadNgn !== null && deposit.actualSweepCostNgnEstimate !== null).length,
   }
   return NextResponse.json({ success: true, data: { summary, entries, purchases, automaticPurchases, deposits, automaticDeposits } })
 }

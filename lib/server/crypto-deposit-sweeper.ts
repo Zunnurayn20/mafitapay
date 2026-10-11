@@ -3,6 +3,7 @@ import {
   createWalletClient,
   erc20Abi,
   fallback,
+  formatUnits,
   getAddress,
   http,
   parseUnits,
@@ -29,10 +30,14 @@ import { sanitizePolygonRpcUrls } from '@/lib/server/crypto-deposit-scanner'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import {
   claimCryptoDepositEventSweep,
+  getPersistedCryptoMarketSnapshots,
   getCryptoDepositAddressSecretById,
   markCryptoDepositEventSweepFailed,
   markCryptoDepositEventSwept,
   updateCryptoDepositEventConversion,
+  updateCryptoDepositEventSweepEconomics,
+  appendCryptoDepositEventTreasuryConversion,
+  listCryptoDepositEvents,
 } from '@/lib/server/data'
 import type { CryptoDepositEvent, CryptoOrder } from '@/types'
 
@@ -81,6 +86,108 @@ const MIN_EVM_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_MIN_EVM_GA
 // converted in one treasury transaction. The value is USDC, so "20" means approximately $20.
 const EVM_TREASURY_BATCH_MIN_USDC_UNITS = parseUnits(process.env.MAFITAPAY_EVM_BATCH_CONVERSION_MIN_USDC ?? '20', 6)
 const EVM_TREASURY_BATCH_ENABLED = (process.env.MAFITAPAY_EVM_BATCH_CONVERSION ?? 'on').trim().toLowerCase() !== 'off'
+
+async function recordEvmSweepCosts(input: {
+  externalEventId: string
+  publicClient: any
+  chain: 'base' | 'bsc' | 'polygon' | 'robinhood'
+  transactions: Array<{
+    hash: Hex
+    operation: string
+    payer: 'deposit_address' | 'treasury'
+    topupUnits?: bigint
+    gasIncludedInTopup?: boolean
+  }>
+}) {
+  const costs: Record<string, unknown>[] = []
+  try {
+    const nativeAssetId = input.chain === 'base' ? 'ETH_BASE'
+      : input.chain === 'bsc' ? 'BNB_BSC'
+        : input.chain === 'polygon' ? 'POL_POLYGON' : 'ETH_ROBINHOOD'
+    const assets = await getPersistedCryptoMarketSnapshots(['ETH_BASE', 'BNB_BSC', 'POL_POLYGON', 'ETH_ROBINHOOD']).catch(error => {
+      console.warn('[crypto-deposit-sweeper] saved gas-asset market rate unavailable for cost conversion', {
+        externalEventId: input.externalEventId,
+        reason: error instanceof Error ? error.message : 'market snapshot lookup failed',
+      })
+      return []
+    })
+    const nativeAsset = assets.find(asset => asset.id === nativeAssetId)
+    for (const transaction of input.transactions) {
+      let receipt: any
+      try {
+        receipt = await input.publicClient.waitForTransactionReceipt({ hash: transaction.hash, timeout: 8_000 })
+      } catch (error) {
+        console.warn('[crypto-deposit-sweeper] could not read sweep transaction receipt for cost tracking', {
+          externalEventId: input.externalEventId,
+          operation: transaction.operation,
+          reason: error instanceof Error ? error.message : 'receipt unavailable',
+        })
+      }
+      if (!receipt) {
+        costs.push({
+          kind: 'receipt_unavailable',
+          status: 'unavailable',
+          operation: transaction.operation,
+          txHash: transaction.hash,
+          assetId: nativeAssetId,
+          symbol: nativeAsset?.symbol ?? nativeAssetId,
+        })
+      }
+      const marketRateNgn = nativeAsset && Number.isFinite(nativeAsset.marketRate) && nativeAsset.marketRate > 0
+        ? nativeAsset.marketRate : null
+      if (receipt) {
+        const gasUnits = BigInt(receipt.gasUsed ?? 0) * BigInt(receipt.effectiveGasPrice ?? 0)
+        const gasAmount = Number(formatUnits(gasUnits, 18))
+        if (gasUnits > 0) {
+          costs.push({
+            kind: 'network_fee',
+            status: 'actual',
+            operation: transaction.operation,
+            txHash: transaction.hash,
+            assetId: nativeAssetId,
+            symbol: nativeAsset?.symbol ?? nativeAssetId,
+            amountUnits: gasUnits.toString(),
+            amountCrypto: gasAmount,
+            amountNgnEstimate: marketRateNgn === null ? null : Math.round(gasAmount * marketRateNgn * 100) / 100,
+            marketRateNgn,
+            marketSnapshotSource: nativeAsset?.marketSnapshotSource ?? null,
+            marketPriceUpdatedAt: nativeAsset?.marketPriceUpdatedAt ?? null,
+            payer: transaction.payer,
+            includedInTopup: transaction.gasIncludedInTopup === true,
+            transactionStatus: receipt.status,
+          })
+        }
+      }
+      if (transaction.topupUnits && transaction.topupUnits > 0 && receipt?.status === 'success') {
+        const topupAmount = Number(formatUnits(transaction.topupUnits, 18))
+        costs.push({
+          kind: 'treasury_gas_topup',
+          status: 'actual',
+          operation: transaction.operation,
+          txHash: transaction.hash,
+          assetId: nativeAssetId,
+          symbol: nativeAsset?.symbol ?? nativeAssetId,
+          amountUnits: transaction.topupUnits.toString(),
+          amountCrypto: topupAmount,
+          amountNgnEstimate: marketRateNgn === null ? null : Math.round(topupAmount * marketRateNgn * 100) / 100,
+          marketRateNgn,
+          marketSnapshotSource: nativeAsset?.marketSnapshotSource ?? null,
+          marketPriceUpdatedAt: nativeAsset?.marketPriceUpdatedAt ?? null,
+          payer: 'treasury',
+        })
+      }
+    }
+    if (costs.length) await updateCryptoDepositEventSweepEconomics(input.externalEventId, costs)
+    return costs
+  } catch (error) {
+    // Cost capture is ancillary; a pricing/database lookup must never turn an on-chain sweep into a failure.
+    console.warn('[crypto-deposit-sweeper] could not persist sweep cost details', {
+      externalEventId: input.externalEventId,
+      reason: error instanceof Error ? error.message : 'cost capture failed',
+    })
+    return costs
+  }
+}
 
 export interface SweepGasStat {
   timestamp: string
@@ -559,7 +666,7 @@ async function ensureTokenSweepGas(input: {
         action: 'base_deposit_gas_topup_from_treasury',
       })
     }
-    return hash
+    return { hash: hash as Hex, amountUnits: neededTopup }
   }
 
   // ton native also no gas topup from treasury (deposit pays its own)
@@ -571,6 +678,7 @@ async function sweepNative(input: {
   privateKey: Hex
   treasuryAddress: Address
   amountUnits: bigint
+  externalEventId: string
 }) {
   if (input.asset.chain === 'base' || input.asset.chain === 'bsc' || input.asset.chain === 'polygon' || input.asset.chain === 'robinhood') {
     const clients = input.asset.chain === 'base'
@@ -609,6 +717,12 @@ async function sweepNative(input: {
       chain: input.asset.chain === 'base' ? base : input.asset.chain === 'bsc' ? bsc : input.asset.chain === 'polygon' ? polygon : robinhoodChain,
       to: input.treasuryAddress,
       value,
+    })
+    await recordEvmSweepCosts({
+      externalEventId: input.externalEventId,
+      publicClient: clients.publicClient,
+      chain: input.asset.chain,
+      transactions: [{ hash: sweepHash, operation: 'native_deposit_sweep', payer: 'deposit_address' }],
     })
 
     if (input.asset.chain === 'base') {
@@ -787,8 +901,11 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
   let nativeGasReserve: bigint | null = null
 
   // For ERC20, ensure the deposit address has enough native gas for the bridge tx (top-up from treasury if needed)
+  let gasTopup: Awaited<ReturnType<typeof ensureTokenSweepGas>> = null
+  const costTransactions: Parameters<typeof recordEvmSweepCosts>[0]['transactions'] = []
   if (asset.kind === 'erc20') {
-    await ensureTokenSweepGas({ asset, depositAddress: getAddress(depositAddress) })
+    gasTopup = await ensureTokenSweepGas({ asset, depositAddress: getAddress(depositAddress) })
+    if (gasTopup) costTransactions.push({ hash: gasTopup.hash, operation: 'treasury_gas_topup', payer: 'treasury', topupUnits: gasTopup.amountUnits })
   } else {
     const gasReserve = await calculateEvmGasReserve(publicClient, {
       to: baseConfig.configuredAddress,
@@ -868,6 +985,7 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
       args: [quote.estimate.approvalAddress as Address, amountUnits],
     })
     await publicClient.waitForTransactionReceipt({ hash: approvalHash })
+    costTransactions.push({ hash: approvalHash as Hex, operation: 'token_approval', payer: 'deposit_address', gasIncludedInTopup: Boolean(gasTopup) })
   }
 
   // Send the bridge/conversion tx from the deposit address (this makes the user's deposit address the one "touching" the bridge to Base)
@@ -876,6 +994,7 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
     data: quote.transactionRequest.data,
     value: BigInt(quote.transactionRequest.value || '0'),
   })
+  costTransactions.push({ hash: bridgeTxHash as Hex, operation: 'lifi_conversion', payer: 'deposit_address', gasIncludedInTopup: Boolean(gasTopup) })
 
   // Record the conversion details (the bridge tx is the sweep tx on source; the bridge will deliver USDC to Base treasury, with source address = deposit)
   await updateCryptoDepositEventConversion(externalEventId, {
@@ -884,11 +1003,21 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
     conversionTool: quote.tool,
     targetUsdcAmount: quote.estimate?.toAmount,
     targetUsdcAmountMin: quote.estimate?.toAmountMin,
+    quotedFeeCosts: quote.estimate?.feeCosts ?? [],
+    quotedGasCosts: quote.estimate?.gasCosts ?? [],
+    feeQuoteStatus: 'estimate',
     fromChain,
     fromToken,
     sourceAmount: quotedAmountUnits.toString(),
     sourceAmountReceived: amountUnits.toString(),
     note: 'swept+converted directly from user deposit address via LiFi to Base USDC treasury',
+  })
+
+  const deliveryCosts = await recordEvmSweepCosts({
+    externalEventId,
+    publicClient,
+    chain: asset.chain,
+    transactions: costTransactions,
   })
 
   console.log(`[crypto-deposit-sweeper] EVM deposit ${asset.pairId} swept+converted via bridge from deposit addr, tx=${bridgeTxHash}`)
@@ -903,7 +1032,62 @@ async function sweepEvmDepositViaBridgeToBaseUsdc(input: {
     action: 'evm_deposit_conversion_to_base_usdc',
   })
 
-  return bridgeTxHash
+  return {
+    txHash: bridgeTxHash as Hex,
+    deliveryCosts,
+    quote: {
+      transactionId: quote.transactionId,
+      tool: quote.tool,
+      targetUsdcAmount: quote.estimate?.toAmount ?? null,
+      targetUsdcAmountMin: quote.estimate?.toAmountMin ?? null,
+      feeCosts: quote.estimate?.feeCosts ?? [],
+      gasCosts: quote.estimate?.gasCosts ?? [],
+    },
+  }
+}
+
+async function allocateTreasuryBatchConversion(input: {
+  pairId: string
+  conversionTxHash: string
+  sourceAmountUnits: string
+  targetUsdcAmount: string | null
+  deliveryCosts: Record<string, unknown>[]
+  quote: Record<string, unknown>
+}) {
+  const events = await listCryptoDepositEvents({ pairId: input.pairId, status: 'matched', sweepStatus: 'swept', limit: 200, source: 'onchain' })
+  const candidates = events.filter(event => {
+    const conversions = Array.isArray(event.payload?.treasuryBatchConversions)
+      ? event.payload.treasuryBatchConversions as Array<Record<string, unknown>> : []
+    return !conversions.some(conversion => conversion.pairId === input.pairId)
+  })
+  const totalUnits = candidates.reduce((sum, event) => sum + Math.max(0, Number(event.amountCrypto) || 0), 0)
+  if (!totalUnits) return
+
+  for (const event of candidates) {
+    const weight = Math.max(0, Number(event.amountCrypto) || 0) / totalUnits
+    if (!weight) continue
+    const allocatedCosts = input.deliveryCosts.map(cost => ({
+      ...cost,
+      kind: typeof cost.kind === 'string' ? cost.kind : 'network_fee',
+      operation: 'shared_treasury_batch_conversion',
+      amountCrypto: typeof cost.amountCrypto === 'number' ? cost.amountCrypto * weight : null,
+      amountUnits: undefined,
+      amountNgnEstimate: typeof cost.amountNgnEstimate === 'number' ? Math.round(cost.amountNgnEstimate * weight * 100) / 100 : null,
+      allocationBasis: 'pro_rata_customer_deposit_amount',
+      allocationWeight: weight,
+      payer: 'treasury',
+    }))
+    if (allocatedCosts.length) await updateCryptoDepositEventSweepEconomics(event.externalEventId, allocatedCosts)
+    await appendCryptoDepositEventTreasuryConversion(event.externalEventId, {
+      pairId: input.pairId,
+      txHash: input.conversionTxHash,
+      allocationBasis: 'pro_rata_customer_deposit_amount',
+      allocationWeight: weight,
+      sourceAmountUnits: input.sourceAmountUnits,
+      allocatedTargetUsdcAmount: input.targetUsdcAmount ? (Number(input.targetUsdcAmount) / 1_000_000 * weight).toFixed(6) : null,
+      quote: input.quote,
+    })
+  }
 }
 
 /**
@@ -994,14 +1178,22 @@ export async function runEvmTreasuryBatchConversion(input?: { chain?: 'bsc' | 'p
           continue
         }
 
-        const txHash = await sweepEvmDepositViaBridgeToBaseUsdc({
+        const conversion = await sweepEvmDepositViaBridgeToBaseUsdc({
           privateKey: target.privateKey,
           depositAddress: target.address,
           asset: target.asset,
           amountUnits,
           externalEventId: `treasury_batch:${target.chain}:${target.asset.pairId}:${Date.now()}`,
         })
-        conversions.push({ pairId: target.asset.pairId, converted: true, txHash, quotedUsdcUnits: quotedNet.toString() })
+        await allocateTreasuryBatchConversion({
+          pairId: target.asset.pairId,
+          conversionTxHash: conversion.txHash,
+          sourceAmountUnits: amountUnits.toString(),
+          targetUsdcAmount: conversion.quote.targetUsdcAmount as string | null,
+          deliveryCosts: conversion.deliveryCosts,
+          quote: conversion.quote,
+        })
+        conversions.push({ pairId: target.asset.pairId, converted: true, txHash: conversion.txHash, quotedUsdcUnits: quotedNet.toString() })
       } catch (error) {
         conversions.push({ pairId: target.asset.pairId, error: error instanceof Error ? error.message : 'conversion failed' })
       }
@@ -1160,9 +1352,12 @@ async function sweepErc20(input: {
   depositAddress: Address
   treasuryAddress: Address
   amountUnits: bigint
+  externalEventId: string
 }) {
   if (!input.asset.tokenAddress) throw new Error('Token contract is missing for sweep.')
-  await ensureTokenSweepGas({ asset: input.asset, depositAddress: input.depositAddress })
+  const gasTopup = await ensureTokenSweepGas({ asset: input.asset, depositAddress: input.depositAddress })
+  const costTransactions: Parameters<typeof recordEvmSweepCosts>[0]['transactions'] = []
+  if (gasTopup) costTransactions.push({ hash: gasTopup.hash, operation: 'treasury_gas_topup', payer: 'treasury', topupUnits: gasTopup.amountUnits })
 
   if (input.asset.chain === 'base') {
     const clients = createBaseClientsFromPrivateKey(input.privateKey)
@@ -1174,6 +1369,8 @@ async function sweepErc20(input: {
       functionName: 'transfer',
       args: [input.treasuryAddress, input.amountUnits],
     })
+    costTransactions.push({ hash: sweepHash as Hex, operation: 'token_sweep', payer: 'deposit_address', gasIncludedInTopup: Boolean(gasTopup) })
+    await recordEvmSweepCosts({ externalEventId: input.externalEventId, publicClient: clients.publicClient, chain: 'base', transactions: costTransactions })
     const baseConfig = getBaseExecutorConfig()
     logBaseAttribution({
       builderCode: baseConfig.builderCode,
@@ -1189,7 +1386,7 @@ async function sweepErc20(input: {
 
   if (input.asset.chain === 'bsc') {
     const clients = createBscClientsFromPrivateKey(input.privateKey)
-    return clients.walletClient.writeContract({
+    const sweepHash = await clients.walletClient.writeContract({
       account: clients.account,
       chain: bsc,
       address: input.asset.tokenAddress,
@@ -1197,10 +1394,13 @@ async function sweepErc20(input: {
       functionName: 'transfer',
       args: [input.treasuryAddress, input.amountUnits],
     })
+    costTransactions.push({ hash: sweepHash as Hex, operation: 'token_sweep', payer: 'deposit_address', gasIncludedInTopup: Boolean(gasTopup) })
+    await recordEvmSweepCosts({ externalEventId: input.externalEventId, publicClient: clients.publicClient, chain: 'bsc', transactions: costTransactions })
+    return sweepHash
   }
 
   const clients = createPolygonClientsFromPrivateKey(input.privateKey)
-  return clients.walletClient.writeContract({
+  const sweepHash = await clients.walletClient.writeContract({
     account: clients.account,
     chain: polygon,
     address: input.asset.tokenAddress,
@@ -1208,6 +1408,9 @@ async function sweepErc20(input: {
     functionName: 'transfer',
     args: [input.treasuryAddress, input.amountUnits],
   })
+  costTransactions.push({ hash: sweepHash as Hex, operation: 'token_sweep', payer: 'deposit_address', gasIncludedInTopup: Boolean(gasTopup) })
+  await recordEvmSweepCosts({ externalEventId: input.externalEventId, publicClient: clients.publicClient, chain: 'polygon', transactions: costTransactions })
+  return sweepHash
 }
 
 export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
@@ -1325,13 +1528,14 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       // For EVM family deposits (except USDC on Base), sweep by directly bridging/converting from the user's deposit address
       // to USDC on Base. This makes the user's deposit address the originator on the source chain, so the bridge
       // records link the inflow on Base back to this specific deposit address for dashboard tracing.
-      hash = await sweepEvmDepositViaBridgeToBaseUsdc({
+      const conversion = await sweepEvmDepositViaBridgeToBaseUsdc({
         privateKey: privateKeyForEvm,
         depositAddress: depositAddressStr,
         asset,
         amountUnits,
         externalEventId: event.externalEventId,
       })
+      hash = conversion.txHash
     } else if (asset.chain === 'solana') {
       const isToken = asset.pairId === 'USDC_SOLANA'
       const mint = isToken ? 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' : undefined
@@ -1356,14 +1560,14 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       })
     } else if (asset.kind === 'erc20') {
       if (!privateKeyForEvm) throw new Error('EVM private key required for ERC20 sweep.')
-      hash = await sweepErc20({ asset, privateKey: privateKeyForEvm, depositAddress: getAddress(depositAddressStr), treasuryAddress: getAddress(treasuryAddress as string), amountUnits })
+      hash = await sweepErc20({ asset, privateKey: privateKeyForEvm, depositAddress: getAddress(depositAddressStr), treasuryAddress: getAddress(treasuryAddress as string), amountUnits, externalEventId: event.externalEventId })
     } else if (asset.chain === 'ton') {
       if (!mnemonicForTon) throw new Error('TON mnemonic required for sweep.')
       // treasuryAddress for ton is string
       hash = await sweepTonNative({ mnemonic: mnemonicForTon, treasuryAddress: treasuryAddress as string, amountUnits })
     } else {
       if (!privateKeyForEvm) throw new Error('EVM private key required for native sweep.')
-      hash = await sweepNative({ asset, privateKey: privateKeyForEvm, treasuryAddress: getAddress(treasuryAddress as string), amountUnits })
+      hash = await sweepNative({ asset, privateKey: privateKeyForEvm, treasuryAddress: getAddress(treasuryAddress as string), amountUnits, externalEventId: event.externalEventId })
     }
 
     await markCryptoDepositEventSwept({

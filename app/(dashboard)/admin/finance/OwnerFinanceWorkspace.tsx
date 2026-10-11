@@ -55,6 +55,7 @@ type AutomaticPurchases = {
 type CryptoDeposit = {
   id: string
   reference: string
+  pairId: string
   type: 'direct_deposit' | 'crypto_sell_order'
   description: string
   status: string
@@ -66,6 +67,22 @@ type CryptoDeposit = {
   marketValueNgn: number | null
   spreadNgn: number | null
   marketSnapshotSource: string | null
+  sweepStatus: string | null
+  sweepCostCaptureIncomplete: boolean
+  sweepCosts: Array<{
+    kind: string
+    operation: string | null
+    symbol: string | null
+    amountCrypto: number | null
+    amountNgnEstimate: number | null
+    payer: string | null
+    includedInTopup: boolean
+  }>
+  actualSweepCostNgnEstimate: number | null
+  conversionFeeCosts: Array<Record<string, unknown>>
+  conversionGasCosts: Array<Record<string, unknown>>
+  conversionUsdcEstimate: string | null
+  treasuryBatchConversions: Array<Record<string, unknown>>
 }
 
 type AutomaticDeposits = {
@@ -74,6 +91,10 @@ type AutomaticDeposits = {
   marketValueNgn: number
   estimatedSpreadNgn: number
   missingMarketSnapshotCount: number
+  actualSweepCostNgnEstimate: number
+  sweepCostMissingCount: number
+  spreadAfterCapturedSweepCostNgn: number
+  contributionCount: number
 }
 
 const categories = {
@@ -275,19 +296,21 @@ export function OwnerFinanceWorkspace() {
       <section id="finance-panel-deposits" role="tabpanel" aria-labelledby="finance-tab-deposits" tabIndex={0} hidden={activeTab !== 'deposits'} className="space-y-3">
         <div>
           <h3 className="text-base font-bold text-[var(--text)]">Crypto deposits and sell orders</h3>
-          <p className="mt-1 text-xs text-[var(--muted)]">Estimated spread is the market value of crypto received minus the NGN credited. It is a pricing estimate, not realized profit; inventory and delivery costs are not included. Older records may not have a saved market snapshot.</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Spread is the market value of crypto received minus the NGN credited. EVM sweep costs use transaction receipts and saved native-asset rates. Shared treasury conversion costs are allocated by deposit amount; LI.FI route fees remain quote estimates.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Successful deposits" value={String(payload?.automaticDeposits.successfulCount ?? 0)} detail="Direct credits and completed sell orders" />
           <Metric label="Customer NGN credited" value={formatNaira(payload?.automaticDeposits.customerCreditNgn ?? 0)} detail="Successful deposits in this period" />
           <Metric label="Received crypto value" value={formatNaira(payload?.automaticDeposits.marketValueNgn ?? 0)} detail="Saved market snapshot estimate" tone="text-[var(--gold2)]" />
-          <Metric label="Estimated deposit spread" value={formatNaira(payload?.automaticDeposits.estimatedSpreadNgn ?? 0)} detail={`${payload?.automaticDeposits.missingMarketSnapshotCount ?? 0} successful records lack a saved rate`} tone="text-[var(--green2)]" />
+          <Metric label="Estimated deposit spread" value={formatNaira(payload?.automaticDeposits.estimatedSpreadNgn ?? 0)} detail={`${payload?.automaticDeposits.missingMarketSnapshotCount ?? 0} records lack a saved rate`} tone="text-[var(--green2)]" />
+          <Metric label="Tracked sweep cost" value={formatNaira(payload?.automaticDeposits.actualSweepCostNgnEstimate ?? 0)} detail={`${payload?.automaticDeposits.sweepCostMissingCount ?? 0} swept records lack a complete NGN cost`} tone="text-[var(--gold2)]" />
+          <Metric label="Spread less tracked sweep cost" value={formatNaira(payload?.automaticDeposits.spreadAfterCapturedSweepCostNgn ?? 0)} detail={`Across ${payload?.automaticDeposits.contributionCount ?? 0} records; shared batch fees are allocated`} tone="text-[var(--green2)]" />
         </div>
         {!payload?.deposits.length ? (
           <div className="rounded-lg border border-dashed border-[var(--border)] p-5 text-center text-sm text-[var(--muted)]">No crypto deposits or sell orders found in this date range.</div>
         ) : (
           <AdminTable>
-            <AdminThead columns={['Deposit / sell', 'Status', 'Crypto received', 'Customer credited', 'Market value (est.)', 'Spread (est.)', '']} />
+            <AdminThead columns={['Deposit / sell', 'Status', 'Crypto received', 'Customer credited', 'Market value (est.)', 'Spread (est.)', 'Sweep / route costs', '']} />
             <tbody className="divide-y divide-[var(--border)]">
               {payload.deposits.map(deposit => (
                 <tr key={deposit.id} className="hover:bg-[var(--clay)]">
@@ -297,6 +320,30 @@ export function OwnerFinanceWorkspace() {
                   <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text2)]">{formatNaira(deposit.customerCreditNgn)}</td>
                   <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text2)]">{deposit.marketValueNgn === null ? 'Not captured' : formatNaira(deposit.marketValueNgn)}</td>
                   <td className={`px-4 py-3 whitespace-nowrap font-mono text-sm ${deposit.spreadNgn === null ? 'text-[var(--muted)]' : 'text-[var(--green2)]'}`}>{deposit.spreadNgn === null ? '—' : `${formatNaira(deposit.spreadNgn)} est.`}{deposit.marketSnapshotSource ? <div className="text-[10px] capitalize text-[var(--muted)]">{deposit.marketSnapshotSource} market</div> : null}</td>
+                  <td className="min-w-56 px-4 py-3 text-xs text-[var(--text2)]">
+                    {deposit.sweepCosts.length ? deposit.sweepCosts.map((cost, index) => (
+                      <div key={`${cost.kind}-${cost.operation}-${index}`} className="mb-1 last:mb-0">
+                        <span className="capitalize">{cost.kind.replaceAll('_', ' ')}</span>: {cost.amountCrypto === null ? '—' : `${cost.amountCrypto.toLocaleString(undefined, { maximumFractionDigits: 10 })} ${cost.symbol ?? ''}`}
+                        {cost.amountNgnEstimate !== null ? <span className="text-[var(--muted)]"> · ≈{formatNaira(cost.amountNgnEstimate)}</span> : null}
+                        {cost.includedInTopup ? <span className="text-[var(--muted)]"> · covered by top-up</span> : null}
+                      </div>
+                    )) : <span className="text-[var(--muted)]">{deposit.sweepStatus === 'swept' ? 'Receipt cost unavailable' : `Sweep ${deposit.sweepStatus ?? 'not recorded'}`}</span>}
+                    {deposit.sweepCostCaptureIncomplete ? <div className="text-[var(--muted)]">Some receipt costs are still unavailable.</div> : null}
+                    {deposit.conversionFeeCosts.length || deposit.conversionGasCosts.length ? <div className="mt-1 border-t border-[var(--border)] pt-1 text-[var(--gold2)]">LI.FI quote estimates{deposit.conversionUsdcEstimate ? <span> · {deposit.conversionUsdcEstimate} USDC target</span> : null}</div> : null}
+                    {[...deposit.conversionFeeCosts, ...deposit.conversionGasCosts].slice(0, 4).map((fee, index) => {
+                      const usd = typeof fee.amountUSD === 'string' ? fee.amountUSD : null
+                      const token = fee.token && typeof fee.token === 'object' && 'symbol' in fee.token ? String(fee.token.symbol) : ''
+                      const label = typeof fee.name === 'string' ? fee.name : typeof fee.type === 'string' ? fee.type : 'Route fee'
+                      return <div key={`route-fee-${index}`} className="text-[var(--muted)]">{label}: {usd ? `$${usd}` : 'amount not reported'}{token ? ` (${token})` : ''}</div>
+                    })}
+                    {deposit.treasuryBatchConversions.map((batch, index) => {
+                      const quote = batch.quote && typeof batch.quote === 'object' ? batch.quote as Record<string, unknown> : null
+                      const feeCosts = Array.isArray(quote?.feeCosts) ? quote.feeCosts as Array<Record<string, unknown>> : []
+                      const gasCosts = Array.isArray(quote?.gasCosts) ? quote.gasCosts as Array<Record<string, unknown>> : []
+                      return <div key={`batch-${String(batch.txHash)}-${index}`} className="mt-1 border-t border-[var(--border)] pt-1 text-[var(--gold2)]">Shared treasury conversion: {typeof batch.allocatedTargetUsdcAmount === 'string' ? `≈${batch.allocatedTargetUsdcAmount} USDC allocated` : 'allocation recorded'}{batch.allocationBasis === 'pro_rata_customer_deposit_amount' ? <div className="text-[10px] text-[var(--muted)]">Allocated by customer deposit amount</div> : null}{[...feeCosts, ...gasCosts].slice(0, 3).map((fee, feeIndex) => <div key={`batch-fee-${feeIndex}`} className="text-[var(--muted)]">Quote fee: {typeof fee.amountUSD === 'string' ? `$${fee.amountUSD}` : 'amount not reported'}{fee.token && typeof fee.token === 'object' && 'symbol' in fee.token ? ` (${String(fee.token.symbol)})` : ''}</div>)}</div>
+                    })}
+                    {(deposit.pairId.endsWith('_BSC') || deposit.pairId.endsWith('_POLYGON')) && deposit.sweepStatus === 'swept' && !deposit.treasuryBatchConversions.length ? <div className="mt-1 text-[var(--muted)]">No treasury batch conversion has been allocated yet.</div> : null}
+                  </td>
                   <td className="px-4 py-3 text-right"><Link href={`/admin/transactions/${encodeURIComponent(deposit.id)}`} className="text-xs font-semibold text-[var(--gold2)] hover:underline">Details</Link></td>
                 </tr>
               ))}
