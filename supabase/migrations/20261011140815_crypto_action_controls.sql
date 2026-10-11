@@ -5,7 +5,7 @@ ALTER TABLE public.crypto_pairs
 UPDATE public.crypto_pairs
 SET buy_enabled = FALSE,
     sell_enabled = FALSE
-WHERE is_active = FALSE
+WHERE is_active = 0
   AND buy_enabled = TRUE
   AND sell_enabled = TRUE;
 

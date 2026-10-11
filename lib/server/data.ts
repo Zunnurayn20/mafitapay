@@ -3121,7 +3121,7 @@ async function seedPostgresCatalogTables() {
           computeSellRate(marketPriceUsd, asset.marketRate, sellMargin), buyMargin, sellMargin,
           asset.buyNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id),
           asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
-          asset.quoteTtlSeconds, asset.isActive !== false, asset.baseExecutionEnabled === true,
+          asset.quoteTtlSeconds, asset.isActive !== false ? 1 : 0, asset.baseExecutionEnabled === true,
           executionRail ?? null, routedConfig?.toChain ?? null, routedConfig?.toToken ?? null,
           routedConfig?.decimals ?? null, routedConfig?.addressFamily ?? null,
           routedConfig?.minimumBuyNgn ?? null, routedConfig?.maxQuoteDriftPercent ?? null,
@@ -8091,7 +8091,7 @@ export async function listRecentNotifications(limit = 80): Promise<Array<Notific
 export async function getCryptoAssets(options?: { forceRefresh?: boolean; liveOnly?: boolean }): Promise<CryptoAsset[]> {
   await ensureDbReady()
   const rows = isPostgresEnabled()
-    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE is_active = ?', [true])).rows
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE is_active <> 0')).rows
     : getDb().prepare('SELECT * FROM crypto_pairs WHERE is_active = 1').all() as CryptoPairRow[]
   const persistedAssets = rows.map(mapCryptoPairRow)
   const shouldRefresh = options?.forceRefresh === true || persistedAssets.some(asset =>
@@ -8229,7 +8229,7 @@ export async function getPersistedCryptoMarketSnapshots(ids: string[]): Promise<
 export async function getCryptoAssetBySymbol(symbol: string): Promise<CryptoAsset | null> {
   await ensureDbReady()
   const row = isPostgresEnabled()
-    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE symbol = ? AND is_active = ?', [symbol, true])).rows[0]
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE symbol = ? AND is_active <> 0 LIMIT 1', [symbol])).rows[0]
     : getDb().prepare('SELECT * FROM crypto_pairs WHERE symbol = ? AND is_active = 1 LIMIT 1').get(symbol) as CryptoPairRow | undefined
   if (!row) return null
   const persistedAsset = mapCryptoPairRow(row)
@@ -8243,7 +8243,7 @@ export async function getCryptoAssetBySymbol(symbol: string): Promise<CryptoAsse
 export async function refreshCryptoMarketSnapshots(): Promise<CryptoAsset[]> {
   await ensureDbReady()
   const rows = isPostgresEnabled()
-    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE is_active = ?', [true])).rows
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs WHERE is_active <> 0')).rows
     : getDb().prepare('SELECT * FROM crypto_pairs WHERE is_active = 1').all() as CryptoPairRow[]
   return await refreshCryptoAssetsSingleFlight(rows.map(mapCryptoPairRow))
 }
@@ -9777,7 +9777,7 @@ async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
         marketRate > 0 ? computeBuyRate(marketPriceUsd, marketRate, buyMargin) : 0,
         marketRate > 0 ? computeSellRate(marketPriceUsd, marketRate, sellMargin) : 0,
         0, 0, buyMargin, sellMargin, buyNetworkFeeNgn, 0, asset.quoteTtlSeconds,
-        buyEnabled || sellEnabled, buyEnabled, sellEnabled, asset.baseExecutionEnabled === true, executionRail ?? null,
+        buyEnabled || sellEnabled ? 1 : 0, buyEnabled, sellEnabled, asset.baseExecutionEnabled === true, executionRail ?? null,
         routedConfig?.toChain ?? null, routedConfig?.toToken ?? null, routedConfig?.decimals ?? null,
         routedConfig?.addressFamily ?? null, routedConfig?.minimumBuyNgn ?? null,
         routedConfig?.maxQuoteDriftPercent ?? null, asset.change24h, now, now,
