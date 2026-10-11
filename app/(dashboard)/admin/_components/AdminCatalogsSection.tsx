@@ -343,8 +343,8 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         </div>
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="text-[11px] font-bold text-[var(--text)]">Crypto Pricing Control</div>
-            <div className="mt-1 text-[10px] text-[var(--muted)]">Manage per-pair market rates, spreads, quote TTL, and activation without editing raw JSON.</div>
+            <div className="text-[11px] font-bold text-[var(--text)]">Crypto pairs</div>
+            <div className="mt-1 text-[10px] text-[var(--muted)]">Manage availability, pricing, spreads, and execution settings for each pair.</div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-1">
@@ -368,7 +368,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                 variant={showNewAssetForm ? 'secondary' : 'primary'}
                 onClick={() => (showNewAssetForm ? closeNewAssetForm() : openNewAssetForm())}
               >
-                {showNewAssetForm ? 'Close New Pair' : 'New Pair'}
+                {showNewAssetForm ? 'Cancel' : 'Add pair'}
               </Button>
               {hasUnsavedCryptoEdits && (
                 <Button onClick={() => void saveCryptoPricing()} disabled={savingCryptoPricing}>
@@ -380,17 +380,6 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             </div>
           </div>
         </div>
-        {!showNewAssetForm && (
-          <div className="mb-5 border border-[var(--border)] bg-[var(--coal)] px-4 py-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-[11px] font-bold text-[var(--text)]">Add Crypto Pair</div>
-                <div className="mt-1 text-[10px] text-[var(--muted)]">Open the pair form only when you need to create a new executable or catalog asset.</div>
-              </div>
-              <Button onClick={openNewAssetForm}>Open Pair Form</Button>
-            </div>
-          </div>
-        )}
         {showNewAssetForm && <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--coal)] p-5">
           <div className="mb-5">
             <div className="text-sm font-bold text-[var(--text)]">Add crypto pair</div>

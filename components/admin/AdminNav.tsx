@@ -19,7 +19,6 @@ import {
   Percent,
   RadioTower,
   ShieldCheck,
-  TrendingUp,
   Users,
   Wallet,
   Wrench,
@@ -27,6 +26,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { isAdminCryptoPath } from '@/app/(dashboard)/admin/_components/AdminCryptoTabs'
 
 export const ADMIN_NAV_GROUPS = [
   {
@@ -57,9 +57,7 @@ export const ADMIN_NAV_GROUPS = [
   {
     label: 'Crypto',
     items: [
-      { href: '/admin/operations/orders', label: 'Crypto orders', icon: Coins },
-      { href: '/admin/operations/crypto-deposits', label: 'Crypto deposits', icon: Landmark },
-      { href: '/admin/catalogs/assets', label: 'Crypto assets', icon: TrendingUp },
+      { href: '/admin/operations/orders', label: 'Crypto workspace', icon: Coins },
     ],
   },
   {
@@ -105,7 +103,10 @@ function isActive(pathname: string, href: string, exact?: boolean) {
 
 export function AdminNav() {
   const pathname = usePathname()
-  const activeGroup = ADMIN_NAV_GROUPS.find(group => group.items.some(item => isActive(pathname, item.href, 'exact' in item ? item.exact : false)))?.label
+  const itemIsActive = (item: (typeof ADMIN_NAV_GROUPS)[number]['items'][number]) => (
+    isAdminCryptoPath(pathname) && item.href === '/admin/operations/orders'
+  ) || isActive(pathname, item.href, 'exact' in item ? item.exact : false)
+  const activeGroup = ADMIN_NAV_GROUPS.find(group => group.items.some(itemIsActive))?.label
   const [openGroups, setOpenGroups] = useState<string[]>(() => activeGroup ? [activeGroup] : [])
 
   // Navigating directly to a deep URL must reveal its parent group automatically.
@@ -141,7 +142,7 @@ export function AdminNav() {
             <div className="space-y-1 pb-2 pl-2 xl:pl-0">
               {group.items.map(item => {
             const Icon = item.icon
-            const active = isActive(pathname, item.href, 'exact' in item ? item.exact : false)
+            const active = itemIsActive(item)
 
             return (
               <Link
