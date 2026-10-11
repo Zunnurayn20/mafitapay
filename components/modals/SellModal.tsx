@@ -21,7 +21,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const { showToast, modalData, cryptoDepositAddresses } = useAppStore()
   const assets = useCryptoAssets()
   const sellableAssets = useMemo(
-    () => assets.filter(isDepositableCryptoAsset),
+    () => assets.filter(item => item.sellEnabled !== false && isDepositableCryptoAsset(item)),
     [assets],
   )
   const assetGroups = useMemo(() => groupCryptoAssetsBySymbol(sellableAssets), [sellableAssets])
@@ -38,7 +38,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = sellableAssets.find(a => a.id === pairId)
-    ?? (modalAsset?.id === pairId ? modalAsset : undefined)
+    ?? (modalAsset?.id === pairId && modalAsset.sellEnabled !== false ? modalAsset : undefined)
     ?? sellableAssets[0]
   const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
   const depositAddress = cryptoDepositAddresses.find(item => item.addressFamily === addressFamily && item.isActive)
@@ -164,8 +164,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     <Modal open={open} onClose={handleClose} title="Crypto Deposit">
       {!asset && (
         <div className="p-8 text-center">
-          <div className="spinner mx-auto mb-4" />
-          <div className="text-[12px] text-[var(--text)]">Loading asset data...</div>
+          {assets.length === 0 && <div className="spinner mx-auto mb-4" />}
+          <div className="text-[12px] text-[var(--text)]">{assets.length > 0 ? 'Crypto sells are temporarily unavailable.' : 'Loading asset data...'}</div>
         </div>
       )}
 

@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
-import { getCryptoAssetById, getCryptoAssets, upsertCryptoAssets } from '@/lib/server/data'
+import { getCryptoAssetById, getCryptoAssetsForAdmin, getCryptoTradingSettings, upsertCryptoAssets } from '@/lib/server/data'
 import type { CryptoAsset } from '@/types'
 
 export async function GET() {
   const user = await requireAdminUser()
   if (!user) return unauthorized()
 
-  return NextResponse.json({ data: await getCryptoAssets(), success: true })
+  const [assets, tradingSettings] = await Promise.all([getCryptoAssetsForAdmin(), getCryptoTradingSettings()])
+  return NextResponse.json({ data: assets, tradingSettings, success: true })
 }
 
 export async function PATCH(req: Request) {

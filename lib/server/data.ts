@@ -476,6 +476,8 @@ type CryptoPairRow = {
   sell_network_fee_ngn: number | null
   quote_ttl_seconds: number
   is_active: number
+  buy_enabled: number
+  sell_enabled: number
   base_execution_enabled: number
   execution_rail: string | null
   routed_to_chain: string | null
@@ -1046,6 +1048,8 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
     sellNetworkFeeNgn: row.sell_network_fee_ngn == null ? undefined : Number(row.sell_network_fee_ngn),
     quoteTtlSeconds: Number(row.quote_ttl_seconds),
     isActive: Boolean(row.is_active),
+    buyEnabled: row.buy_enabled == null ? Boolean(row.is_active) : Boolean(row.buy_enabled),
+    sellEnabled: row.sell_enabled == null ? Boolean(row.is_active) : Boolean(row.sell_enabled),
     baseExecutionEnabled: Boolean(row.base_execution_enabled),
     executionRail:
       row.execution_rail === 'base_treasury'
@@ -1976,6 +1980,8 @@ function initSchema(db: DatabaseSync) {
       sell_network_fee_ngn REAL,
       quote_ttl_seconds INTEGER NOT NULL DEFAULT 90,
       is_active INTEGER NOT NULL DEFAULT 1,
+      buy_enabled INTEGER NOT NULL DEFAULT 1,
+      sell_enabled INTEGER NOT NULL DEFAULT 1,
       base_execution_enabled INTEGER NOT NULL DEFAULT 0,
       execution_rail TEXT,
       routed_to_chain TEXT,
@@ -2001,6 +2007,14 @@ function initSchema(db: DatabaseSync) {
       expires_at TEXT NOT NULL,
       used_at TEXT,
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS crypto_trading_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      buys_enabled INTEGER NOT NULL DEFAULT 1,
+      sells_enabled INTEGER NOT NULL DEFAULT 1,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_crypto_quotes_user_created_at
@@ -2469,10 +2483,29 @@ function decryptSensitiveValue(payload: string) {
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string) {
   if (!hasColumn(db, table, column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    return true
   }
+  return false
 }
 
 function migrateSchema(db: DatabaseSync) {
+  const addedBuyEnabled = ensureColumn(db, 'crypto_pairs', 'buy_enabled', 'INTEGER NOT NULL DEFAULT 1')
+  const addedSellEnabled = ensureColumn(db, 'crypto_pairs', 'sell_enabled', 'INTEGER NOT NULL DEFAULT 1')
+  if (addedBuyEnabled || addedSellEnabled) {
+    db.exec('UPDATE crypto_pairs SET buy_enabled = is_active, sell_enabled = is_active')
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS crypto_trading_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      buys_enabled INTEGER NOT NULL DEFAULT 1,
+      sells_enabled INTEGER NOT NULL DEFAULT 1,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, updated_at)
+    VALUES (1, 1, 1, '${new Date().toISOString()}')
+    ON CONFLICT(id) DO NOTHING;
+  `)
   ensureColumn(db, 'users', 'accountStatus', "TEXT NOT NULL DEFAULT 'active'")
   ensureColumn(db, 'users', 'referredByUserId', 'TEXT')
   ensureColumn(db, 'users', 'referredByReferralCode', 'TEXT')
@@ -8083,6 +8116,90 @@ export async function getCryptoAssets(options?: { forceRefresh?: boolean; liveOn
   return await refreshCryptoAssetsSingleFlight(persistedAssets, { liveOnly: options?.liveOnly })
 }
 
+export async function getCryptoAssetsForAdmin(): Promise<CryptoAsset[]> {
+  await ensureDbReady()
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<CryptoPairRow>('SELECT * FROM crypto_pairs ORDER BY symbol ASC, network ASC')).rows
+    : getDb().prepare('SELECT * FROM crypto_pairs ORDER BY symbol ASC, network ASC').all() as CryptoPairRow[]
+  const assets = rows.map(mapCryptoPairRow)
+  const shouldRefresh = assets.some(asset => asset.marketSnapshotSource !== 'live' || !isCryptoMarketSnapshotFresh(asset.marketPriceUpdatedAt))
+  if (shouldRefresh) return refreshCryptoAssetsSingleFlight(assets)
+  return assets.map(mapPersistedCryptoSnapshot).sort((a, b) => a.marketRate - b.marketRate)
+}
+
+export type CryptoTradingSettings = {
+  buysEnabled: boolean
+  sellsEnabled: boolean
+  updatedBy?: string
+  updatedAt: string
+}
+
+export async function getCryptoTradingSettings(): Promise<CryptoTradingSettings> {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ buys_enabled: boolean; sells_enabled: boolean; updated_by: string | null; updated_at: string }>(
+      'SELECT buys_enabled, sells_enabled, updated_by, updated_at FROM crypto_trading_settings WHERE id = ? LIMIT 1', [1]
+    )
+    const row = result.rows[0]
+    return row
+      ? { buysEnabled: Boolean(row.buys_enabled), sellsEnabled: Boolean(row.sells_enabled), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
+      : { buysEnabled: true, sellsEnabled: true, updatedAt: new Date(0).toISOString() }
+  }
+  const row = getDb().prepare('SELECT buys_enabled, sells_enabled, updated_by, updated_at FROM crypto_trading_settings WHERE id = 1').get() as {
+    buys_enabled: number; sells_enabled: number; updated_by: string | null; updated_at: string
+  } | undefined
+  return row
+    ? { buysEnabled: Boolean(row.buys_enabled), sellsEnabled: Boolean(row.sells_enabled), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
+    : { buysEnabled: true, sellsEnabled: true, updatedAt: new Date(0).toISOString() }
+}
+
+export async function updateCryptoTradingSettings(input: { buysEnabled?: boolean; sellsEnabled?: boolean; updatedBy: string }) {
+  const current = await getCryptoTradingSettings()
+  const next = {
+    buysEnabled: input.buysEnabled ?? current.buysEnabled,
+    sellsEnabled: input.sellsEnabled ?? current.sellsEnabled,
+    updatedBy: input.updatedBy,
+    updatedAt: new Date().toISOString(),
+  }
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET buys_enabled = excluded.buys_enabled, sells_enabled = excluded.sells_enabled,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `, [1, next.buysEnabled, next.sellsEnabled, next.updatedBy, next.updatedAt])
+  } else {
+    getDb().prepare(`
+      INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, updated_by, updated_at)
+      VALUES (1, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET buys_enabled = excluded.buys_enabled, sells_enabled = excluded.sells_enabled,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `).run(next.buysEnabled ? 1 : 0, next.sellsEnabled ? 1 : 0, next.updatedBy, next.updatedAt)
+  }
+  return next
+}
+
+export async function getEffectiveCryptoAssets(options?: { forceRefresh?: boolean; liveOnly?: boolean }) {
+  const [assets, settings] = await Promise.all([getCryptoAssets(options), getCryptoTradingSettings()])
+  return assets.map(asset => ({
+    ...asset,
+    buyEnabled: asset.buyEnabled !== false && settings.buysEnabled,
+    sellEnabled: asset.sellEnabled !== false && settings.sellsEnabled,
+  }))
+}
+
+export async function assertCryptoActionEnabled(asset: CryptoAsset, side: 'buy' | 'sell') {
+  const settings = await getCryptoTradingSettings()
+  const enabled = side === 'buy'
+    ? settings.buysEnabled && asset.buyEnabled !== false
+    : settings.sellsEnabled && asset.sellEnabled !== false
+  if (!enabled) {
+    throw new Error(side === 'buy'
+      ? `${asset.symbol} buys are temporarily unavailable.`
+      : `${asset.symbol} sells are temporarily unavailable.`)
+  }
+}
+
 export async function getCryptoAssetById(id: string): Promise<CryptoAsset | null> {
   await ensureDbReady()
   const row = isPostgresEnabled()
@@ -8174,6 +8291,7 @@ export async function createCryptoQuote(input: {
   if (!asset || asset.isActive === false) {
     throw new Error('Unsupported crypto pair.')
   }
+  await assertCryptoActionEnabled(asset, input.side)
 
   const unitRate = input.unitRate ?? (input.side === 'buy' ? asset.buyRate : asset.sellRate)
   const cryptoAmount = input.cryptoAmount ?? (input.amountNgn / unitRate)
@@ -9507,8 +9625,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
   const now = new Date().toISOString()
   const statement = db.prepare(`
     INSERT INTO crypto_pairs (
-      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, buy_enabled, sell_enabled, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       symbol = excluded.symbol,
@@ -9527,6 +9645,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
       sell_network_fee_ngn = excluded.sell_network_fee_ngn,
       quote_ttl_seconds = excluded.quote_ttl_seconds,
       is_active = excluded.is_active,
+      buy_enabled = excluded.buy_enabled,
+      sell_enabled = excluded.sell_enabled,
       base_execution_enabled = excluded.base_execution_enabled,
       execution_rail = excluded.execution_rail,
       routed_to_chain = excluded.routed_to_chain,
@@ -9568,6 +9688,8 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
             executionRail,
           })
         : null
+      const buyEnabled = asset.buyEnabled ?? asset.isActive !== false
+      const sellEnabled = asset.sellEnabled ?? asset.isActive !== false
       statement.run(
         asset.id,
         asset.symbol,
@@ -9586,7 +9708,9 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
         buyNetworkFeeNgn,
         sellNetworkFeeNgn,
         asset.quoteTtlSeconds,
-        asset.isActive === false ? 0 : 1,
+        buyEnabled || sellEnabled ? 1 : 0,
+        buyEnabled ? 1 : 0,
+        sellEnabled ? 1 : 0,
         asset.baseExecutionEnabled === true ? 1 : 0,
         executionRail ?? null,
         routedConfig?.toChain ?? null,
@@ -9606,15 +9730,15 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
     throw error
   }
 
-  return getCryptoAssets()
+  return getCryptoAssetsForAdmin()
 }
 
 async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
   const now = new Date().toISOString()
   const sql = `
     INSERT INTO crypto_pairs (
-      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, buy_enabled, sell_enabled, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name, symbol = excluded.symbol, network = excluded.network, icon = excluded.icon,
       market_source_id = excluded.market_source_id, market_price_source = excluded.market_price_source,
@@ -9624,6 +9748,7 @@ async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
       buy_margin_ngn_per_usd = excluded.buy_margin_ngn_per_usd, sell_margin_ngn_per_usd = excluded.sell_margin_ngn_per_usd,
       buy_network_fee_ngn = excluded.buy_network_fee_ngn, sell_network_fee_ngn = excluded.sell_network_fee_ngn,
       quote_ttl_seconds = excluded.quote_ttl_seconds, is_active = excluded.is_active,
+      buy_enabled = excluded.buy_enabled, sell_enabled = excluded.sell_enabled,
       base_execution_enabled = excluded.base_execution_enabled, execution_rail = excluded.execution_rail,
       routed_to_chain = excluded.routed_to_chain, routed_to_token = excluded.routed_to_token,
       routed_decimals = excluded.routed_decimals, routed_address_family = excluded.routed_address_family,
@@ -9643,6 +9768,8 @@ async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
       assertSupportedAssetExecutionRail(asset, executionRail)
       const routedConfig = executionRail === 'routed_treasury'
         ? getRoutedTreasuryPairConfigForAsset({ ...asset, executionRail }) : null
+      const buyEnabled = asset.buyEnabled ?? asset.isActive !== false
+      const sellEnabled = asset.sellEnabled ?? asset.isActive !== false
       await queryPostgresClient(client, sql, [
         asset.id, asset.symbol, asset.name, asset.network, asset.icon, marketSourceId,
         asset.marketSnapshotSource ?? asset.pricingSource ?? 'seed', asset.marketPriceUsd ?? null,
@@ -9650,14 +9777,14 @@ async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
         marketRate > 0 ? computeBuyRate(marketPriceUsd, marketRate, buyMargin) : 0,
         marketRate > 0 ? computeSellRate(marketPriceUsd, marketRate, sellMargin) : 0,
         0, 0, buyMargin, sellMargin, buyNetworkFeeNgn, 0, asset.quoteTtlSeconds,
-        asset.isActive !== false, asset.baseExecutionEnabled === true, executionRail ?? null,
+        buyEnabled || sellEnabled, buyEnabled, sellEnabled, asset.baseExecutionEnabled === true, executionRail ?? null,
         routedConfig?.toChain ?? null, routedConfig?.toToken ?? null, routedConfig?.decimals ?? null,
         routedConfig?.addressFamily ?? null, routedConfig?.minimumBuyNgn ?? null,
         routedConfig?.maxQuoteDriftPercent ?? null, asset.change24h, now, now,
       ])
     }
   })
-  return getCryptoAssets()
+  return getCryptoAssetsForAdmin()
 }
 
 export async function getSecuritySettingsByUserId(userId: string): Promise<SecuritySettingsRecord | null> {

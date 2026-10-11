@@ -20,7 +20,7 @@ export function CryptoRates() {
         <CardTitle>Crypto Assets</CardTitle>
         <CardAction onClick={() => router.push('/crypto')}>Trade →</CardAction>
       </CardHeader>
-      {assets.map(a => (
+      {assets.filter(asset => asset.buyEnabled !== false).map(a => (
         <div key={a.id} onClick={() => { setModalData({ cryptoAsset: a, cryptoPairId: a.id }); openModal('buy') }}
           className="flex items-center gap-3 px-5 py-3.5 border-b border-[var(--border)] last:border-0 cursor-pointer hover:bg-[var(--clay)] transition-colors">
           <AssetLogo

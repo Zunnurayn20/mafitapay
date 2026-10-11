@@ -72,7 +72,7 @@ export default function CryptoPage() {
 
   const assetGroups = useMemo<AssetGroup[]>(() => {
     const groups = new Map<string, CryptoAsset[]>()
-    for (const asset of assets) {
+    for (const asset of assets.filter(item => item.buyEnabled !== false)) {
       const key = asset.symbol.toUpperCase()
       const current = groups.get(key) ?? []
       current.push(asset)

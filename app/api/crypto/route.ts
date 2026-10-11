@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { applyWalletMutation, consumeCryptoQuote, createCryptoOrder, createCryptoQuote, ensureCryptoMarketAutoRefreshScheduler, getCryptoAssets, getCryptoOrderById, getWalletByUserId, kickCryptoMarketRefresh, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyWalletMutation, assertCryptoActionEnabled, consumeCryptoQuote, createCryptoOrder, createCryptoQuote, ensureCryptoMarketAutoRefreshScheduler, getCryptoAssets, getEffectiveCryptoAssets, getCryptoOrderById, getWalletByUserId, kickCryptoMarketRefresh, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { assertBaseTreasuryCanExecuteBuy } from '@/lib/server/base-executor'
 import { getExecutionRailForAsset } from '@/lib/crypto-execution'
 import { ensureBscReceiptAutoSyncWatchdog } from '@/lib/server/bsc-receipt-sync'
@@ -115,7 +115,7 @@ export async function GET(req: Request) {
   if (CRYPTO_MARKET_LOGGING_ENABLED) {
     console.log('[api/crypto] GET', JSON.stringify({ forceRefresh, liveOnly }))
   }
-  return NextResponse.json({ data: await getCryptoAssets({ forceRefresh, liveOnly }), success: true })
+  return NextResponse.json({ data: await getEffectiveCryptoAssets({ forceRefresh, liveOnly }), success: true })
 }
 
 export async function POST(req: Request) {
@@ -166,6 +166,11 @@ export async function POST(req: Request) {
   const requestedAsset = assets.find(item => item.id === pairId)
   if (!requestedAsset) {
     return NextResponse.json({ error: 'Crypto pair not found.', success: false }, { status: 404 })
+  }
+  try {
+    await assertCryptoActionEnabled(requestedAsset, action)
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Crypto trading is temporarily unavailable.', success: false }, { status: 400 })
   }
 
   if (intent === 'quote') {

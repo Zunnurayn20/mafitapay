@@ -116,6 +116,9 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     setCryptoCatalogFilter,
     saveCryptoPricing,
     savingCryptoPricing,
+    cryptoTradingSettings,
+    savingCryptoSetting,
+    setCryptoTradingSetting,
     saveCryptoPair,
     savingCryptoPairId,
     discardCryptoPairEdits,
@@ -311,6 +314,28 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
       </Card>}
 
       {showAssets && <Card className="p-5">
+        {submodule === 'assets' && <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--clay)] p-4">
+          <div className="mb-3">
+            <div className="text-[11px] font-bold text-[var(--text)]">Global crypto controls</div>
+            <div className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">Pause new buys or sells across every pair. Existing orders and deposit monitoring continue.</div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ToggleField
+              label="Crypto buys"
+              hint={cryptoTradingSettings.buysEnabled ? 'Customers can start new crypto purchases.' : 'New crypto purchases are paused.'}
+              checked={cryptoTradingSettings.buysEnabled}
+              disabled={savingCryptoSetting !== null}
+              onChange={checked => void setCryptoTradingSetting('buysEnabled', checked)}
+            />
+            <ToggleField
+              label="Crypto sells"
+              hint={cryptoTradingSettings.sellsEnabled ? 'Customers can start new crypto sales and deposits for NGN.' : 'New crypto sales are paused; existing deposit monitoring continues.'}
+              checked={cryptoTradingSettings.sellsEnabled}
+              disabled={savingCryptoSetting !== null}
+              onChange={checked => void setCryptoTradingSetting('sellsEnabled', checked)}
+            />
+          </div>
+        </div>}
         <div className="mb-3 rounded-lg border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.06)] px-4 py-3 text-[11px] leading-relaxed text-[var(--text)]">
           <strong className="text-[var(--gold2)]">How pricing works:</strong> the app loads the live dollar price of the coin,
           then adds <strong>your profit</strong> on every dollar (e.g. live ₦1500 + profit ₦50 = customers buy at ₦1550 per $1).
@@ -845,15 +870,29 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   </div>
                   <div className="min-w-0 flex-1 space-y-3">
                     <ToggleField
-                      label="Show this pair to customers"
-                      hint="Turning this off hides the pair in the app once you save."
-                      checked={item.isActive !== false}
-                      onChange={checked => setCryptoPricing(current => current.map(asset => asset.id === item.id ? { ...asset, isActive: checked } : asset))}
+                      label="Allow customers to buy"
+                      hint="This pair is available for buys only when the global crypto buy switch is on."
+                      checked={item.buyEnabled ?? item.isActive !== false}
+                      onChange={checked => setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
+                        ...asset,
+                        buyEnabled: checked,
+                        isActive: checked || (asset.sellEnabled ?? asset.isActive !== false),
+                      } : asset))}
+                    />
+                    <ToggleField
+                      label="Allow customers to sell"
+                      hint="This pair is available for sells only when the global crypto sell switch is on."
+                      checked={item.sellEnabled ?? item.isActive !== false}
+                      onChange={checked => setCryptoPricing(current => current.map(asset => asset.id === item.id ? {
+                        ...asset,
+                        sellEnabled: checked,
+                        isActive: checked || (asset.buyEnabled ?? asset.isActive !== false),
+                      } : asset))}
                     />
                     {item.isActive === false && (
                       <Callout tone="warn">
-                        This pair is archived. It will stay in history and admin records, but users cannot
-                        actively trade it once you save.
+                        Both actions are off. The pair stays in history and admin records, but customers cannot
+                        start buys or sells once you save.
                       </Callout>
                     )}
                   </div>

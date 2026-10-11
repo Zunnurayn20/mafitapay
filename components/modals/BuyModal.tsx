@@ -63,6 +63,7 @@ function writeLastUsedBuyAddress(pairId: CryptoPairId, address: string) {
 export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { refreshSession, showToast, modalData, securitySettings } = useAppStore()
   const assets = useCryptoAssets()
+  const buyableAssets = assets.filter(item => item.buyEnabled !== false)
   const [step, setStep]       = useState<Step>('form')
   const [pairId, setPairId]   = useState<CryptoPairId>('USDT_BSC')
   const [showAssetPicker, setShowAssetPicker] = useState(false)
@@ -83,9 +84,9 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const addressInputRef = useRef<HTMLInputElement>(null)
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
-  const asset = assets.find(a => a.id === pairId)
-    ?? (modalAsset?.id === pairId ? modalAsset : undefined)
-    ?? assets[0]
+  const asset = buyableAssets.find(a => a.id === pairId)
+    ?? (modalAsset?.id === pairId && modalAsset.buyEnabled !== false ? modalAsset : undefined)
+    ?? buyableAssets[0]
   const rawAmount = parseFloat(amount) || 0
   const usdNgnRate = getApproxUsdNgnRate(asset)
   const amt = !asset ? 0 : amountMode === 'asset'
@@ -119,10 +120,10 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       return
     }
 
-    if (assets[0]?.id) {
-      setPairId(assets[0].id)
+    if (buyableAssets[0]?.id) {
+      setPairId(buyableAssets[0].id)
     }
-  }, [assets, modalAsset, modalData, open])
+  }, [buyableAssets, modalAsset, modalData, open])
 
   useEffect(() => {
     if (!open || !pairId) return
@@ -335,8 +336,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     >
       {!asset && (
         <div className="p-8 text-center">
-          <div className="spinner mx-auto mb-4" />
-          <div className="text-[12px] text-[var(--text)]">Loading asset data…</div>
+          {assets.length === 0 && <div className="spinner mx-auto mb-4" />}
+          <div className="text-[12px] text-[var(--text)]">{assets.length > 0 ? 'Crypto buys are temporarily unavailable.' : 'Loading asset data…'}</div>
         </div>
       )}
 
@@ -369,7 +370,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             </div>
             {showAssetPicker && (
               <div className="absolute right-3 top-[calc(100%+0.5rem)] z-20 grid grid-cols-4 gap-2 border border-[var(--border)] bg-[var(--coal)] p-3 shadow-[0_14px_30px_rgba(0,0,0,.35)]">
-                {assets.map(a => (
+                {buyableAssets.map(a => (
                   <button
                     key={a.id}
                     type="button"

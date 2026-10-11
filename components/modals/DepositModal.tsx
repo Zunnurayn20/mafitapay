@@ -49,7 +49,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
 
   const assets = useCryptoAssets()
   const sellableAssets = useMemo(
-    () => assets.filter(isDepositableCryptoAsset),
+    () => assets.filter(item => item.sellEnabled !== false && isDepositableCryptoAsset(item)),
     [assets]
   )
   const depositAssetGroups = useMemo(() => groupCryptoAssetsBySymbol(sellableAssets), [sellableAssets])

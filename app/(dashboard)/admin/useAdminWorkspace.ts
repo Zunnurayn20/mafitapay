@@ -129,6 +129,13 @@ type CryptoMarketHealth = {
   warnings: string[]
 }
 
+type CryptoTradingSettings = {
+  buysEnabled: boolean
+  sellsEnabled: boolean
+  updatedBy?: string
+  updatedAt: string
+}
+
 type FlutterwaveHealth = {
   criticalChecks: AdminCriticalCheck[]
   resolution: {
@@ -232,6 +239,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [authorized, setAuthorized] = useState(true)
   const [saving, setSaving] = useState<AdminKey | null>(null)
   const [savingCryptoPricing, setSavingCryptoPricing] = useState(false)
+  const [cryptoTradingSettings, setCryptoTradingSettings] = useState<CryptoTradingSettings>({ buysEnabled: true, sellsEnabled: true, updatedAt: '' })
+  const [savingCryptoSetting, setSavingCryptoSetting] = useState<'buysEnabled' | 'sellsEnabled' | null>(null)
   const [users, setUsers] = useState<User[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([])
@@ -450,10 +459,14 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         if (!submodule) return
 
         if (submodule === 'assets') {
-          const loadedCryptoPricing = await fetchAdminJsonCached<CryptoAsset[]>('/api/admin/crypto-assets')
+          const [loadedCryptoPricing, loadedTradingSettings] = await Promise.all([
+            fetchAdminJsonCached<CryptoAsset[]>('/api/admin/crypto-assets'),
+            fetchAdminJsonCached<CryptoTradingSettings>('/api/admin/crypto-settings'),
+          ])
           if (!active) return
           const nextAssets = Array.isArray(loadedCryptoPricing) ? loadedCryptoPricing : []
           adoptPersistedCryptoPricing(nextAssets)
+          setCryptoTradingSettings(loadedTradingSettings ?? { buysEnabled: true, sellsEnabled: true, updatedAt: '' })
           setDrafts(current => ({ ...current, assets: JSON.stringify(nextAssets, null, 2) }))
           return
         }
@@ -688,6 +701,28 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       showToast(error instanceof Error ? error.message : 'Crypto pricing update failed.', 'error')
     } finally {
       setSavingCryptoPricing(false)
+    }
+  }
+
+  async function setCryptoTradingSetting(key: 'buysEnabled' | 'sellsEnabled', value: boolean) {
+    setSavingCryptoSetting(key)
+    try {
+      const response = await fetch('/api/admin/crypto-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ [key]: value }),
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) throw new Error(payload.error || 'Crypto trading setting could not be saved.')
+      const next = payload.data as CryptoTradingSettings
+      setCryptoTradingSettings(next)
+      primeAdminFetchCache('/api/admin/crypto-settings', next)
+      showToast(`${key === 'buysEnabled' ? 'Crypto buys' : 'Crypto sells'} ${value ? 'enabled' : 'paused'}.`)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Crypto trading setting could not be saved.', 'error')
+    } finally {
+      setSavingCryptoSetting(null)
     }
   }
 
@@ -971,6 +1006,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     setCryptoPricing(current => current.map(asset => asset.id === pairId ? {
       ...asset,
       isActive: !archived,
+      buyEnabled: !archived,
+      sellEnabled: !archived,
       baseExecutionEnabled: archived ? false : asset.baseExecutionEnabled,
     } : asset))
   }
@@ -1718,6 +1755,9 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     getRoutedProfileConfig,
     saving,
     savingCryptoPricing,
+    cryptoTradingSettings,
+    savingCryptoSetting,
+    setCryptoTradingSetting,
     users,
     auditLogs,
     providerEvents,

@@ -262,6 +262,10 @@ export interface CryptoAsset {
   sellNetworkFeeNgn?: number
   quoteTtlSeconds: number
   isActive?: boolean
+  /** Whether customers may buy this pair. False can also reflect the global buy pause in public API responses. */
+  buyEnabled?: boolean
+  /** Whether customers may sell/deposit this pair. False can also reflect the global sell pause in public API responses. */
+  sellEnabled?: boolean
   baseExecutionEnabled?: boolean
   executionRail?: 'base_treasury' | 'routed_treasury' | 'sui_treasury' | 'ton_treasury' | 'near_intents'
   routedToChain?: string
