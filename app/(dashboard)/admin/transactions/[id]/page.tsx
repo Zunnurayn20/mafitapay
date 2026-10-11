@@ -81,6 +81,24 @@ export default async function AdminTransactionDetailPage({
     ? 0
     : platformCost?.principalNgn ?? 0
   const trackedPlatformCostNgn = platformCost ? deliveredPrincipalNgn + costFeeNgn : null
+  const cryptoSpreadEstimateNgn = cryptoOrder?.status === 'fulfilled' && trackedPlatformCostNgn !== null
+    ? cryptoOrder.amountNgn - trackedPlatformCostNgn
+    : null
+  const purchaseEconomics = transaction.metadata?.purchaseEconomics && typeof transaction.metadata.purchaseEconomics === 'object'
+    ? transaction.metadata.purchaseEconomics as Record<string, unknown>
+    : null
+  const hasPurchaseEconomics = ['airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water'].includes(transaction.type)
+  const isPlanPurchase = typeof transaction.metadata?.providerPlanId === 'string'
+    && typeof transaction.metadata.providerBaseAmount === 'number'
+  const billSaleNgn = typeof purchaseEconomics?.saleNgn === 'number'
+    ? purchaseEconomics.saleNgn
+    : typeof transaction.metadata?.amount === 'number' ? transaction.metadata.amount : Math.abs(transaction.amount)
+  const billCostNgn = typeof purchaseEconomics?.providerCostNgn === 'number'
+    ? purchaseEconomics.providerCostNgn
+    : isPlanPurchase ? transaction.metadata?.providerBaseAmount as number : null
+  const billSpreadNgn = typeof purchaseEconomics?.spreadNgn === 'number'
+    ? purchaseEconomics.spreadNgn
+    : billCostNgn !== null ? billSaleNgn - billCostNgn : null
 
   return (
     <div className="space-y-4">
@@ -123,6 +141,8 @@ export default async function AdminTransactionDetailPage({
               <div className="grid gap-2 sm:grid-cols-2">
                 <Detail label="Crypto replacement value · estimate">{cryptoOrder.status === 'failed' || cryptoOrder.status === 'expired' ? 'Not delivered' : formatNaira(platformCost.principalNgn)}</Detail>
                 <Detail label={cryptoOrder.status === 'failed' || cryptoOrder.status === 'expired' ? 'Tracked delivery fees' : 'Total tracked cost · estimate'}>{formatNaira(trackedPlatformCostNgn ?? costFeeNgn)}</Detail>
+                <Detail label="Customer price for crypto">{formatNaira(cryptoOrder.amountNgn)}</Detail>
+                <Detail label="Estimated spread after tracked delivery costs">{cryptoSpreadEstimateNgn === null ? 'Available after successful delivery and cost sync' : formatNaira(cryptoSpreadEstimateNgn)}</Detail>
               </div>
               <p className="text-xs text-[var(--muted)]">
                 Based on {cryptoOrder.cryptoAmount.toLocaleString('en-NG', { maximumFractionDigits: 10 })} {cryptoOrder.pairId.split('_')[0]} at ₦{platformCost.assetMarketRateNgn.toLocaleString('en-NG', { maximumFractionDigits: 4 })} per unit ({platformCost.assetMarketRateSource} market snapshot).
@@ -158,6 +178,17 @@ export default async function AdminTransactionDetailPage({
               <p className="text-[11px] text-[var(--muted)]">The total is an estimate: it combines market replacement value with reported quote fees and actual chain gas where available. Any naira conversion for chain gas uses the saved market rate. Customer network-fee recovery is excluded.</p>
             </div>
           )}
+        </AdminPageCard>
+      )}
+
+      {hasPurchaseEconomics && (
+        <AdminPageCard title="Purchase economics" description="Automatically saved from the vendor plan price used when this purchase was submitted.">
+          <div className="grid gap-2 p-4 sm:grid-cols-3">
+            <Detail label="Customer price">{formatNaira(billSaleNgn)}</Detail>
+            <Detail label={billCostNgn === null ? 'Provider cost' : 'Provider catalog cost'}>{billCostNgn === null ? 'Not reported for this provider' : formatNaira(billCostNgn)}</Detail>
+            <Detail label={billSpreadNgn === null ? 'Spread' : 'Spread from provider catalog cost'}>{billSpreadNgn === null ? 'Unavailable until provider cost is reported' : formatNaira(billSpreadNgn)}</Detail>
+            {billCostNgn !== null ? <p className="sm:col-span-3 text-xs text-[var(--muted)]">This is the vendor catalog cost and app retail price captured at purchase time. It is a quoted cost, not a confirmed provider settlement debit.</p> : null}
+          </div>
         </AdminPageCard>
       )}
 

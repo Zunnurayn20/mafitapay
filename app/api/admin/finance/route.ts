@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
-import { createOwnerFinanceEntry, insertAuditLog, listOwnerFinanceEntries, summarizeOwnerFinance, voidOwnerFinanceEntry } from '@/lib/server/data'
+import { createOwnerFinanceEntry, getCryptoOrdersByTransactionIds, insertAuditLog, listOwnerFinanceEntries, listPurchaseTransactions, summarizeOwnerFinance, voidOwnerFinanceEntry } from '@/lib/server/data'
+import { getActualNativeFee, getPlatformCryptoCost, getProviderFeeEstimate } from '@/lib/server/crypto-platform-cost'
 
 const CATEGORIES = {
   income: ['product_margin', 'service_fee', 'other_income'],
@@ -29,7 +30,78 @@ export async function GET(request: Request) {
     summarizeOwnerFinance(from, toExclusive),
     listOwnerFinanceEntries(from, toExclusive),
   ])
-  return NextResponse.json({ success: true, data: { summary, entries } })
+  const purchaseRows = await listPurchaseTransactions(from, toExclusive)
+  const cryptoOrders = await getCryptoOrdersByTransactionIds(purchaseRows
+    .filter(({ transaction }) => transaction.type === 'crypto_buy')
+    .map(({ transaction }) => transaction.id))
+  const cryptoOrdersByTransaction = new Map(cryptoOrders.map(order => [order.transactionId, order]))
+  const purchases = purchaseRows.map(({ transaction }) => {
+    const metadata = transaction.metadata ?? {}
+    const recorded = metadata.purchaseEconomics && typeof metadata.purchaseEconomics === 'object'
+      ? metadata.purchaseEconomics as Record<string, unknown>
+      : null
+    const legacyPlanCost = transaction.type !== 'crypto_buy'
+      && typeof metadata.providerPlanId === 'string'
+      && typeof metadata.providerBaseAmount === 'number'
+      ? metadata.providerBaseAmount
+      : null
+    const legacyPlanSale = typeof metadata.amount === 'number' ? metadata.amount : null
+    const saleNgn = typeof recorded?.saleNgn === 'number'
+      ? recorded.saleNgn
+      : legacyPlanSale ?? (transaction.type === 'crypto_buy' ? Math.max(0, Math.abs(transaction.amount) - transaction.fee) : Math.abs(transaction.amount))
+    let providerCostNgn = typeof recorded?.providerCostNgn === 'number'
+      ? recorded.providerCostNgn
+      : legacyPlanCost
+    let spreadNgn = typeof recorded?.spreadNgn === 'number'
+      ? recorded.spreadNgn
+      : providerCostNgn !== null ? saleNgn - providerCostNgn : null
+    let costStatus: 'quoted' | 'estimate' | 'unknown' = recorded?.costStatus === 'quoted' || recorded?.costStatus === 'estimate'
+      ? recorded.costStatus
+      : legacyPlanCost !== null ? 'quoted' : 'unknown'
+    let costBasis = typeof recorded?.costBasis === 'string'
+      ? recorded.costBasis
+      : legacyPlanCost !== null ? 'provider_plan_catalog' : 'provider_cost_not_reported'
+    if (transaction.type === 'crypto_buy') {
+      const order = cryptoOrdersByTransaction.get(transaction.id)
+      const marketCost = order ? getPlatformCryptoCost(order) : null
+      if (marketCost) {
+        const providerFees = getProviderFeeEstimate(order!).reduce((sum, fee) => sum + (fee.amountNgn ?? 0), 0)
+        const nativeFees = (getActualNativeFee(order!) ?? []).reduce((sum, fee) => sum + (fee.amountNgnEstimate ?? 0), 0)
+        const delivered = order!.status !== 'failed' && order!.status !== 'expired'
+        providerCostNgn = delivered ? marketCost.principalNgn + providerFees + nativeFees : 0
+        spreadNgn = delivered ? saleNgn - providerCostNgn : null
+        costStatus = 'estimate'
+        costBasis = providerFees || nativeFees ? 'market_replacement_plus_reported_delivery_fees' : 'market_replacement_snapshot'
+      }
+    }
+    return {
+      id: transaction.id,
+      reference: transaction.reference,
+      type: transaction.type,
+      description: transaction.description,
+      status: transaction.status,
+      createdAt: transaction.createdAt,
+      saleNgn,
+      providerCostNgn,
+      spreadNgn,
+      costStatus,
+      costBasis,
+      networkFeeRecoveryNgn: typeof recorded?.customerNetworkFeeRecoveryNgn === 'number'
+        ? recorded.customerNetworkFeeRecoveryNgn
+        : transaction.type === 'crypto_buy' ? transaction.fee : 0,
+    }
+  })
+  const successfulPurchases = purchases.filter(purchase => purchase.status === 'success')
+  const automaticPurchases = {
+    successfulCount: successfulPurchases.length,
+    saleNgn: successfulPurchases.reduce((sum, purchase) => sum + purchase.saleNgn, 0),
+    quotedCostNgn: successfulPurchases.filter(purchase => purchase.costStatus === 'quoted').reduce((sum, purchase) => sum + (purchase.providerCostNgn ?? 0), 0),
+    quotedSpreadNgn: successfulPurchases.filter(purchase => purchase.costStatus === 'quoted').reduce((sum, purchase) => sum + (purchase.spreadNgn ?? 0), 0),
+    estimatedCostNgn: successfulPurchases.filter(purchase => purchase.costStatus === 'estimate').reduce((sum, purchase) => sum + (purchase.providerCostNgn ?? 0), 0),
+    estimatedSpreadNgn: successfulPurchases.filter(purchase => purchase.costStatus === 'estimate').reduce((sum, purchase) => sum + (purchase.spreadNgn ?? 0), 0),
+    unknownCostCount: successfulPurchases.filter(purchase => purchase.costStatus === 'unknown').length,
+  }
+  return NextResponse.json({ success: true, data: { summary, entries, purchases, automaticPurchases } })
 }
 
 export async function POST(request: Request) {

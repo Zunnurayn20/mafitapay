@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, type FormEvent } from 'react'
+import Link from 'next/link'
 import { AdminButton, AdminError, AdminInput, AdminSelect, AdminTable, AdminThead, formatDate, formatNaira } from '@/components/admin/AdminUi'
 
 type Summary = {
@@ -24,6 +25,31 @@ type Entry = {
   reference: string | null
   occurredAt: string
   createdAt: string
+}
+
+type Purchase = {
+  id: string
+  reference: string
+  type: string
+  description: string
+  status: string
+  createdAt: string
+  saleNgn: number
+  providerCostNgn: number | null
+  spreadNgn: number | null
+  costStatus: 'quoted' | 'estimate' | 'unknown'
+  costBasis: string
+  networkFeeRecoveryNgn: number
+}
+
+type AutomaticPurchases = {
+  successfulCount: number
+  saleNgn: number
+  quotedCostNgn: number
+  quotedSpreadNgn: number
+  estimatedCostNgn: number
+  estimatedSpreadNgn: number
+  unknownCostCount: number
 }
 
 const categories = {
@@ -65,7 +91,7 @@ export function OwnerFinanceWorkspace() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [direction, setDirection] = useState<'income' | 'expense'>('expense')
-  const [payload, setPayload] = useState<{ summary: Summary; entries: Entry[] } | null>(null)
+  const [payload, setPayload] = useState<{ summary: Summary; entries: Entry[]; purchases: Purchase[]; automaticPurchases: AutomaticPurchases } | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -164,8 +190,41 @@ export function OwnerFinanceWorkspace() {
       </section>
 
       <div className="rounded-lg border border-[var(--border)] bg-[var(--clay)] p-3 text-xs leading-relaxed text-[var(--muted)]">
-        Crypto-buy customer network-fee recovery in this period: <strong className="text-[var(--text)]">{formatNaira(summary?.cryptoFeeRecovery ?? 0)}</strong>. It is shown separately because it may be passed through to the delivery provider. Customer fees are tracked from transaction fee fields and do not include product margins unless entered separately. Avoid recording already tracked transaction fees as manual income.
+        Crypto-buy customer network-fee recovery in this period: <strong className="text-[var(--text)]">{formatNaira(summary?.cryptoFeeRecovery ?? 0)}</strong>. It is separate because it may be passed through to delivery. Product purchase spreads below are recorded automatically when the app has cost data. Manual income is for revenue not already represented by a purchase spread or tracked customer fee.
       </div>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-base font-bold text-[var(--text)]">Automatically tracked purchases</h3>
+          <p className="mt-1 text-xs text-[var(--muted)]">Successful customer purchases in the selected period. Vendor catalog costs are quoted costs; crypto values use a market replacement estimate.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Customer purchase value" value={formatNaira(payload?.automaticPurchases.saleNgn ?? 0)} detail={`${payload?.automaticPurchases.successfulCount ?? 0} successful purchases`} />
+          <Metric label="Vendor quoted spread" value={formatNaira(payload?.automaticPurchases.quotedSpreadNgn ?? 0)} detail={`Quoted purchase costs ${formatNaira(payload?.automaticPurchases.quotedCostNgn ?? 0)}`} tone="text-[var(--green2)]" />
+          <Metric label="Estimated crypto spread" value={formatNaira(payload?.automaticPurchases.estimatedSpreadNgn ?? 0)} detail={`Replacement cost ${formatNaira(payload?.automaticPurchases.estimatedCostNgn ?? 0)}`} tone="text-[var(--gold2)]" />
+          <Metric label="Cost not reported" value={String(payload?.automaticPurchases.unknownCostCount ?? 0)} detail="Successful purchases missing provider cost" tone="text-[var(--red2)]" />
+        </div>
+        {!payload?.purchases.length ? (
+          <div className="rounded-lg border border-dashed border-[var(--border)] p-5 text-center text-sm text-[var(--muted)]">No purchases found in this date range.</div>
+        ) : (
+          <AdminTable>
+            <AdminThead columns={['Purchase', 'Status', 'Customer price', 'Our cost', 'Spread', 'Cost source', '']} />
+            <tbody className="divide-y divide-[var(--border)]">
+              {payload.purchases.map(purchase => (
+                <tr key={purchase.id} className="hover:bg-[var(--clay)]">
+                  <td className="px-4 py-3"><div className="font-semibold text-[var(--text)]">{purchase.description}</div><div className="text-xs text-[var(--muted)]">{purchase.type.replaceAll('_', ' ')} · {purchase.reference} · {formatDate(purchase.createdAt)}</div></td>
+                  <td className="px-4 py-3 text-xs font-semibold capitalize text-[var(--text2)]">{purchase.status}</td>
+                  <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text)]">{formatNaira(purchase.saleNgn)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text2)]">{purchase.providerCostNgn === null ? 'Not reported' : formatNaira(purchase.providerCostNgn)}</td>
+                  <td className={`px-4 py-3 whitespace-nowrap font-mono text-sm ${purchase.spreadNgn === null ? 'text-[var(--muted)]' : 'text-[var(--green2)]'}`}>{purchase.spreadNgn === null ? '—' : formatNaira(purchase.spreadNgn)}{purchase.costStatus === 'estimate' ? ' est.' : ''}</td>
+                  <td className="px-4 py-3 text-xs capitalize text-[var(--muted)]">{purchase.costBasis.replaceAll('_', ' ')}{purchase.networkFeeRecoveryNgn > 0 ? <div>Network recovery {formatNaira(purchase.networkFeeRecoveryNgn)}</div> : null}</td>
+                  <td className="px-4 py-3 text-right"><Link href={`/admin/transactions/${encodeURIComponent(purchase.id)}`} className="text-xs font-semibold text-[var(--gold2)] hover:underline">Details</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </AdminTable>
+        )}
+      </section>
 
       <form onSubmit={saveEntry} className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="sm:col-span-2 xl:col-span-4 text-sm font-bold text-[var(--text)]">Add a finance record</div>

@@ -4344,6 +4344,19 @@ export async function listOwnerFinanceEntries(from: string, toExclusive: string,
   return (getDb().prepare(sql).all(from, toExclusive, limit) as OwnerFinanceEntryRow[]).map(mapOwnerFinanceEntry)
 }
 
+export async function listPurchaseTransactions(from: string, toExclusive: string, limit = 1000) {
+  await ensureDbReady()
+  const boundedLimit = Math.max(1, Math.min(5000, limit))
+  const sql = `SELECT * FROM transactions
+    WHERE created_at >= ? AND created_at < ?
+      AND type IN ('crypto_buy', 'airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+    ORDER BY created_at DESC LIMIT ?`
+  if (isPostgresEnabled()) {
+    return (await queryPostgres<TransactionRow>(sql, [from, toExclusive, boundedLimit])).rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
+  }
+  return (getDb().prepare(sql).all(from, toExclusive, boundedLimit) as TransactionRow[]).map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
+}
+
 export async function summarizeOwnerFinance(from: string, toExclusive: string) {
   await ensureDbReady()
   const entriesQuery = `SELECT direction, COALESCE(SUM(amount_ngn), 0) AS total, COUNT(*) AS count
@@ -8266,6 +8279,17 @@ export async function getCryptoOrderByTransactionId(transactionId: string): Prom
   }
   const row = getDb().prepare('SELECT * FROM crypto_orders WHERE transaction_id = ? LIMIT 1').get(transactionId) as CryptoOrderRow | undefined
   return row ? mapCryptoOrderRow(row) : null
+}
+
+export async function getCryptoOrdersByTransactionIds(transactionIds: string[]) {
+  await ensureDbReady()
+  const ids = [...new Set(transactionIds.filter(Boolean))].slice(0, 500)
+  if (ids.length === 0) return []
+  const placeholders = ids.map(() => '?').join(', ')
+  if (isPostgresEnabled()) {
+    return (await queryPostgres<CryptoOrderRow>(`SELECT * FROM crypto_orders WHERE transaction_id IN (${placeholders})`, ids)).rows.map(mapCryptoOrderRow)
+  }
+  return (getDb().prepare(`SELECT * FROM crypto_orders WHERE transaction_id IN (${placeholders})`).all(...ids) as CryptoOrderRow[]).map(mapCryptoOrderRow)
 }
 
 export async function getCryptoOrderByProviderReference(providerReference: string): Promise<CryptoOrder | null> {

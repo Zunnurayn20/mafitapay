@@ -575,6 +575,15 @@ export async function POST(req: Request) {
         orderAmountNgn: quotedAmount,
         networkFeeNgn: fee,
         totalDebitNgn: totalDebit,
+        purchaseEconomics: {
+          version: 1,
+          saleNgn: quotedAmount,
+          providerCostNgn: typeof platformCostPayload?.principalNgn === 'number' ? platformCostPayload.principalNgn : null,
+          spreadNgn: typeof platformCostPayload?.principalNgn === 'number' ? quotedAmount - platformCostPayload.principalNgn : null,
+          costBasis: 'market_replacement_snapshot',
+          costStatus: 'estimate',
+          customerNetworkFeeRecoveryNgn: fee,
+        },
       },
     }
   } else {
