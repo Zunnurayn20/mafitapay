@@ -15,3 +15,4 @@ data/*.db
 data/*.db-*
 data/uploads
 .migration-backups
+supabase/.temp

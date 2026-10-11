@@ -35,7 +35,38 @@ export async function GET(request: Request) {
     .filter(({ transaction }) => transaction.type === 'crypto_buy')
     .map(({ transaction }) => transaction.id))
   const cryptoOrdersByTransaction = new Map(cryptoOrders.map(order => [order.transactionId, order]))
-  const purchases = purchaseRows.map(({ transaction }) => {
+  const depositRows = purchaseRows.filter(({ transaction }) => {
+    if (transaction.type !== 'crypto_sell') return false
+    const metadata = transaction.metadata ?? {}
+    return metadata.settlementFlow === 'direct_crypto_deposit' || metadata.settlementKind === 'crypto_sell_order'
+  })
+  const deposits = depositRows.map(({ transaction }) => {
+    const metadata = transaction.metadata ?? {}
+    const cryptoAmount = typeof metadata.amountCrypto === 'number'
+      ? metadata.amountCrypto
+      : typeof metadata.cryptoAmount === 'number' ? metadata.cryptoAmount : null
+    const marketRate = typeof metadata.marketRate === 'number' && metadata.marketRate > 0 ? metadata.marketRate : null
+    const marketValueNgn = cryptoAmount !== null && marketRate !== null
+      ? Math.round(cryptoAmount * marketRate * 100) / 100
+      : null
+    const customerCreditNgn = Math.abs(transaction.amount)
+    return {
+      id: transaction.id,
+      reference: transaction.reference,
+      type: metadata.settlementFlow === 'direct_crypto_deposit' ? 'direct_deposit' : 'crypto_sell_order',
+      description: transaction.description,
+      status: transaction.status,
+      createdAt: transaction.createdAt,
+      symbol: typeof metadata.symbol === 'string' ? metadata.symbol : String(metadata.pairId ?? 'Crypto'),
+      cryptoAmount,
+      customerCreditNgn,
+      marketRate,
+      marketValueNgn,
+      spreadNgn: marketValueNgn === null ? null : Math.round((marketValueNgn - customerCreditNgn) * 100) / 100,
+      marketSnapshotSource: typeof metadata.marketSnapshotSource === 'string' ? metadata.marketSnapshotSource : null,
+    }
+  })
+  const purchases = purchaseRows.filter(({ transaction }) => transaction.type !== 'crypto_sell').map(({ transaction }) => {
     const metadata = transaction.metadata ?? {}
     const recorded = metadata.purchaseEconomics && typeof metadata.purchaseEconomics === 'object'
       ? metadata.purchaseEconomics as Record<string, unknown>
@@ -101,7 +132,15 @@ export async function GET(request: Request) {
     estimatedSpreadNgn: successfulPurchases.filter(purchase => purchase.costStatus === 'estimate').reduce((sum, purchase) => sum + (purchase.spreadNgn ?? 0), 0),
     unknownCostCount: successfulPurchases.filter(purchase => purchase.costStatus === 'unknown').length,
   }
-  return NextResponse.json({ success: true, data: { summary, entries, purchases, automaticPurchases } })
+  const successfulDeposits = deposits.filter(deposit => deposit.status === 'success')
+  const automaticDeposits = {
+    successfulCount: successfulDeposits.length,
+    customerCreditNgn: successfulDeposits.reduce((sum, deposit) => sum + deposit.customerCreditNgn, 0),
+    marketValueNgn: successfulDeposits.reduce((sum, deposit) => sum + (deposit.marketValueNgn ?? 0), 0),
+    estimatedSpreadNgn: successfulDeposits.filter(deposit => deposit.spreadNgn !== null).reduce((sum, deposit) => sum + (deposit.spreadNgn ?? 0), 0),
+    missingMarketSnapshotCount: successfulDeposits.filter(deposit => deposit.marketValueNgn === null).length,
+  }
+  return NextResponse.json({ success: true, data: { summary, entries, purchases, automaticPurchases, deposits, automaticDeposits } })
 }
 
 export async function POST(request: Request) {

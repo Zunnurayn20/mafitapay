@@ -52,6 +52,30 @@ type AutomaticPurchases = {
   unknownCostCount: number
 }
 
+type CryptoDeposit = {
+  id: string
+  reference: string
+  type: 'direct_deposit' | 'crypto_sell_order'
+  description: string
+  status: string
+  createdAt: string
+  symbol: string
+  cryptoAmount: number | null
+  customerCreditNgn: number
+  marketRate: number | null
+  marketValueNgn: number | null
+  spreadNgn: number | null
+  marketSnapshotSource: string | null
+}
+
+type AutomaticDeposits = {
+  successfulCount: number
+  customerCreditNgn: number
+  marketValueNgn: number
+  estimatedSpreadNgn: number
+  missingMarketSnapshotCount: number
+}
+
 const categories = {
   income: [
     ['product_margin', 'Product margin'],
@@ -91,7 +115,7 @@ export function OwnerFinanceWorkspace() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [direction, setDirection] = useState<'income' | 'expense'>('expense')
-  const [payload, setPayload] = useState<{ summary: Summary; entries: Entry[]; purchases: Purchase[]; automaticPurchases: AutomaticPurchases } | null>(null)
+  const [payload, setPayload] = useState<{ summary: Summary; entries: Entry[]; purchases: Purchase[]; automaticPurchases: AutomaticPurchases; deposits: CryptoDeposit[]; automaticDeposits: AutomaticDeposits } | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -219,6 +243,39 @@ export function OwnerFinanceWorkspace() {
                   <td className={`px-4 py-3 whitespace-nowrap font-mono text-sm ${purchase.spreadNgn === null ? 'text-[var(--muted)]' : 'text-[var(--green2)]'}`}>{purchase.spreadNgn === null ? '—' : formatNaira(purchase.spreadNgn)}{purchase.costStatus === 'estimate' ? ' est.' : ''}</td>
                   <td className="px-4 py-3 text-xs capitalize text-[var(--muted)]">{purchase.costBasis.replaceAll('_', ' ')}{purchase.networkFeeRecoveryNgn > 0 ? <div>Network recovery {formatNaira(purchase.networkFeeRecoveryNgn)}</div> : null}</td>
                   <td className="px-4 py-3 text-right"><Link href={`/admin/transactions/${encodeURIComponent(purchase.id)}`} className="text-xs font-semibold text-[var(--gold2)] hover:underline">Details</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </AdminTable>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-base font-bold text-[var(--text)]">Crypto deposits and sell orders</h3>
+          <p className="mt-1 text-xs text-[var(--muted)]">Estimated spread is the market value of crypto received minus the NGN credited. It is a pricing estimate, not realized profit; inventory and delivery costs are not included. Older records may not have a saved market snapshot.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Successful deposits" value={String(payload?.automaticDeposits.successfulCount ?? 0)} detail="Direct credits and completed sell orders" />
+          <Metric label="Customer NGN credited" value={formatNaira(payload?.automaticDeposits.customerCreditNgn ?? 0)} detail="Successful deposits in this period" />
+          <Metric label="Received crypto value" value={formatNaira(payload?.automaticDeposits.marketValueNgn ?? 0)} detail="Saved market snapshot estimate" tone="text-[var(--gold2)]" />
+          <Metric label="Estimated deposit spread" value={formatNaira(payload?.automaticDeposits.estimatedSpreadNgn ?? 0)} detail={`${payload?.automaticDeposits.missingMarketSnapshotCount ?? 0} successful records lack a saved rate`} tone="text-[var(--green2)]" />
+        </div>
+        {!payload?.deposits.length ? (
+          <div className="rounded-lg border border-dashed border-[var(--border)] p-5 text-center text-sm text-[var(--muted)]">No crypto deposits or sell orders found in this date range.</div>
+        ) : (
+          <AdminTable>
+            <AdminThead columns={['Deposit / sell', 'Status', 'Crypto received', 'Customer credited', 'Market value (est.)', 'Spread (est.)', '']} />
+            <tbody className="divide-y divide-[var(--border)]">
+              {payload.deposits.map(deposit => (
+                <tr key={deposit.id} className="hover:bg-[var(--clay)]">
+                  <td className="px-4 py-3"><div className="font-semibold text-[var(--text)]">{deposit.description}</div><div className="text-xs capitalize text-[var(--muted)]">{deposit.type.replaceAll('_', ' ')} · {deposit.reference} · {formatDate(deposit.createdAt)}</div></td>
+                  <td className="px-4 py-3 text-xs font-semibold capitalize text-[var(--text2)]">{deposit.status}</td>
+                  <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text)]">{deposit.cryptoAmount === null ? '—' : `${deposit.cryptoAmount.toLocaleString(undefined, { maximumFractionDigits: 10 })} ${deposit.symbol}`}</td>
+                  <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text2)]">{formatNaira(deposit.customerCreditNgn)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap font-mono text-sm text-[var(--text2)]">{deposit.marketValueNgn === null ? 'Not captured' : formatNaira(deposit.marketValueNgn)}</td>
+                  <td className={`px-4 py-3 whitespace-nowrap font-mono text-sm ${deposit.spreadNgn === null ? 'text-[var(--muted)]' : 'text-[var(--green2)]'}`}>{deposit.spreadNgn === null ? '—' : `${formatNaira(deposit.spreadNgn)} est.`}{deposit.marketSnapshotSource ? <div className="text-[10px] capitalize text-[var(--muted)]">{deposit.marketSnapshotSource} market</div> : null}</td>
+                  <td className="px-4 py-3 text-right"><Link href={`/admin/transactions/${encodeURIComponent(deposit.id)}`} className="text-xs font-semibold text-[var(--gold2)] hover:underline">Details</Link></td>
                 </tr>
               ))}
             </tbody>

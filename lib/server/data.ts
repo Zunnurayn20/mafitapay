@@ -4349,7 +4349,7 @@ export async function listPurchaseTransactions(from: string, toExclusive: string
   const boundedLimit = Math.max(1, Math.min(5000, limit))
   const sql = `SELECT * FROM transactions
     WHERE created_at >= ? AND created_at < ?
-      AND type IN ('crypto_buy', 'airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+      AND type IN ('crypto_buy', 'crypto_sell', 'airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
     ORDER BY created_at DESC LIMIT ?`
   if (isPostgresEnabled()) {
     return (await queryPostgres<TransactionRow>(sql, [from, toExclusive, boundedLimit])).rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
