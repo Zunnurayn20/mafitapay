@@ -115,6 +115,7 @@ export function OwnerFinanceWorkspace() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [direction, setDirection] = useState<'income' | 'expense'>('expense')
+  const [activeTab, setActiveTab] = useState<'purchases' | 'deposits' | 'records'>('purchases')
   const [payload, setPayload] = useState<{ summary: Summary; entries: Entry[]; purchases: Purchase[]; automaticPurchases: AutomaticPurchases; deposits: CryptoDeposit[]; automaticDeposits: AutomaticDeposits } | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -214,10 +215,31 @@ export function OwnerFinanceWorkspace() {
       </section>
 
       <div className="rounded-lg border border-[var(--border)] bg-[var(--clay)] p-3 text-xs leading-relaxed text-[var(--muted)]">
-        Crypto-buy customer network-fee recovery in this period: <strong className="text-[var(--text)]">{formatNaira(summary?.cryptoFeeRecovery ?? 0)}</strong>. It is separate because it may be passed through to delivery. Product purchase spreads below are recorded automatically when the app has cost data. Manual income is for revenue not already represented by a purchase spread or tracked customer fee.
+        Crypto-buy network-fee recovery: <strong className="text-[var(--text)]">{formatNaira(summary?.cryptoFeeRecovery ?? 0)}</strong>. It is shown separately because it may be passed through to delivery.
       </div>
 
-      <section className="space-y-3">
+      <div className="flex gap-1 overflow-x-auto border-b border-[var(--border)]" role="tablist" aria-label="Finance records">
+        {([
+          ['purchases', 'Purchases', payload?.purchases.length ?? 0],
+          ['deposits', 'Crypto deposits', payload?.deposits.length ?? 0],
+          ['records', 'Manual records', payload?.entries.length ?? 0],
+        ] as const).map(([tab, label, count]) => (
+          <button
+            key={tab}
+            id={`finance-tab-${tab}`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab}
+            aria-controls={`finance-panel-${tab}`}
+            onClick={() => setActiveTab(tab)}
+            className={`-mb-px flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition ${activeTab === tab ? 'border-[var(--gold)] text-[var(--text)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--text2)]'}`}
+          >
+            {label}<span className={`rounded-full px-2 py-0.5 text-[10px] ${activeTab === tab ? 'bg-[var(--clay)] text-[var(--text)]' : 'bg-[var(--coal)] text-[var(--muted)]'}`}>{count}</span>
+          </button>
+        ))}
+      </div>
+
+      <section id="finance-panel-purchases" role="tabpanel" aria-labelledby="finance-tab-purchases" tabIndex={0} hidden={activeTab !== 'purchases'} className="space-y-3">
         <div>
           <h3 className="text-base font-bold text-[var(--text)]">Automatically tracked purchases</h3>
           <p className="mt-1 text-xs text-[var(--muted)]">Successful customer purchases in the selected period. Vendor catalog costs are quoted costs; crypto values use a market replacement estimate.</p>
@@ -250,7 +272,7 @@ export function OwnerFinanceWorkspace() {
         )}
       </section>
 
-      <section className="space-y-3">
+      <section id="finance-panel-deposits" role="tabpanel" aria-labelledby="finance-tab-deposits" tabIndex={0} hidden={activeTab !== 'deposits'} className="space-y-3">
         <div>
           <h3 className="text-base font-bold text-[var(--text)]">Crypto deposits and sell orders</h3>
           <p className="mt-1 text-xs text-[var(--muted)]">Estimated spread is the market value of crypto received minus the NGN credited. It is a pricing estimate, not realized profit; inventory and delivery costs are not included. Older records may not have a saved market snapshot.</p>
@@ -283,6 +305,7 @@ export function OwnerFinanceWorkspace() {
         )}
       </section>
 
+      <section id="finance-panel-records" role="tabpanel" aria-labelledby="finance-tab-records" tabIndex={0} hidden={activeTab !== 'records'} className="space-y-5">
       <form onSubmit={saveEntry} className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="sm:col-span-2 xl:col-span-4 text-sm font-bold text-[var(--text)]">Add a finance record</div>
         <label className="text-xs font-semibold text-[var(--muted)]">Type<AdminSelect value={direction} onChange={event => setDirection(event.target.value as 'income' | 'expense')} className="mt-1 block w-full"><option value="expense">Expense</option><option value="income">Income</option></AdminSelect></label>
@@ -317,6 +340,7 @@ export function OwnerFinanceWorkspace() {
           </AdminTable>
         )}
       </div>
+      </section>
     </div>
   )
 }
