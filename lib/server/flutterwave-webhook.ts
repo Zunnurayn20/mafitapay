@@ -229,12 +229,21 @@ export async function handleFlutterwaveWebhook(input: {
           payload: body,
         })
         if (!recorded.inserted) {
-          logFlutterwaveWebhook('static-va.duplicate-event', {
-            reference,
-            externalEventId,
-            providerReference: providerReference ?? null,
-          })
-          return { body: { data: { duplicate: true, event: recorded.event }, success: true }, status: 200 as const }
+          if (recorded.event.processedAt) {
+            logFlutterwaveWebhook('static-va.duplicate-event', {
+              reference,
+              externalEventId,
+              providerReference: providerReference ?? null,
+            })
+            return { body: { data: { duplicate: true, event: recorded.event }, success: true }, status: 200 as const }
+          }
+          if (
+            recorded.event.provider !== 'flutterwave'
+            || recorded.event.reference !== (providerReference || reference)
+            || recorded.event.status !== status
+          ) {
+            return { body: { error: 'Webhook event ID was already used for a different payload.', success: false }, status: 409 as const }
+          }
         }
 
         const user = (customerEmail ? await getUserByEmail(customerEmail) : null)
@@ -302,6 +311,7 @@ export async function handleFlutterwaveWebhook(input: {
             uniqueReference,
             transactionId: duplicateProviderRef.transaction.id,
           })
+          await markProviderEventProcessed(externalEventId)
           return { body: { data: { duplicate: true, transaction: duplicateProviderRef.transaction }, success: true }, status: 200 as const }
         }
 
@@ -312,6 +322,7 @@ export async function handleFlutterwaveWebhook(input: {
             rawStatus,
             failureReason: failureReason ?? null,
           })
+          await markProviderEventProcessed(externalEventId)
           return { body: { data: { ignored: true, status }, success: true }, status: 200 as const }
         }
 
@@ -387,7 +398,16 @@ export async function handleFlutterwaveWebhook(input: {
             payload: body,
           })
           if (!recorded.inserted) {
-            return { body: { data: { duplicate: true, event: recorded.event }, success: true }, status: 200 as const }
+            if (recorded.event.processedAt) {
+              return { body: { data: { duplicate: true, event: recorded.event }, success: true }, status: 200 as const }
+            }
+            if (
+              recorded.event.provider !== 'flutterwave_bills'
+              || recorded.event.reference !== reference
+              || recorded.event.status !== status
+            ) {
+              return { body: { error: 'Webhook event ID was already used for a different payload.', success: false }, status: 409 as const }
+            }
           }
 
           const resolved = await resolvePendingTransactionByReference(reference, status)

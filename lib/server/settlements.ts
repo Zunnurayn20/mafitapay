@@ -21,17 +21,15 @@ async function guardSettlementTransition(input: {
   const settlementRecord = input.depositIntent ?? input.payoutRequest
   if (!settlementRecord) return { mode: 'fallback' as const, existing: null }
 
-  if (settlementRecord.status !== 'pending') {
-    const transaction = await getAnyTransactionById(settlementRecord.transactionId)
-    if (settlementRecord.status === input.targetStatus && transaction) {
-      return { mode: 'already_settled' as const, existing: transaction }
-    }
-    throw new Error(`Settlement record ${input.reference} is already ${settlementRecord.status}.`)
-  }
-
   const transaction = await getAnyTransactionById(settlementRecord.transactionId)
   if (!transaction) {
     throw new Error('Linked transaction not found.')
+  }
+
+  // Recover an older partial settlement where the intent was marked terminal before the
+  // transaction and ledger finished. Resolve the still-pending transaction on webhook retry.
+  if (settlementRecord.status !== 'pending' && settlementRecord.status !== input.targetStatus) {
+    throw new Error(`Settlement record ${input.reference} is already ${settlementRecord.status}.`)
   }
 
   if (transaction.transaction.status !== 'pending') {
@@ -39,6 +37,10 @@ async function guardSettlementTransition(input: {
       return { mode: 'already_settled' as const, existing: transaction }
     }
     throw new Error(`Transaction ${transaction.transaction.reference} is already ${transaction.transaction.status}.`)
+  }
+
+  if (settlementRecord.status === input.targetStatus) {
+    return { mode: 'resolve' as const, existing: transaction }
   }
 
   return { mode: 'resolve' as const, existing: transaction }
@@ -64,7 +66,14 @@ export async function processSettlementEvent(input: {
   })
 
   if (!recorded.inserted) {
-    return { duplicate: true, event: recorded.event }
+    if (recorded.event.processedAt) return { duplicate: true, event: recorded.event }
+    if (
+      recorded.event.provider !== input.provider
+      || recorded.event.reference !== input.reference
+      || recorded.event.status !== input.status
+    ) {
+      throw new Error('Provider event ID was already used for a different settlement payload.')
+    }
   }
 
   const [depositIntent, payoutRequest] = await Promise.all([
@@ -79,6 +88,11 @@ export async function processSettlementEvent(input: {
   })
 
   if (transition.mode === 'already_settled' && transition.existing) {
+    if (depositIntent) {
+      await updateDepositIntentStatus(input.reference, input.status, input.providerReference, input.providerStatus, input.failureReason)
+    } else if (payoutRequest) {
+      await updatePayoutRequestStatus(input.reference, input.status, input.providerReference, input.providerStatus, input.failureReason)
+    }
     await markProviderEventProcessed(input.externalEventId)
     return {
       duplicate: false,
@@ -90,9 +104,11 @@ export async function processSettlementEvent(input: {
 
   let result
   if (depositIntent) {
-    await updateDepositIntentStatus(input.reference, input.status, input.providerReference, input.providerStatus, input.failureReason)
     result = await resolvePendingTransaction(depositIntent.userId, depositIntent.transactionId, input.status)
     result = result ? { userId: depositIntent.userId, ...result } : null
+    if (result?.transaction.status === input.status) {
+      await updateDepositIntentStatus(input.reference, input.status, input.providerReference, input.providerStatus, input.failureReason)
+    }
     await insertAuditLog({
       userId: depositIntent.userId,
       action: `deposit_intent.${input.status}_webhook`,
@@ -101,9 +117,11 @@ export async function processSettlementEvent(input: {
       metadata: { reference: input.reference, externalEventId: input.externalEventId, provider: input.provider },
     })
   } else if (payoutRequest) {
-    await updatePayoutRequestStatus(input.reference, input.status, input.providerReference, input.providerStatus, input.failureReason)
     result = await resolvePendingTransaction(payoutRequest.userId, payoutRequest.transactionId, input.status)
     result = result ? { userId: payoutRequest.userId, ...result } : null
+    if (result?.transaction.status === input.status) {
+      await updatePayoutRequestStatus(input.reference, input.status, input.providerReference, input.providerStatus, input.failureReason)
+    }
     await insertAuditLog({
       userId: payoutRequest.userId,
       action: `payout_request.${input.status}_webhook`,
@@ -115,7 +133,7 @@ export async function processSettlementEvent(input: {
     result = await resolvePendingTransactionByReference(input.reference, input.status)
   }
 
-  if (!result) {
+  if (!result || result.transaction.status !== input.status) {
     throw new Error('Pending transaction not found.')
   }
 

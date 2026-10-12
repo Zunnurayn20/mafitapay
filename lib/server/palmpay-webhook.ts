@@ -64,6 +64,13 @@ export async function handlePalmPayWebhook(rawBody: string) {
     return { body: 'Invalid PalmPay webhook payload.', contentType: 'text/plain', status: 400 as const }
   }
 
+  // An order can first report processing and later settle. Do not reserve the provider event ID
+  // for a non-terminal notification, or the final callback would be mistaken for a replay.
+  if (orderStatus === 'pending') {
+    logPalmPayWebhook('ignored-status', { orderNo, orderStatus })
+    return { body: 'success', contentType: 'text/plain', status: 200 as const }
+  }
+
   const recorded = await recordProviderEvent({
     externalEventId: orderNo,
     provider: 'palmpay',
@@ -73,12 +80,22 @@ export async function handlePalmPayWebhook(rawBody: string) {
     payload: body,
   })
   if (!recorded.inserted) {
-    logPalmPayWebhook('duplicate-event', { orderNo })
-    return { body: 'success', contentType: 'text/plain', status: 200 as const }
+    if (recorded.event.processedAt) {
+      logPalmPayWebhook('duplicate-event', { orderNo })
+      return { body: 'success', contentType: 'text/plain', status: 200 as const }
+    }
+    if (
+      recorded.event.provider !== 'palmpay'
+      || recorded.event.reference !== orderNo
+      || recorded.event.status !== orderStatus
+    ) {
+      return { body: 'Webhook event ID was already used for a different payload.', contentType: 'text/plain', status: 409 as const }
+    }
   }
 
-  if (orderStatus !== 'success') {
+  if (orderStatus === 'failed') {
     logPalmPayWebhook('ignored-status', { orderNo, orderStatus })
+    await markProviderEventProcessed(orderNo)
     return { body: 'success', contentType: 'text/plain', status: 200 as const }
   }
 
