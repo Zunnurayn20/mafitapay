@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import type { FundingAccountEligibility } from '@/types'
@@ -39,12 +39,12 @@ export interface SessionPayload {
   wallet: Awaited<ReturnType<typeof getWalletByUserId>>
   transactions: Awaited<ReturnType<typeof getTransactionsByUserId>>
   notifications: Awaited<ReturnType<typeof getNotificationsByUserId>>
-  sessions: Awaited<ReturnType<typeof getSessionsByUserId>>
+  sessions: Array<Omit<Awaited<ReturnType<typeof getSessionsByUserId>>[number], 'token'> & { id: string }>
   securitySettings: Awaited<ReturnType<typeof getSecuritySettingsByUserId>>
   kycSubmission: Awaited<ReturnType<typeof getLatestKycSubmissionByUserId>>
   fundingAccountEligibility: FundingAccountEligibility
   cryptoDepositAddresses: Awaited<ReturnType<typeof listCryptoDepositAddressesByUserId>>
-  currentSessionToken: string | null
+  currentSessionId: string | null
   /**
    * Transfer fee margin the server will actually charge.
    *
@@ -53,6 +53,11 @@ export interface SessionPayload {
    * than the one debited after an admin changes the margin.
    */
   transferFeeMarginNgn: number
+}
+
+/** Stable, non-secret identifier for session management UI. Never expose the bearer token. */
+export function getPublicSessionId(token: string) {
+  return createHash('sha256').update(token).digest('base64url')
 }
 
 async function getCookieStore() {
@@ -219,12 +224,12 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
     wallet,
     transactions,
     notifications,
-    sessions,
+    sessions: sessions.map(({ token, ...session }) => ({ ...session, id: getPublicSessionId(token) })),
     securitySettings,
     kycSubmission: safeKycSubmission,
     fundingAccountEligibility,
     cryptoDepositAddresses,
-    currentSessionToken,
+    currentSessionId: currentSessionToken ? getPublicSessionId(currentSessionToken) : null,
     transferFeeMarginNgn,
   }
 }

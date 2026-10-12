@@ -8,7 +8,7 @@ export interface SessionData {
   user: User
   wallet: Wallet | null
   transactions: Transaction[]
-  currentSessionToken: string | null
+  currentSessionId: string | null
   transferFeeMarginNgn?: number
   securitySettings: {
     userId: string
@@ -51,7 +51,7 @@ export interface SessionData {
     createdAt: string
   }[]
   sessions: {
-    token: string
+    id: string
     userId: string
     expiresAt: string
     createdAt: string
@@ -89,7 +89,7 @@ interface AppStore {
   refreshSession: () => Promise<void>
   notifications: SessionData['notifications']
   sessions: SessionData['sessions']
-  currentSessionToken: string | null
+  currentSessionId: string | null
   securitySettings: SessionData['securitySettings']
   kycSubmission: SessionData['kycSubmission']
   fundingAccountEligibility: FundingAccountEligibility
@@ -144,7 +144,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
       transactions: [],
       notifications: [],
       sessions: [],
-      currentSessionToken: null,
+      currentSessionId: null,
       securitySettings: null,
       kycSubmission: null,
       fundingAccountEligibility: {
@@ -167,7 +167,7 @@ function applySessionData(set: (partial: Partial<AppStore>) => void, data: Sessi
     transactions: data.transactions,
     notifications: data.notifications,
     sessions: data.sessions,
-    currentSessionToken: data.currentSessionToken,
+    currentSessionId: data.currentSessionId,
     securitySettings: data.securitySettings,
     kycSubmission: data.kycSubmission,
     fundingAccountEligibility: data.fundingAccountEligibility,
@@ -261,7 +261,7 @@ export const useAppStore = create<AppStore>()(
       // Wallet
       wallet: null,
       transactions: [],
-      currentSessionToken: null,
+      currentSessionId: null,
       securitySettings: null,
       kycSubmission: null,
       fundingAccountEligibility: {

@@ -28,7 +28,7 @@ interface BiometricCredentialItem {
 }
 
 export default function SecurityPage() {
-  const { currentSessionToken, logout, refreshSession, securitySettings, sessions, showToast, user } = useAppStore()
+  const { currentSessionId, logout, refreshSession, securitySettings, sessions, showToast, user } = useAppStore()
   const router = useRouter()
   const searchParams = useSearchParams()
   const setupMode = searchParams.get('setup') === '1'
@@ -64,11 +64,11 @@ export default function SecurityPage() {
   const [nativeBiometricError, setNativeBiometricError] = useState<string | null>(null)
 
   const activeSessions = sessions.map(session => ({
-    id: session.token,
-    icon: session.token === currentSessionToken ? '💻' : '📱',
+    id: session.id,
+    icon: session.id === currentSessionId ? '💻' : '📱',
     device: session.userAgent?.split(' ').slice(0, 4).join(' ') || 'Browser session',
-    info: `${session.token === currentSessionToken ? 'Current session' : 'Signed in'} · ${new Date(session.createdAt).toLocaleString('en-NG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`,
-    current: session.token === currentSessionToken,
+    info: `${session.id === currentSessionId ? 'Current session' : 'Signed in'} · ${new Date(session.createdAt).toLocaleString('en-NG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`,
+    current: session.id === currentSessionId,
   }))
 
   useEffect(() => {
