@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
-import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, recordProviderEvent, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { generateRef } from '@/lib/utils'
+import type { AmigoDataPaymentResult } from '@/lib/server/amigo-bills'
+import type { AsbdataPaymentResult } from '@/lib/server/asbdata-bills'
+import type { BardetechPaymentResult } from '@/lib/server/bardetech-bills'
+import type { FlutterwaveBillPaymentResult } from '@/lib/server/flutterwave-bills'
 import type { BillProvider, Transaction } from '@/types'
 
 /**
@@ -297,43 +301,118 @@ async function handleBillPayment(req: Request) {
     itemCode,
   }
 
-  const providerStartedAt = Date.now()
-  let providerResult = resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
-    ? await createAsbdataDataPayment({
-      networkId: providerNetworkId,
-      mobileNumber: account,
-      planId: providerPlanId,
-      reference: ref,
+  const expectedProvider = resolvedDataProvider && (
+    resolvedDataProvider === 'amigo' ? isAmigoBillsEnabled()
+      : resolvedDataProvider === 'asbdata' ? isAsbdataBillsEnabled()
+        : resolvedDataProvider === 'bardetech' ? isBardetechBillsEnabled()
+          : false
+  )
+    ? resolvedDataProvider
+    : asbdataAirtimeNetworkId !== undefined
+      ? 'asbdata'
+      : bardetechAirtimeNetworkId !== undefined
+        ? 'bardetech'
+        : 'flutterwave'
+  const reservationTransaction: Transaction = {
+    id: ref,
+    type: selectedProvider.type as Transaction['type'],
+    status: 'pending',
+    amount: -chargeAmount,
+    fee: platformFee,
+    description: `${serviceConfig.displayName} Payment`,
+    reference: ref,
+    createdAt: new Date().toISOString(),
+    icon: selectedProvider.icon,
+    metadata: {
+      serviceId: selectedProvider.id,
+      serviceType: selectedProvider.type,
+      serviceName: serviceConfig.displayName,
+      provider: serviceConfig.requiresNetwork ? provider : undefined,
+      account,
+      amount: chargeAmount,
+      providerName: expectedProvider,
+      // Flutterwave can retrieve the eventual outcome by our client reference if the
+      // synchronous request times out after the provider accepted it.
+      providerReference: expectedProvider === 'flutterwave' ? ref : undefined,
+      platformFee,
+      pricingRuleId: pricingRuleId || undefined,
+      settlementFlow: 'release_locked',
+      settlementKind: 'provider_bill',
+      walletAsset: 'NGN',
+    },
+  }
+  let reservation: Awaited<ReturnType<typeof applyWalletMutation>>
+  try {
+    reservation = await applyWalletMutation({
+      userId: user.id,
+      balanceDelta: -chargeAmount,
+      lockedBalanceDelta: chargeAmount,
+      minimumAvailableBalance: chargeAmount,
+      transaction: reservationTransaction,
     })
-    : resolvedDataProvider === 'bardetech' && isBardetechBillsEnabled() && providerPlanId
-      ? await createBardetechDataPayment({
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Insufficient balance') {
+      return NextResponse.json({ error: 'Insufficient balance', success: false }, { status: 400 })
+    }
+    throw error
+  }
+
+  const providerStartedAt = Date.now()
+  let activeProvider = expectedProvider
+  let providerResult: AsbdataPaymentResult | BardetechPaymentResult | AmigoDataPaymentResult | FlutterwaveBillPaymentResult
+  try {
+    providerResult = resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
+      ? await createAsbdataDataPayment({
         networkId: providerNetworkId,
         mobileNumber: account,
         planId: providerPlanId,
         reference: ref,
       })
-      : resolvedDataProvider === 'amigo' && isAmigoBillsEnabled() && providerPlanId
-        ? await createAmigoDataPayment({
+      : resolvedDataProvider === 'bardetech' && isBardetechBillsEnabled() && providerPlanId
+        ? await createBardetechDataPayment({
           networkId: providerNetworkId,
           mobileNumber: account,
           planId: providerPlanId,
           reference: ref,
         })
-        : asbdataAirtimeNetworkId !== undefined
-          ? await createAsbdataAirtimePayment({
-            networkId: asbdataAirtimeNetworkId,
+        : resolvedDataProvider === 'amigo' && isAmigoBillsEnabled() && providerPlanId
+          ? await createAmigoDataPayment({
+            networkId: providerNetworkId,
             mobileNumber: account,
-            amount: chargeAmount,
+            planId: providerPlanId,
             reference: ref,
           })
-          : bardetechAirtimeNetworkId !== undefined
-            ? await createBardetechAirtimePayment({
-              networkId: bardetechAirtimeNetworkId,
+          : asbdataAirtimeNetworkId !== undefined
+            ? await createAsbdataAirtimePayment({
+              networkId: asbdataAirtimeNetworkId,
               mobileNumber: account,
               amount: chargeAmount,
               reference: ref,
             })
-            : await createFlutterwaveBillPayment(flutterwaveInput)
+            : bardetechAirtimeNetworkId !== undefined
+              ? await createBardetechAirtimePayment({
+                networkId: bardetechAirtimeNetworkId,
+                mobileNumber: account,
+                amount: chargeAmount,
+                reference: ref,
+              })
+              : await createFlutterwaveBillPayment(flutterwaveInput)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Provider request ended without a confirmed response.'
+    await recordProviderEvent({
+      externalEventId: `bill:${ref}:request-indeterminate`,
+      provider: `${activeProvider}_bills`,
+      reference: ref,
+      status: 'INDETERMINATE',
+      failureReason: reason,
+      payload: { message: reason },
+    })
+    return NextResponse.json({
+      data: { transaction: reservation.transaction, wallet: reservation.wallet },
+      message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',
+      success: true,
+    }, { status: 202 })
+  }
 
   // Airtime falls back to Flutterwave when the VTU vendor rejects the request outright. Never retry
   // an indeterminate result -- a topup that actually landed must not be sent a second time.
@@ -355,6 +434,12 @@ async function handleBillPayment(req: Request) {
       failureReason: providerResult.reason,
       payload: providerResult.payload,
     })
+    activeProvider = 'flutterwave'
+    await updatePendingTransactionMetadata(user.id, ref, {
+      ...reservationTransaction.metadata,
+      providerName: 'flutterwave',
+      providerReference: ref,
+    })
     providerResult = await createFlutterwaveBillPayment(flutterwaveInput)
   }
 
@@ -375,9 +460,35 @@ async function handleBillPayment(req: Request) {
         ? 'amigo_data'
         : 'flutterwave_bills'
 
-  if (providerResult.status === 'failed') {
+  if (providerResult.status === 'failed' && 'indeterminate' in providerResult && providerResult.indeterminate) {
+    const eventId = providerResult.providerReference || `bill:${ref}:indeterminate`
     await recordProviderEvent({
-      externalEventId: providerResult.providerReference || `bill:${ref}:failed`,
+      externalEventId: eventId,
+      provider: providerEventName,
+      reference: ref,
+      status: providerResult.rawStatus || 'INDETERMINATE',
+      failureReason: providerResult.reason,
+      payload: providerResult.payload,
+    })
+    const pendingTransaction = await updatePendingTransactionMetadata(user.id, ref, {
+      ...reservationTransaction.metadata,
+      providerName: providerResult.provider,
+      providerReference: providerResult.providerReference || ref,
+      providerStatus: providerResult.rawStatus || 'INDETERMINATE',
+    })
+    if (!pendingTransaction) throw new Error('Unable to preserve pending bill payment details.')
+    void kickPendingFlutterwaveBillSync()
+    return NextResponse.json({
+      data: { transaction: pendingTransaction, wallet: reservation.wallet },
+      message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',
+      success: true,
+    }, { status: 202 })
+  }
+
+  if (providerResult.status === 'failed') {
+    const eventId = providerResult.providerReference || `bill:${ref}:failed`
+    await recordProviderEvent({
+      externalEventId: eventId,
       provider: providerEventName,
       reference: ref,
       status: providerResult.rawStatus || 'FAILED',
@@ -385,11 +496,19 @@ async function handleBillPayment(req: Request) {
       payload: providerResult.payload,
     })
 
-    return NextResponse.json({ error: providerResult.reason || 'Bill payment failed.', success: false }, { status: 400 })
+    const released = await resolvePendingTransaction(user.id, ref, 'failed')
+    if (released && released.transaction.status !== 'failed') {
+      return NextResponse.json({ error: 'The provider reported conflicting bill payment results. Please contact support.', success: false }, { status: 409 })
+    }
+    await markProviderEventProcessed(eventId)
+
+    return NextResponse.json({
+      error: providerResult.reason || 'Bill payment failed.',
+      data: released ? { transaction: released.transaction, wallet: released.wallet } : undefined,
+      success: false,
+    }, { status: 400 })
   }
 
-  const transactionType = selectedProvider.type as Transaction['type']
-  const transactionStatus: Transaction['status'] = providerResult.status === 'success' ? 'success' : 'pending'
   // Plan-based data: platformFee is the margin from pricing rules. Flutterwave / airtime quote
   // retail, so there is nothing to split out unless we priced a plan above.
   const isPlanBasedProvider = providerResult.provider === 'amigo' || (
@@ -398,8 +517,8 @@ async function handleBillPayment(req: Request) {
   )
   const transaction = {
     id: ref,
-    type: transactionType,
-    status: transactionStatus,
+    type: selectedProvider.type as Transaction['type'],
+    status: 'pending',
     amount: -chargeAmount,
     fee: platformFee,
     description: `${serviceConfig.displayName} Payment`,
@@ -432,19 +551,22 @@ async function handleBillPayment(req: Request) {
         costStatus: isPlanBasedProvider ? 'quoted' : 'unknown',
       },
       pricingRuleId: pricingRuleId || undefined,
-      settlementFlow: providerResult.status === 'pending' ? 'release_locked' : 'none',
+      settlementFlow: 'release_locked',
       settlementKind: 'provider_bill',
       walletAsset: 'NGN',
     },
   }
 
-  const result = await applyWalletMutation({
-    userId: user.id,
-    balanceDelta: -chargeAmount,
-    lockedBalanceDelta: providerResult.status === 'pending' ? chargeAmount : 0,
-    minimumAvailableBalance: chargeAmount,
-    transaction,
-  })
+  const metadataUpdated = await updatePendingTransactionMetadata(user.id, ref, transaction.metadata)
+  if (!metadataUpdated) throw new Error('Unable to update reserved bill payment details.')
+  const result = providerResult.status === 'success'
+    ? await resolvePendingTransaction(user.id, ref, 'success')
+    : { transaction: metadataUpdated, wallet: await getWalletByUserId(user.id) }
+  if (!result) throw new Error('Unable to settle bill payment reservation.')
+  if (providerResult.status === 'success' && result.transaction.status !== 'success') {
+    return NextResponse.json({ error: 'The provider reported conflicting bill payment results. Please contact support.', success: false }, { status: 409 })
+  }
+  if (!result.wallet) throw new Error('Unable to load the updated bill payment wallet.')
   await recordProviderEvent({
     externalEventId: providerResult.providerReference || `bill:${ref}:${providerResult.rawStatus || providerResult.status}`,
     provider: providerEventName,

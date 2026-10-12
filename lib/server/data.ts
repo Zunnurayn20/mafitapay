@@ -4312,6 +4312,17 @@ export async function updateTransactionStatus(userId: string, transactionId: str
   return updated
 }
 
+export async function updatePendingTransactionMetadata(userId: string, transactionId: string, metadata: Record<string, unknown>) {
+  await ensureDbReady()
+  const serialized = JSON.stringify(metadata)
+  if (isPostgresEnabled()) {
+    await queryPostgres("UPDATE transactions SET metadata = ? WHERE id = ? AND user_id = ? AND status = 'pending'", [serialized, transactionId, userId])
+  } else {
+    getDb().prepare("UPDATE transactions SET metadata = ? WHERE id = ? AND user_id = ? AND status = 'pending'").run(serialized, transactionId, userId)
+  }
+  return getTransactionById(userId, transactionId)
+}
+
 export async function listRecentTransactions(limit = 40): Promise<Array<{ userId: string; transaction: Transaction }>> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
