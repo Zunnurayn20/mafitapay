@@ -10,6 +10,8 @@ import {
   insertAuditLog,
   markProviderEventProcessed,
   recordProviderEvent,
+  claimProviderEventProcessing,
+  releaseProviderEventProcessingClaim,
   resolvePendingTransactionByReference,
 } from '@/lib/server/data'
 import { processSettlementEvent } from '@/lib/server/settlements'
@@ -87,10 +89,15 @@ async function resolveVerifiedFlutterwaveDeposit(params: {
 export async function handleFlutterwaveWebhook(input: {
   rawBody: string
   signature?: string | null
+  signatureFormat?: 'hmac' | 'secret_hash'
   skipSignatureVerification?: boolean
   source?: 'public_webhook' | 'admin_test'
 }) {
-  const signatureValid = input.skipSignatureVerification || verifyFlutterwaveWebhook(input.rawBody, input.signature ?? null)
+  const signatureValid = input.skipSignatureVerification || verifyFlutterwaveWebhook(
+    input.rawBody,
+    input.signature ?? null,
+    input.signatureFormat ?? 'hmac'
+  )
   if (!signatureValid) {
     // Unconditional, not debug-gated: a rejected signature settles nothing, and with the debug flag
     // off in production it produced no output at all -- leaving "Flutterwave is not calling us" and
@@ -245,10 +252,14 @@ export async function handleFlutterwaveWebhook(input: {
             return { body: { error: 'Webhook event ID was already used for a different payload.', success: false }, status: 409 as const }
           }
         }
+        if (!await claimProviderEventProcessing(externalEventId)) {
+          return { body: { error: 'Webhook event is already being processed. Please retry.' , success: false }, status: 503 as const }
+        }
 
         const user = (customerEmail ? await getUserByEmail(customerEmail) : null)
           ?? (accountNumber ? await getUserByVirtualAccountNumber(accountNumber) : null)
         if (!user) {
+          await releaseProviderEventProcessingClaim(externalEventId)
           logFlutterwaveWebhook('static-va.user-miss', {
             reference,
             externalEventId,
@@ -293,6 +304,7 @@ export async function handleFlutterwaveWebhook(input: {
           : amount
 
         if (grossAmount == null || !Number.isFinite(grossAmount) || grossAmount <= 0) {
+          await releaseProviderEventProcessingClaim(externalEventId)
           logFlutterwaveWebhook('static-va.amount-invalid', {
             reference,
             externalEventId,
@@ -410,6 +422,10 @@ export async function handleFlutterwaveWebhook(input: {
             }
           }
 
+          if (!await claimProviderEventProcessing(externalEventId)) {
+            return { body: { error: 'Webhook event is already being processed. Please retry.', success: false }, status: 503 as const }
+          }
+
           const resolved = await resolvePendingTransactionByReference(reference, status)
           if (resolved) {
             await markProviderEventProcessed(externalEventId)
@@ -423,6 +439,9 @@ export async function handleFlutterwaveWebhook(input: {
             }))
             return { body: { data: resolved.transaction, success: true }, status: 200 as const }
           }
+
+          // Release this lease so the shared settlement path below can claim the event if needed.
+          await releaseProviderEventProcessingClaim(externalEventId)
         }
 
         // Only a transaction that has already reached a terminal state is a genuine duplicate.
@@ -446,7 +465,12 @@ export async function handleFlutterwaveWebhook(input: {
       providerStatus: rawStatus || undefined,
       failureReason: status === 'failed' ? failureReason : undefined,
       payload: body,
+      claimProcessing: true,
     })
+
+    if (processed.inProgress) {
+      return { body: { error: 'Webhook event is already being processed. Please retry.', success: false }, status: 503 as const }
+    }
 
     if (processed.duplicate) {
       logFlutterwaveWebhook('settlement.duplicate', {
@@ -466,6 +490,7 @@ export async function handleFlutterwaveWebhook(input: {
 
     return { body: { data: processed.result, success: true }, status: 200 as const }
   } catch (error) {
+    if (externalEventId) await releaseProviderEventProcessingClaim(externalEventId).catch(() => null)
     logFlutterwaveWebhook('error', {
       source: input.source ?? 'public_webhook',
       eventType,

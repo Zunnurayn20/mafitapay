@@ -6,6 +6,7 @@ import {
   insertAuditLog,
   markProviderEventProcessed,
   recordProviderEvent,
+  claimProviderEventProcessing,
   resolvePendingTransaction,
   resolvePendingTransactionByReference,
   updateDepositIntentStatus,
@@ -55,6 +56,7 @@ export async function processSettlementEvent(input: {
   providerStatus?: string
   failureReason?: string
   payload?: Record<string, unknown>
+  claimProcessing?: boolean
 }) {
   const recorded = await recordProviderEvent({
     externalEventId: input.externalEventId,
@@ -74,6 +76,10 @@ export async function processSettlementEvent(input: {
     ) {
       throw new Error('Provider event ID was already used for a different settlement payload.')
     }
+  }
+
+  if (input.claimProcessing && !await claimProviderEventProcessing(input.externalEventId)) {
+    return { duplicate: false, inProgress: true, event: recorded.event }
   }
 
   const [depositIntent, payoutRequest] = await Promise.all([

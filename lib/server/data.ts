@@ -2335,6 +2335,7 @@ function initSchema(db: DatabaseSync) {
       processed_at TEXT,
       retry_count INTEGER NOT NULL DEFAULT 0,
       failure_reason TEXT,
+      processing_started_at TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -2541,6 +2542,7 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'kyc_submissions', 'file_size', 'INTEGER')
   ensureColumn(db, 'provider_events', 'retry_count', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'provider_events', 'failure_reason', 'TEXT')
+  ensureColumn(db, 'provider_events', 'processing_started_at', 'TEXT')
   ensureColumn(db, 'deposit_intents', 'retry_count', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'deposit_intents', 'failure_reason', 'TEXT')
   ensureColumn(db, 'deposit_intents', 'provider_status', 'TEXT')
@@ -5437,26 +5439,59 @@ export async function recordProviderEvent(input: {
 export async function markProviderEventProcessed(externalEventId: string): Promise<ProviderEvent | null> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
-    const result = await queryPostgres<ProviderEventRow>('UPDATE provider_events SET processed_at = ? WHERE external_event_id = ? RETURNING *', [new Date().toISOString(), externalEventId])
+    const result = await queryPostgres<ProviderEventRow>('UPDATE provider_events SET processed_at = ?, processing_started_at = NULL WHERE external_event_id = ? RETURNING *', [new Date().toISOString(), externalEventId])
     return result.rows[0] ? mapProviderEventRow(result.rows[0]) : null
   }
   const db = getDb()
   const processedAt = new Date().toISOString()
-  db.prepare('UPDATE provider_events SET processed_at = ? WHERE external_event_id = ?')
+  db.prepare('UPDATE provider_events SET processed_at = ?, processing_started_at = NULL WHERE external_event_id = ?')
     .run(processedAt, externalEventId)
   const row = db.prepare('SELECT * FROM provider_events WHERE external_event_id = ? LIMIT 1')
     .get(externalEventId) as ProviderEventRow | undefined
   return row ? mapProviderEventRow(row) : null
 }
 
+export async function claimProviderEventProcessing(externalEventId: string, leaseMs = 120_000): Promise<boolean> {
+  await ensureDbReady()
+  const now = new Date()
+  const startedAt = now.toISOString()
+  const expiredBefore = new Date(now.getTime() - leaseMs).toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<{ external_event_id: string }>(`
+      UPDATE provider_events
+      SET processing_started_at = ?
+      WHERE external_event_id = ? AND processed_at IS NULL
+        AND (processing_started_at IS NULL OR processing_started_at <= ?)
+      RETURNING external_event_id
+    `, [startedAt, externalEventId, expiredBefore])
+    return result.rows.length > 0
+  }
+  const result = getDb().prepare(`
+    UPDATE provider_events SET processing_started_at = ?
+    WHERE external_event_id = ? AND processed_at IS NULL
+      AND (processing_started_at IS NULL OR processing_started_at <= ?)
+  `).run(startedAt, externalEventId, expiredBefore) as { changes?: number }
+  return Number(result.changes ?? 0) > 0
+}
+
+export async function releaseProviderEventProcessingClaim(externalEventId: string): Promise<void> {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('UPDATE provider_events SET processing_started_at = NULL WHERE external_event_id = ? AND processed_at IS NULL', [externalEventId])
+    return
+  }
+  getDb().prepare('UPDATE provider_events SET processing_started_at = NULL WHERE external_event_id = ? AND processed_at IS NULL')
+    .run(externalEventId)
+}
+
 export async function requeueProviderEvent(externalEventId: string): Promise<ProviderEvent | null> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
-    const result = await queryPostgres<ProviderEventRow>('UPDATE provider_events SET processed_at = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE external_event_id = ? RETURNING *', [externalEventId])
+    const result = await queryPostgres<ProviderEventRow>('UPDATE provider_events SET processed_at = NULL, processing_started_at = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE external_event_id = ? RETURNING *', [externalEventId])
     return result.rows[0] ? mapProviderEventRow(result.rows[0]) : null
   }
   const db = getDb()
-  db.prepare('UPDATE provider_events SET processed_at = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE external_event_id = ?')
+  db.prepare('UPDATE provider_events SET processed_at = NULL, processing_started_at = NULL, retry_count = COALESCE(retry_count, 0) + 1 WHERE external_event_id = ?')
     .run(externalEventId)
   const row = db.prepare('SELECT * FROM provider_events WHERE external_event_id = ? LIMIT 1')
     .get(externalEventId) as ProviderEventRow | undefined

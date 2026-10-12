@@ -6,7 +6,9 @@ export const runtime = 'nodejs'
 export async function POST(req: Request) {
   const startedAt = Date.now()
   const rawBody = await req.text()
-  const signature = req.headers.get('flutterwave-signature') ?? req.headers.get('verif-hash')
+  const hmacSignature = req.headers.get('flutterwave-signature')
+  const legacySecretHash = req.headers.get('verif-hash')
+  const signature = hmacSignature ?? legacySecretHash
   if (process.env.MAFITAPAY_DEBUG_FLUTTERWAVE === '1') {
     console.log('[flutterwave-webhook] route.received', JSON.stringify({
       hasSignature: Boolean(signature),
@@ -31,7 +33,12 @@ export async function POST(req: Request) {
       })(),
     }))
   }
-  const result = await handleFlutterwaveWebhook({ rawBody, signature, source: 'public_webhook' })
+  const result = await handleFlutterwaveWebhook({
+    rawBody,
+    signature,
+    signatureFormat: hmacSignature ? 'hmac' : 'secret_hash',
+    source: 'public_webhook',
+  })
   console.info('[flutterwave-webhook] route.completed', JSON.stringify({
     status: result.status,
     success: result.body.success,

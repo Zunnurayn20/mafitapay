@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { generateRef } from '@/lib/utils'
 
 type FlutterwaveTransferInit = {
@@ -299,11 +299,22 @@ export async function retrieveFlutterwaveTransfer(providerReference: string): Pr
   }
 }
 
-export function verifyFlutterwaveWebhook(rawBody: string, signature: string | null) {
+function safeStringEqual(left: string, right: string) {
+  const leftBytes = Buffer.from(left, 'utf8')
+  const rightBytes = Buffer.from(right, 'utf8')
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)
+}
+
+export function verifyFlutterwaveWebhook(
+  rawBody: string,
+  signature: string | null,
+  format: 'hmac' | 'secret_hash' = 'hmac'
+) {
   const secretHash = readString(process.env.MAFITAPAY_FLUTTERWAVE_SECRET_HASH)
   if (!secretHash || !signature) return false
+  if (format === 'secret_hash') return safeStringEqual(signature, secretHash)
   const computed = createHmac('sha256', secretHash).update(rawBody).digest('base64')
-  return computed === signature || signature === secretHash
+  return safeStringEqual(computed, signature)
 }
 
 export function mapFlutterwaveTransferStatus(status: string | null | undefined): 'success' | 'failed' | null {
