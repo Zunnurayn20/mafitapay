@@ -281,6 +281,19 @@ type WalletRow = {
   virtual_accounts: string
 }
 
+type StaticVirtualAccountProvisioningStatus = 'creating' | 'ready' | 'failed' | 'uncertain'
+
+type StaticVirtualAccountProvisioningRow = {
+  user_id: string
+  provider: 'palmpay' | 'flutterwave'
+  reference: string
+  status: StaticVirtualAccountProvisioningStatus
+  virtual_account: string | null
+  failure_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
 type CryptoDepositAddressRow = {
   id: string
   user_id: string
@@ -1723,6 +1736,19 @@ function initSchema(db: DatabaseSync) {
       locked_balance REAL NOT NULL,
       currency TEXT NOT NULL,
       virtual_accounts TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS static_virtual_account_provisioning (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN ('palmpay', 'flutterwave')),
+      reference TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('creating', 'ready', 'failed', 'uncertain')),
+      virtual_account TEXT,
+      failure_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, provider),
+      CHECK ((status = 'ready') = (virtual_account IS NOT NULL))
     );
 
     CREATE TABLE IF NOT EXISTS transactions (
@@ -5745,6 +5771,187 @@ export async function updateWalletVirtualAccounts(userId: string, virtualAccount
   db.prepare('UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?')
     .run(JSON.stringify(virtualAccounts), userId)
   return getWalletByUserId(userId)
+}
+
+function orderVirtualAccountsForDisplay(accounts: Wallet['virtualAccounts']) {
+  const rank = (account: Wallet['virtualAccounts'][number]) =>
+    account.provider === 'palmpay' && account.isPermanent ? 0
+      : account.provider === 'flutterwave' && account.isPermanent ? 1
+        : 2
+  return [...accounts].sort((left, right) => rank(left) - rank(right))
+}
+
+export async function claimStaticVirtualAccountProvisioning(userId: string, provider: 'palmpay' | 'flutterwave') {
+  await ensureDbReady()
+  const reference = `static_va_${generateRef()}`
+  const now = new Date().toISOString()
+  const staleAfterMs = 5 * 60 * 1000
+
+  if (isPostgresEnabled()) {
+    return await withPostgresTransaction(async client => {
+      const walletResult = await queryPostgresClient<WalletRow>(client, 'SELECT * FROM wallets WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+      const wallet = walletResult.rows[0]
+      if (!wallet) throw new Error('Wallet not found')
+      const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
+      const existingAccount = accounts.find(item => item.provider === provider && item.isPermanent)
+      if (existingAccount) return { state: 'ready' as const, virtualAccount: existingAccount }
+
+      const claimResult = await queryPostgresClient<StaticVirtualAccountProvisioningRow>(client,
+        'SELECT *, virtual_account::text AS virtual_account FROM static_virtual_account_provisioning WHERE user_id = ? AND provider = ? FOR UPDATE',
+        [userId, provider])
+      const claim = claimResult.rows[0]
+      if (!claim) {
+        await queryPostgresClient(client, `
+          INSERT INTO static_virtual_account_provisioning (user_id, provider, reference, status, created_at, updated_at)
+          VALUES (?, ?, ?, 'creating', ?, ?)
+        `, [userId, provider, reference, now, now])
+        return { state: 'claimed' as const, reference }
+      }
+
+      if (claim.status === 'ready') {
+        const provisioned = parseJson(claim.virtual_account, null as Wallet['virtualAccounts'][number] | null)
+        if (!provisioned) throw new Error('Stored virtual account provisioning record is invalid.')
+        const nextAccounts = orderVirtualAccountsForDisplay([...accounts, provisioned])
+        await queryPostgresClient(client, 'UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?', [JSON.stringify(nextAccounts), userId])
+        return { state: 'ready' as const, virtualAccount: provisioned }
+      }
+      if (claim.status === 'creating') {
+        if (Date.now() - Date.parse(claim.created_at) > staleAfterMs) {
+          await queryPostgresClient(client, "UPDATE static_virtual_account_provisioning SET status = 'uncertain', failure_reason = ?, updated_at = ? WHERE user_id = ? AND provider = ?", ['Provisioning timed out before the provider outcome was saved.', now, userId, provider])
+          return { state: 'uncertain' as const }
+        }
+        return { state: 'in_progress' as const }
+      }
+      if (claim.status === 'uncertain') return { state: 'uncertain' as const }
+
+      await queryPostgresClient(client, `
+        UPDATE static_virtual_account_provisioning
+        SET reference = ?, status = 'creating', virtual_account = NULL, failure_reason = NULL, created_at = ?, updated_at = ?
+        WHERE user_id = ? AND provider = ?
+      `, [reference, now, now, userId, provider])
+      return { state: 'claimed' as const, reference }
+    })
+  }
+
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ? LIMIT 1').get(userId) as WalletRow | undefined
+    if (!wallet) throw new Error('Wallet not found')
+    const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
+    const existingAccount = accounts.find(item => item.provider === provider && item.isPermanent)
+    if (existingAccount) {
+      db.exec('COMMIT')
+      return { state: 'ready' as const, virtualAccount: existingAccount }
+    }
+    const claim = db.prepare('SELECT * FROM static_virtual_account_provisioning WHERE user_id = ? AND provider = ?').get(userId, provider) as StaticVirtualAccountProvisioningRow | undefined
+    if (!claim) {
+      db.prepare("INSERT INTO static_virtual_account_provisioning (user_id, provider, reference, status, created_at, updated_at) VALUES (?, ?, ?, 'creating', ?, ?)").run(userId, provider, reference, now, now)
+      db.exec('COMMIT')
+      return { state: 'claimed' as const, reference }
+    }
+    if (claim.status === 'ready') {
+      const provisioned = parseJson(claim.virtual_account, null as Wallet['virtualAccounts'][number] | null)
+      if (!provisioned) throw new Error('Stored virtual account provisioning record is invalid.')
+      db.prepare('UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?').run(JSON.stringify([...accounts, provisioned]), userId)
+      db.exec('COMMIT')
+      return { state: 'ready' as const, virtualAccount: provisioned }
+    }
+    if (claim.status === 'creating') {
+      if (Date.now() - Date.parse(claim.created_at) > staleAfterMs) {
+        db.prepare("UPDATE static_virtual_account_provisioning SET status = 'uncertain', failure_reason = ?, updated_at = ? WHERE user_id = ? AND provider = ?").run('Provisioning timed out before the provider outcome was saved.', now, userId, provider)
+        db.exec('COMMIT')
+        return { state: 'uncertain' as const }
+      }
+      db.exec('COMMIT')
+      return { state: 'in_progress' as const }
+    }
+    if (claim.status === 'uncertain') {
+      db.exec('COMMIT')
+      return { state: 'uncertain' as const }
+    }
+    db.prepare("UPDATE static_virtual_account_provisioning SET reference = ?, status = 'creating', virtual_account = NULL, failure_reason = NULL, created_at = ?, updated_at = ? WHERE user_id = ? AND provider = ?").run(reference, now, now, userId, provider)
+    db.exec('COMMIT')
+    return { state: 'claimed' as const, reference }
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export async function finishStaticVirtualAccountProvisioning(input: {
+  userId: string
+  provider: 'palmpay' | 'flutterwave'
+  reference: string
+  outcome: 'ready' | 'failed' | 'uncertain'
+  virtualAccount?: Wallet['virtualAccounts'][number]
+  failureReason?: string
+}) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (input.outcome === 'ready' && !input.virtualAccount) throw new Error('Virtual account details are required.')
+
+  if (input.outcome !== 'ready') {
+    if (isPostgresEnabled()) {
+      await queryPostgres("UPDATE static_virtual_account_provisioning SET status = ?, failure_reason = ?, updated_at = ? WHERE user_id = ? AND provider = ? AND reference = ? AND status = 'creating'", [input.outcome, input.failureReason ?? null, now, input.userId, input.provider, input.reference])
+      return null
+    }
+    getDb().prepare("UPDATE static_virtual_account_provisioning SET status = ?, failure_reason = ?, updated_at = ? WHERE user_id = ? AND provider = ? AND reference = ? AND status = 'creating'").run(input.outcome, input.failureReason ?? null, now, input.userId, input.provider, input.reference)
+    return null
+  }
+
+  if (isPostgresEnabled()) {
+    return await withPostgresTransaction(async client => {
+      const walletResult = await queryPostgresClient<WalletRow>(client, 'SELECT * FROM wallets WHERE user_id = ? LIMIT 1 FOR UPDATE', [input.userId])
+      const claimResult = await queryPostgresClient<StaticVirtualAccountProvisioningRow>(client,
+        'SELECT *, virtual_account::text AS virtual_account FROM static_virtual_account_provisioning WHERE user_id = ? AND provider = ? FOR UPDATE',
+        [input.userId, input.provider])
+      const wallet = walletResult.rows[0]
+      const claim = claimResult.rows[0]
+      if (!wallet || !claim || claim.reference !== input.reference) throw new Error('Virtual account provisioning claim was lost.')
+      if (claim.status === 'ready') {
+        const readyAccount = parseJson(claim.virtual_account, null as Wallet['virtualAccounts'][number] | null)
+        if (!readyAccount) throw new Error('Stored virtual account provisioning record is invalid.')
+        return { wallet: buildWalletFromRow(wallet), virtualAccount: readyAccount }
+      }
+      if (claim.status !== 'creating' && claim.status !== 'uncertain') throw new Error('Virtual account provisioning is no longer active.')
+      const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
+      const canonical = accounts.find(item => item.provider === input.provider && item.isPermanent) ?? input.virtualAccount!
+      const nextAccounts = accounts.filter(item => !(item.provider === input.provider && item.isPermanent))
+      nextAccounts.push(canonical)
+      const orderedAccounts = orderVirtualAccountsForDisplay(nextAccounts)
+      await queryPostgresClient(client, 'UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?', [JSON.stringify(orderedAccounts), input.userId])
+      await queryPostgresClient(client, "UPDATE static_virtual_account_provisioning SET status = 'ready', virtual_account = ?, failure_reason = NULL, updated_at = ? WHERE user_id = ? AND provider = ? AND reference = ?", [JSON.stringify(canonical), now, input.userId, input.provider, input.reference])
+      return { wallet: buildWalletFromRow({ ...wallet, virtual_accounts: JSON.stringify(orderedAccounts) }), virtualAccount: canonical }
+    })
+  }
+
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ? LIMIT 1').get(input.userId) as WalletRow | undefined
+    const claim = db.prepare('SELECT * FROM static_virtual_account_provisioning WHERE user_id = ? AND provider = ?').get(input.userId, input.provider) as StaticVirtualAccountProvisioningRow | undefined
+    if (!wallet || !claim || claim.reference !== input.reference) throw new Error('Virtual account provisioning claim was lost.')
+    if (claim.status === 'ready') {
+      const readyAccount = parseJson(claim.virtual_account, null as Wallet['virtualAccounts'][number] | null)
+      if (!readyAccount) throw new Error('Stored virtual account provisioning record is invalid.')
+      db.exec('COMMIT')
+      return { wallet: buildWalletFromRow(wallet), virtualAccount: readyAccount }
+    }
+    if (claim.status !== 'creating' && claim.status !== 'uncertain') throw new Error('Virtual account provisioning is no longer active.')
+    const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
+    const canonical = accounts.find(item => item.provider === input.provider && item.isPermanent) ?? input.virtualAccount!
+    const nextAccounts = accounts.filter(item => !(item.provider === input.provider && item.isPermanent))
+    nextAccounts.push(canonical)
+    const orderedAccounts = orderVirtualAccountsForDisplay(nextAccounts)
+    db.prepare('UPDATE wallets SET virtual_accounts = ? WHERE user_id = ?').run(JSON.stringify(orderedAccounts), input.userId)
+    db.prepare("UPDATE static_virtual_account_provisioning SET status = 'ready', virtual_account = ?, failure_reason = NULL, updated_at = ? WHERE user_id = ? AND provider = ? AND reference = ?").run(JSON.stringify(canonical), now, input.userId, input.provider, input.reference)
+    db.exec('COMMIT')
+    return { wallet: buildWalletFromRow({ ...wallet, virtual_accounts: JSON.stringify(orderedAccounts) }), virtualAccount: canonical }
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 export async function listCryptoDepositAddressesByUserId(userId: string): Promise<CryptoDepositAddress[]> {

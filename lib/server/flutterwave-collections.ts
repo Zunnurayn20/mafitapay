@@ -19,6 +19,7 @@ export type FlutterwaveVirtualAccountResult = {
   provider: 'flutterwave'
   reference: string
   status: 'pending' | 'failed'
+  indeterminate?: boolean
   providerReference?: string
   rawStatus?: string
   reason?: string
@@ -297,6 +298,7 @@ export async function createFlutterwaveStaticVirtualAccount(input: FlutterwaveSt
       provider: 'flutterwave',
       reference: input.reference,
       status: 'failed',
+      indeterminate: true,
       rawStatus: 'REQUEST_ERROR',
       reason: error instanceof Error ? error.message : 'Flutterwave static virtual account request failed.',
       payload: {
@@ -321,6 +323,7 @@ export async function createFlutterwaveStaticVirtualAccount(input: FlutterwaveSt
       provider: 'flutterwave',
       reference: input.reference,
       status: 'failed',
+      indeterminate: response.status >= 500 || (response.ok && rawStatus === 'success' && (!accountNumber || !bankName)),
       providerReference: providerReference || undefined,
       rawStatus: readString(data.response_code) || rawStatus || 'FAILED',
       reason: providerMessage || 'Flutterwave static virtual account creation failed.',

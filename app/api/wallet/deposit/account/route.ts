@@ -5,11 +5,11 @@ import { createPalmPayVirtualAccount, isPalmPayVirtualAccountsEnabled } from '@/
 import {
   getLatestKycSubmissionByUserId,
   getLatestSensitiveKycIdentityByUserId,
+  claimStaticVirtualAccountProvisioning,
+  finishStaticVirtualAccountProvisioning,
   getWalletByUserId,
   insertAuditLog,
-  updateWalletVirtualAccounts,
 } from '@/lib/server/data'
-import { generateRef } from '@/lib/utils'
 import type { Wallet } from '@/types'
 
 export const runtime = 'nodejs'
@@ -19,22 +19,6 @@ const PALMPAY_LOGGING_ENABLED = false // disabled to focus on crypto deposit log
 function logDepositAccount(event: string, payload: Record<string, unknown>) {
   if (!PALMPAY_LOGGING_ENABLED) return
   console.log(`[deposit-account] ${event}`, JSON.stringify(payload))
-}
-
-function orderPermanentAccounts(accounts: Wallet['virtualAccounts']) {
-  return [...accounts].sort((left, right) => {
-    const leftRank = left.provider === 'palmpay' && left.isPermanent
-      ? 0
-      : left.provider === 'flutterwave' && left.isPermanent
-        ? 1
-        : 2
-    const rightRank = right.provider === 'palmpay' && right.isPermanent
-      ? 0
-      : right.provider === 'flutterwave' && right.isPermanent
-        ? 1
-        : 2
-    return leftRank - rightRank
-  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -108,8 +92,6 @@ export async function POST(req: Request) {
     : null
 
   const [firstName, ...restNames] = user.name.trim().split(/\s+/).filter(Boolean)
-  const reference = `static_va_${generateRef()}`
-
   if (provider === 'palmpay') {
     if (!isPalmPayVirtualAccountsEnabled()) {
       // logDepositAccount('palmpay.not_configured', { ... })
@@ -123,6 +105,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: eligibility.error, success: false }, { status: eligibility.status })
     }
 
+    const claim = await claimStaticVirtualAccountProvisioning(user.id, 'palmpay')
+    if (claim.state === 'ready') {
+      return NextResponse.json({ data: { wallet: await getWalletByUserId(user.id) ?? wallet, virtualAccount: claim.virtualAccount, existing: true, provider }, success: true })
+    }
+    if (claim.state !== 'claimed') {
+      const uncertain = claim.state === 'uncertain'
+      return NextResponse.json({
+        error: uncertain
+          ? 'PalmPay may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
+          : 'A PalmPay funding account request is already being processed. Please check again shortly.',
+        code: uncertain ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : 'VIRTUAL_ACCOUNT_PROVISIONING',
+        success: false,
+      }, { status: 409 })
+    }
+    const reference = claim.reference
+
     const providerAccount = await createPalmPayVirtualAccount({
       reference,
       email: user.email,
@@ -134,11 +132,22 @@ export async function POST(req: Request) {
     })
 
     if (providerAccount.status === 'failed' || !providerAccount.accountNumber) {
+      const indeterminate = Boolean(providerAccount.indeterminate || providerAccount.status === 'pending')
+      await finishStaticVirtualAccountProvisioning({
+        userId: user.id,
+        provider: 'palmpay',
+        reference,
+        outcome: indeterminate ? 'uncertain' : 'failed',
+        failureReason: providerAccount.reason || providerAccount.rawStatus,
+      })
       // logDepositAccount('palmpay.failed', { ... }) // silenced
       return NextResponse.json({
-        error: providerAccount.reason || 'Unable to create a PalmPay funding account.',
+        error: indeterminate
+          ? 'PalmPay may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
+          : providerAccount.reason || 'Unable to create a PalmPay funding account.',
+        code: indeterminate ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : undefined,
         success: false,
-      }, { status: 502 })
+      }, { status: indeterminate ? 202 : 502 })
     }
 
     const nextAccount: Wallet['virtualAccounts'][number] = {
@@ -150,12 +159,14 @@ export async function POST(req: Request) {
       reference: providerAccount.providerReference || providerAccount.reference,
     }
 
-    const nextAccounts = orderPermanentAccounts([
-      nextAccount,
-      ...wallet.virtualAccounts.filter(item => !(item.provider === 'palmpay' && item.isPermanent)),
-    ])
-
-    const updatedWallet = await updateWalletVirtualAccounts(user.id, nextAccounts)
+    const completed = await finishStaticVirtualAccountProvisioning({
+      userId: user.id,
+      provider: 'palmpay',
+      reference,
+      outcome: 'ready',
+      virtualAccount: nextAccount,
+    })
+    if (!completed) throw new Error('Unable to save the PalmPay funding account.')
 
     await insertAuditLog({
       userId: user.id,
@@ -181,8 +192,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       data: {
-        wallet: updatedWallet ?? wallet,
-        virtualAccount: nextAccount,
+        wallet: completed.wallet,
+        virtualAccount: completed.virtualAccount,
         existing: false,
         provider,
       },
@@ -202,6 +213,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: eligibility.error, success: false }, { status: eligibility.status })
   }
 
+  const claim = await claimStaticVirtualAccountProvisioning(user.id, 'flutterwave')
+  if (claim.state === 'ready') {
+    return NextResponse.json({ data: { wallet: await getWalletByUserId(user.id) ?? wallet, virtualAccount: claim.virtualAccount, existing: true, provider }, success: true })
+  }
+  if (claim.state !== 'claimed') {
+    const uncertain = claim.state === 'uncertain'
+    return NextResponse.json({
+      error: uncertain
+        ? 'Flutterwave may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
+        : 'A Flutterwave funding account request is already being processed. Please check again shortly.',
+      code: uncertain ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : 'VIRTUAL_ACCOUNT_PROVISIONING',
+      success: false,
+    }, { status: 409 })
+  }
+  const reference = claim.reference
+
   const providerAccount = await createFlutterwaveStaticVirtualAccount({
     reference,
     email: user.email,
@@ -214,10 +241,21 @@ export async function POST(req: Request) {
   })
 
   if (providerAccount.status === 'failed' || !providerAccount.accountNumber || !providerAccount.bankName) {
+    const indeterminate = Boolean(providerAccount.indeterminate || providerAccount.status === 'pending')
+    await finishStaticVirtualAccountProvisioning({
+      userId: user.id,
+      provider: 'flutterwave',
+      reference,
+      outcome: indeterminate ? 'uncertain' : 'failed',
+      failureReason: providerAccount.reason || providerAccount.rawStatus,
+    })
     return NextResponse.json({
-      error: providerAccount.reason || 'Unable to create a Flutterwave funding account.',
+      error: indeterminate
+        ? 'Flutterwave may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
+        : providerAccount.reason || 'Unable to create a Flutterwave funding account.',
+      code: indeterminate ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : undefined,
       success: false,
-    }, { status: 502 })
+    }, { status: indeterminate ? 202 : 502 })
   }
 
   const nextAccount: Wallet['virtualAccounts'][number] = {
@@ -229,12 +267,14 @@ export async function POST(req: Request) {
     reference: providerAccount.providerReference || providerAccount.reference,
   }
 
-  const nextAccounts = orderPermanentAccounts([
-    nextAccount,
-    ...wallet.virtualAccounts.filter(item => !(item.provider === 'flutterwave' && item.isPermanent)),
-  ])
-
-  const updatedWallet = await updateWalletVirtualAccounts(user.id, nextAccounts)
+  const completed = await finishStaticVirtualAccountProvisioning({
+    userId: user.id,
+    provider: 'flutterwave',
+    reference,
+    outcome: 'ready',
+    virtualAccount: nextAccount,
+  })
+  if (!completed) throw new Error('Unable to save the Flutterwave funding account.')
 
   await insertAuditLog({
     userId: user.id,
@@ -259,8 +299,8 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     data: {
-      wallet: updatedWallet ?? wallet,
-      virtualAccount: nextAccount,
+      wallet: completed.wallet,
+      virtualAccount: completed.virtualAccount,
       existing: false,
       provider,
     },

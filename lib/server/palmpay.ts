@@ -14,6 +14,7 @@ export type PalmPayVirtualAccountResult = {
   provider: 'palmpay'
   reference: string
   status: 'pending' | 'failed'
+  indeterminate?: boolean
   providerReference?: string
   rawStatus?: string
   reason?: string
@@ -352,6 +353,7 @@ export async function createPalmPayVirtualAccount(input: PalmPayVirtualAccountIn
       reference: input.reference,
       status: 'failed',
       rawStatus: 'REQUEST_ERROR',
+      indeterminate: true,
       reason: error instanceof Error ? error.message : 'PalmPay virtual account request failed.',
       payload: {
         stage: 'request',
@@ -392,6 +394,7 @@ export async function createPalmPayVirtualAccount(input: PalmPayVirtualAccountIn
       status: 'failed',
       providerReference: accountReference || undefined,
       rawStatus: respCode || 'FAILED',
+      indeterminate: response.status >= 500 || (response.ok && status && respCode === '00000000' && !accountNumber),
       reason: respMsg || 'PalmPay virtual account creation failed.',
       payload: body,
     }
