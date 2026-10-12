@@ -7422,13 +7422,13 @@ export async function activateUserAccount(userId: string) {
 }
 
 export async function consumeAuthRateLimitAttempt(input: {
-  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend' | 'device_login' | 'device_login_enroll'
+  action: 'login' | 'register' | 'privy_auth' | 'transaction_pin_reset' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend' | 'device_login' | 'device_login_enroll'
   scopes: string[]
   limit: number
   windowMinutes: number
 }) {
   await ensureDbReady()
-  const uniqueScopes = Array.from(new Set(input.scopes.map((scope) => scope.trim()).filter(Boolean)))
+  const uniqueScopes = Array.from(new Set(input.scopes.map((scope) => scope.trim()).filter(Boolean))).sort()
   if (!uniqueScopes.length) {
     return {
       allowed: true,
@@ -7445,6 +7445,10 @@ export async function consumeAuthRateLimitAttempt(input: {
     const retentionIso = new Date(now.getTime() - AUTH_RATE_LIMIT_RETENTION_HOURS * 60 * 60 * 1000).toISOString()
     return withPostgresTransaction(async client => {
       await queryPostgresClient(client, 'DELETE FROM auth_rate_limit_attempts WHERE created_at <= ?', [retentionIso])
+      // Serialize overlapping scope checks so parallel requests cannot all pass a just-below-limit count.
+      for (const scope of uniqueScopes) {
+        await queryPostgresClient(client, 'SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))', [input.action, scope])
+      }
       const states = await Promise.all(uniqueScopes.map(async scope => {
         const result = await queryPostgresClient<{ count: string; oldest_created_at: string | null }>(client, 'SELECT COUNT(*) AS count, MIN(created_at) AS oldest_created_at FROM auth_rate_limit_attempts WHERE action = ? AND scope = ? AND created_at >= ?', [input.action, scope, cutoffIso])
         return { scope, count: Number(result.rows[0]?.count ?? 0), oldestCreatedAt: result.rows[0]?.oldest_created_at ?? null }
@@ -7516,7 +7520,7 @@ export async function consumeAuthRateLimitAttempt(input: {
 }
 
 export async function clearAuthRateLimitAttempts(input: {
-  action: 'login' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend' | 'device_login' | 'device_login_enroll'
+  action: 'login' | 'register' | 'privy_auth' | 'transaction_pin_reset' | 'forgot_password' | 'reset_password' | 'verify_email' | 'verify_email_resend' | 'device_login' | 'device_login_enroll'
   scopes: string[]
 }) {
   await ensureDbReady()

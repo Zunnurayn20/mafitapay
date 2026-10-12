@@ -23,7 +23,14 @@ function isStrongEnoughPassword(password: string) { return isPasswordValid(passw
 
 function getRequestIpAddress(req: Request) {
   const forwarded = req.headers.get('x-forwarded-for') ?? ''
-  return forwarded.split(',')[0]?.trim() || req.headers.get('x-real-ip')?.trim() || ''
+  return forwarded.split(',').at(-1)?.trim() || req.headers.get('x-real-ip')?.trim() || ''
+}
+
+function tooManyRequests(retryAfterSeconds: number, message: string) {
+  return NextResponse.json({ error: message, success: false }, {
+    status: 429,
+    headers: { 'Retry-After': String(retryAfterSeconds) },
+  })
 }
 
 function buildEmailVerificationLink(token: string, req: Request) {
@@ -118,6 +125,24 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: 'Password must be at least 8 characters and include both letters and numbers.', success: false }, { status: 400 })
   }
 
+  const ipAddress = getRequestIpAddress(req)
+  if (ipAddress) {
+    const ipLimit = await consumeAuthRateLimitAttempt({
+      action: 'register',
+      scopes: [`ip:${ipAddress}`],
+      limit: 20,
+      windowMinutes: 60,
+    })
+    if (!ipLimit.allowed) return tooManyRequests(ipLimit.retryAfterSeconds, 'Too many account creation attempts. Try again later.')
+  }
+  const emailLimit = await consumeAuthRateLimitAttempt({
+    action: 'register',
+    scopes: [`email:${email}`],
+    limit: 5,
+    windowMinutes: 60,
+  })
+  if (!emailLimit.allowed) return tooManyRequests(emailLimit.retryAfterSeconds, 'Too many account creation attempts for this email. Try again later.')
+
   try {
     const user = await createUser({ name, email, phone, password, referralCode: referralCode || undefined })
     const emailVerification = await createEmailVerificationToken(user.id, {
@@ -130,6 +155,7 @@ export async function PUT(req: Request) {
       verificationLink,
       expiresAt: emailVerification.expiresAt,
     })
+    await clearAuthRateLimitAttempts({ action: 'register', scopes: [`email:${email}`] })
     return NextResponse.json({
       data: {
         message: 'Account created. Verify your email address before signing in.',

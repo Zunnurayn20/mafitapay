@@ -225,7 +225,8 @@ export async function buildSessionPayload(user: StoredUser): Promise<SessionPayl
     transactions,
     notifications,
     sessions: sessions.map(({ token, ...session }) => ({ ...session, id: getPublicSessionId(token) })),
-    securitySettings,
+    // 2FA is not implemented in the sign-in flow. Never report legacy preference data as active.
+    securitySettings: securitySettings ? { ...securitySettings, twoFactorEnabled: false } : null,
     kycSubmission: safeKycSubmission,
     fundingAccountEligibility,
     cryptoDepositAddresses,

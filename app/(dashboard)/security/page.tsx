@@ -140,29 +140,6 @@ export default function SecurityPage() {
     }
   }, [securitySettings?.hasBiometricCredential, securitySettings?.hasTransactionPin, setupMode])
 
-  async function updateSetting(key: 'twoFactorEnabled', value: boolean) {
-    setUpdatingSetting(key)
-    try {
-      const response = await fetch('/api/security/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ [key]: value }),
-      })
-      const payload = await response.json()
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || 'Security settings update failed.')
-      }
-
-      await refreshSession()
-      showToast('Security settings updated.')
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Security settings update failed.', 'error')
-    } finally {
-      setUpdatingSetting(null)
-    }
-  }
-
   async function loadBiometricCredentials() {
     setLoadingBiometricCredentials(true)
     try {
@@ -763,20 +740,10 @@ export default function SecurityPage() {
           <CardHeader><CardTitle>Authentication</CardTitle></CardHeader>
           <div className="flex items-center justify-between px-5 py-4">
             <div>
-              <div className="text-[13px] font-semibold text-[var(--text)]">Two-Factor Auth (2FA)</div>
-              <div className="mt-0.5 text-[9px] text-[var(--muted)]">Extra layer via SMS or Authenticator</div>
+              <div className="text-[13px] font-semibold text-[var(--text)]">Two-factor authentication</div>
+              <div className="mt-0.5 text-[9px] text-[var(--muted)]">Not available yet. This setting does not protect sign-ins.</div>
             </div>
-            <button
-              onClick={() => void updateSetting('twoFactorEnabled', !(securitySettings?.twoFactorEnabled ?? false))}
-              disabled={updatingSetting === 'twoFactorEnabled'}
-              className={`border px-2.5 py-1 text-[8px] font-bold ${
-                securitySettings?.twoFactorEnabled
-                  ? 'border-[rgba(46,170,92,.25)] bg-[rgba(46,170,92,.1)] text-[var(--green2)]'
-                  : 'border-[rgba(196,52,26,.25)] bg-[rgba(196,52,26,.1)] text-[var(--red2)]'
-              } disabled:opacity-50`}
-            >
-              {updatingSetting === 'twoFactorEnabled' ? 'UPDATING…' : securitySettings?.twoFactorEnabled ? 'ENABLED' : 'DISABLED'}
-            </button>
+            <span className="border border-[var(--border)] px-2.5 py-1 text-[8px] font-bold text-[var(--muted)]">UNAVAILABLE</span>
           </div>
         </Card>
 

@@ -6,6 +6,8 @@ import { normalizePhone } from '@/lib/auth/validation'
 import { createSession } from '@/lib/server/auth'
 import {
   activateUserAccount,
+  clearAuthRateLimitAttempts,
+  consumeAuthRateLimitAttempt,
   createUser,
   getUserByEmail,
   getUserByPrivyId,
@@ -29,6 +31,19 @@ function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
 }
 
+function getRequestIpAddress(req: Request) {
+  return (req.headers.get('x-forwarded-for') ?? '').split(',').at(-1)?.trim()
+    || req.headers.get('x-real-ip')?.trim()
+    || ''
+}
+
+function tooManyRequests(retryAfterSeconds: number) {
+  return NextResponse.json({ error: 'Too many sign-in or registration attempts. Try again shortly.', success: false }, {
+    status: 429,
+    headers: { 'Retry-After': String(retryAfterSeconds) },
+  })
+}
+
 
 
 export async function POST(req: Request) {
@@ -44,6 +59,17 @@ export async function POST(req: Request) {
     const requestedEmail = normalizeEmail(body.email)
     if (!intent || !identityToken || identityToken.length > 16_000) {
       return NextResponse.json({ error: 'A valid Privy sign-in is required.', success: false }, { status: 400 })
+    }
+
+    const ipAddress = getRequestIpAddress(req)
+    if (ipAddress) {
+      const ipLimit = await consumeAuthRateLimitAttempt({
+        action: 'privy_auth',
+        scopes: [`ip:${ipAddress}`],
+        limit: 30,
+        windowMinutes: 15,
+      })
+      if (!ipLimit.allowed) return tooManyRequests(ipLimit.retryAfterSeconds)
     }
 
     const verifiedPrivyUser = await verifyIdentityToken({
@@ -62,6 +88,13 @@ export async function POST(req: Request) {
     if (!email) {
       return NextResponse.json({ error: 'Use a verified email address in the Privy sign-in window.', success: false }, { status: 403 })
     }
+    const emailLimit = await consumeAuthRateLimitAttempt({
+      action: 'privy_auth',
+      scopes: [`email:${email}`],
+      limit: 20,
+      windowMinutes: 15,
+    })
+    if (!emailLimit.allowed) return tooManyRequests(emailLimit.retryAfterSeconds)
 
     let user = await getUserByPrivyId(verifiedPrivyUser.id)
     if (!user) {
@@ -79,6 +112,23 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: 'Enter a valid phone number to create your account.', success: false }, { status: 400 })
         }
 
+        if (ipAddress) {
+          const registrationIpLimit = await consumeAuthRateLimitAttempt({
+            action: 'register',
+            scopes: [`ip:${ipAddress}`],
+            limit: 20,
+            windowMinutes: 60,
+          })
+          if (!registrationIpLimit.allowed) return tooManyRequests(registrationIpLimit.retryAfterSeconds)
+        }
+        const registrationEmailLimit = await consumeAuthRateLimitAttempt({
+          action: 'register',
+          scopes: [`email:${email}`],
+          limit: 5,
+          windowMinutes: 60,
+        })
+        if (!registrationEmailLimit.allowed) return tooManyRequests(registrationEmailLimit.retryAfterSeconds)
+
         user = await createUser({
           name,
           email,
@@ -89,6 +139,7 @@ export async function POST(req: Request) {
           referralCode: referralCode || undefined,
         })
         user = await activateUserAccount(user.id)
+        await clearAuthRateLimitAttempts({ action: 'register', scopes: [`email:${email}`] })
       }
 
       if (!user) {
@@ -117,7 +168,7 @@ export async function POST(req: Request) {
 
     await createSession(user.id, {
       userAgent: req.headers.get('user-agent') ?? undefined,
-      ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined,
+      ipAddress: ipAddress || undefined,
     })
     // The session cookie is the authentication commit point. Dashboard data is fetched
     // separately after navigation so a slow/contended database read cannot strand a user

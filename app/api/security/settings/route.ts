@@ -6,7 +6,8 @@ export async function GET() {
   const user = await requireUser()
   if (!user) return unauthorized()
 
-  return NextResponse.json({ data: await getSecuritySettingsByUserId(user.id), success: true })
+  const settings = await getSecuritySettingsByUserId(user.id)
+  return NextResponse.json({ data: settings ? { ...settings, twoFactorEnabled: false } : null, success: true })
 }
 
 export async function PATCH(req: Request) {
@@ -14,9 +15,15 @@ export async function PATCH(req: Request) {
   if (!user) return unauthorized()
 
   const body = await req.json()
+  if (body.twoFactorEnabled === true) {
+    return NextResponse.json({
+      error: 'Two-factor authentication is not available yet. This setting does not protect sign-ins.',
+      success: false,
+    }, { status: 409 })
+  }
   const settings = await upsertSecuritySettings(user.id, {
     transactionPinEnabled: typeof body.transactionPinEnabled === 'boolean' ? body.transactionPinEnabled : undefined,
-    twoFactorEnabled: typeof body.twoFactorEnabled === 'boolean' ? body.twoFactorEnabled : undefined,
+    twoFactorEnabled: false,
     biometricEnabled: typeof body.biometricEnabled === 'boolean' ? body.biometricEnabled : undefined,
   })
 

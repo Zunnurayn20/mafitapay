@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { disableTransactionPin, resetTransactionPin, upsertTransactionPin, verifyPassword } from '@/lib/server/data'
+import { clearAuthRateLimitAttempts, consumeAuthRateLimitAttempt, disableTransactionPin, resetTransactionPin, upsertTransactionPin, verifyPassword } from '@/lib/server/data'
 
 export async function POST(req: Request) {
   const user = await requireUser()
@@ -67,12 +67,26 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'Account password and new transaction PIN are required.', success: false }, { status: 400 })
   }
 
+  const rateLimit = await consumeAuthRateLimitAttempt({
+    action: 'transaction_pin_reset',
+    scopes: [`user:${user.id}`],
+    limit: 5,
+    windowMinutes: 15,
+  })
+  if (!rateLimit.allowed) {
+    return NextResponse.json({ error: 'Too many PIN reset attempts. Try again shortly.', success: false }, {
+      status: 429,
+      headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) },
+    })
+  }
+
   if (!verifyPassword(user, accountPassword)) {
     return NextResponse.json({ error: 'Account password is incorrect.', success: false }, { status: 400 })
   }
 
   try {
     const settings = await resetTransactionPin(user.id, newPin)
+    await clearAuthRateLimitAttempts({ action: 'transaction_pin_reset', scopes: [`user:${user.id}`] })
     await appendNotification(user.id, createNotification({
       userId: user.id,
       title: 'Transaction PIN reset',
