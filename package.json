@@ -27,11 +27,10 @@
     "db:verify:postgres": "node scripts/verify-postgres-migration.mjs"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.1",
+    "@capacitor/android": "8.4.3",
     "@capacitor/app": "^8.1.0",
-    "@capacitor/cli": "^8.4.1",
     "@capacitor/clipboard": "^8.0.1",
-    "@capacitor/core": "^8.4.1",
+    "@capacitor/core": "8.4.3",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/keyboard": "^8.0.5",
     "@capacitor/push-notifications": "^8.1.2",
@@ -62,7 +61,7 @@
     "libsodium-wrappers": "^0.8.4",
     "lucide-react": "^1.8.0",
     "near-api-js": "^7.2.0",
-    "next": "16.2.3",
+    "next": "16.4.0",
     "ox": "^0.14.20",
     "pg": "^8.23.0",
     "qrcode": "^1.5.4",
@@ -73,6 +72,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.4.3",
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
@@ -81,7 +81,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.3",
+    "eslint-config-next": "16.4.0",
     "jimp": "^1.6.0",
     "tailwindcss": "^4",
     "typescript": "^5"
