@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { applyWalletMutation, createPayoutRequest, getUserByEmail, getUserByHandle, getWalletByUserId, upsertBeneficiary, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyInternalWalletTransfer, applyWalletMutation, createPayoutRequest, getUserByEmail, getUserByHandle, getWalletByUserId, upsertBeneficiary, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
 import { quoteTransferFee } from '@/lib/transfer-fees'
@@ -99,16 +99,12 @@ export async function POST(req: Request) {
       },
     }
 
-    const result = await applyWalletMutation({
-      userId: user.id,
-      balanceDelta: -numericAmount,
-      minimumAvailableBalance: numericAmount,
-      transaction: senderTransaction,
-    })
-    await applyWalletMutation({
-      userId: target.id,
-      balanceDelta: numericAmount,
-      transaction: receiverTransaction,
+    const result = await applyInternalWalletTransfer({
+      senderUserId: user.id,
+      recipientUserId: target.id,
+      amount: numericAmount,
+      senderTransaction,
+      recipientTransaction: receiverTransaction,
     })
     await upsertBeneficiary({
       userId: user.id,
@@ -136,7 +132,7 @@ export async function POST(req: Request) {
     }), { email: true, push: true })
 
     return NextResponse.json({
-      data: { transaction: result.transaction, wallet: result.wallet },
+      data: { transaction: senderTransaction, wallet: result.senderWallet },
       success: true,
     })
   }

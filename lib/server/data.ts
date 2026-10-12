@@ -5016,6 +5016,123 @@ export async function applyWalletMutation(input: WalletMutationInput): Promise<{
   }
 }
 
+export async function applyInternalWalletTransfer(input: {
+  senderUserId: string
+  recipientUserId: string
+  amount: number
+  senderTransaction: Transaction
+  recipientTransaction: Transaction
+}): Promise<{ senderWallet: Wallet; recipientWallet: Wallet }> {
+  await ensureDbReady()
+  if (!Number.isFinite(input.amount) || input.amount <= 0 || input.senderUserId === input.recipientUserId) {
+    throw new Error('Invalid internal transfer.')
+  }
+
+  if (isPostgresEnabled()) {
+    const result = await withPostgresTransaction(async client => {
+      // Lock both wallets in a stable order so simultaneous transfers in opposite directions
+      // cannot deadlock. The ledger remains the source of truth for available balances.
+      const lockedRows = await queryPostgresClient<WalletRow>(client,
+        'SELECT * FROM wallets WHERE user_id IN (?, ?) ORDER BY user_id FOR UPDATE',
+        [input.senderUserId, input.recipientUserId])
+      const walletRows = new Map(lockedRows.rows.map(row => [row.user_id, row]))
+      const senderRow = walletRows.get(input.senderUserId)
+      const recipientRow = walletRows.get(input.recipientUserId)
+      if (!senderRow || !recipientRow) throw new Error('Wallet not found')
+
+      const balancesResult = await queryPostgresClient<{ user_id: string; account: 'available' | 'locked'; balance: number }>(client, `
+        SELECT user_id, account,
+          COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS balance
+        FROM ledger_entries WHERE user_id IN (?, ?) AND COALESCE(asset, 'NGN') = 'NGN'
+        GROUP BY user_id, account
+      `, [input.senderUserId, input.recipientUserId])
+      const current = new Map<string, { available: number; locked: number }>([
+        [input.senderUserId, { available: 0, locked: 0 }],
+        [input.recipientUserId, { available: 0, locked: 0 }],
+      ])
+      for (const row of balancesResult.rows) {
+        const balances = current.get(row.user_id)
+        if (!balances) continue
+        if (row.account === 'available') balances.available = Number(row.balance)
+        if (row.account === 'locked') balances.locked = Number(row.balance)
+      }
+      const senderBalances = current.get(input.senderUserId)!
+      const recipientBalances = current.get(input.recipientUserId)!
+      if (senderBalances.available < input.amount) throw new Error('Insufficient balance')
+      const nextSender = { ...senderBalances, available: senderBalances.available - input.amount }
+      const nextRecipient = { ...recipientBalances, available: recipientBalances.available + input.amount }
+
+      for (const [userId, transaction] of [
+        [input.senderUserId, input.senderTransaction],
+        [input.recipientUserId, input.recipientTransaction],
+      ] as const) {
+        await queryPostgresClient(client, `
+          INSERT INTO transactions (id, user_id, type, status, amount, fee, description, reference, recipient, narration, created_at, icon, metadata)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [transaction.id, userId, transaction.type, transaction.status, transaction.amount, transaction.fee,
+          transaction.description, transaction.reference, transaction.recipient ?? null, transaction.narration ?? null,
+          transaction.createdAt, transaction.icon ?? null, transaction.metadata ? JSON.stringify(transaction.metadata) : null])
+        const delta = userId === input.senderUserId ? -input.amount : input.amount
+        await queryPostgresClient(client, `
+          INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at)
+          VALUES (?, ?, ?, 'NGN', 'available', ?, ?, ?, ?)
+        `, [`ledger_${randomBytes(6).toString('hex')}`, userId, transaction.id, delta > 0 ? 'credit' : 'debit',
+          input.amount, transaction.description, transaction.createdAt])
+      }
+      await queryPostgresClient(client, 'UPDATE wallets SET balance = ? WHERE user_id = ?', [nextSender.available, input.senderUserId])
+      await queryPostgresClient(client, 'UPDATE wallets SET balance = ? WHERE user_id = ?', [nextRecipient.available, input.recipientUserId])
+      return {
+        senderWallet: buildWalletFromRow(senderRow, { ...emptyAssetBalances(), NGN: nextSender }),
+        recipientWallet: buildWalletFromRow(recipientRow, { ...emptyAssetBalances(), NGN: nextRecipient }),
+      }
+    })
+    await maybeApplyFirstSuccessfulTransactionRewards(input.senderUserId, input.senderTransaction)
+    await maybeApplyFirstSuccessfulTransactionRewards(input.recipientUserId, input.recipientTransaction)
+    return result
+  }
+
+  const db = getDb()
+  db.exec('BEGIN')
+  try {
+    const senderRow = db.prepare('SELECT * FROM wallets WHERE user_id = ? LIMIT 1').get(input.senderUserId) as WalletRow | undefined
+    const recipientRow = db.prepare('SELECT * FROM wallets WHERE user_id = ? LIMIT 1').get(input.recipientUserId) as WalletRow | undefined
+    if (!senderRow || !recipientRow) throw new Error('Wallet not found')
+    const senderBalances = calculateWalletBalances(db, input.senderUserId)
+    const recipientBalances = calculateWalletBalances(db, input.recipientUserId)
+    if (senderBalances.NGN.available < input.amount) throw new Error('Insufficient balance')
+    const nextSender = { ...senderBalances.NGN, available: senderBalances.NGN.available - input.amount }
+    const nextRecipient = { ...recipientBalances.NGN, available: recipientBalances.NGN.available + input.amount }
+    for (const [userId, transaction, delta] of [
+      [input.senderUserId, input.senderTransaction, -input.amount],
+      [input.recipientUserId, input.recipientTransaction, input.amount],
+    ] as const) {
+      db.prepare(`
+        INSERT INTO transactions (id, user_id, type, status, amount, fee, description, reference, recipient, narration, created_at, icon, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(transaction.id, userId, transaction.type, transaction.status, transaction.amount, transaction.fee,
+        transaction.description, transaction.reference, transaction.recipient ?? null, transaction.narration ?? null,
+        transaction.createdAt, transaction.icon ?? null, transaction.metadata ? JSON.stringify(transaction.metadata) : null)
+      db.prepare(`
+        INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at)
+        VALUES (?, ?, ?, 'NGN', 'available', ?, ?, ?, ?)
+      `).run(`ledger_${randomBytes(6).toString('hex')}`, userId, transaction.id, delta > 0 ? 'credit' : 'debit',
+        input.amount, transaction.description, transaction.createdAt)
+    }
+    syncWalletSnapshot(db, input.senderUserId, { ...senderBalances, NGN: nextSender })
+    syncWalletSnapshot(db, input.recipientUserId, { ...recipientBalances, NGN: nextRecipient })
+    db.exec('COMMIT')
+    await maybeApplyFirstSuccessfulTransactionRewards(input.senderUserId, input.senderTransaction)
+    await maybeApplyFirstSuccessfulTransactionRewards(input.recipientUserId, input.recipientTransaction)
+    return {
+      senderWallet: buildWalletFromRow(senderRow, { ...senderBalances, NGN: nextSender }),
+      recipientWallet: buildWalletFromRow(recipientRow, { ...recipientBalances, NGN: nextRecipient }),
+    }
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 export async function resolvePendingTransaction(
   userId: string,
   transactionId: string,
