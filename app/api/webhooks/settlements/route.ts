@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { processSettlementEvent } from '@/lib/server/settlements'
 
@@ -8,7 +9,10 @@ function isAuthorized(request: Request) {
   if (!expected) return false
 
   const provided = request.headers.get('x-mafitapay-webhook-secret')
-  return provided === expected
+  if (!provided) return false
+  const expectedBytes = Buffer.from(expected, 'utf8')
+  const providedBytes = Buffer.from(provided, 'utf8')
+  return expectedBytes.length === providedBytes.length && timingSafeEqual(expectedBytes, providedBytes)
 }
 
 export async function POST(req: Request) {
