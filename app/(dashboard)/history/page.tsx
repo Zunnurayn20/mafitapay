@@ -511,20 +511,6 @@ export default function HistoryPage() {
           <div className="p-5 text-[11px] text-[var(--muted)]">No detail available.</div>
         ) : (
           <div className="space-y-4 p-4">
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
-                {exportingReceipt ? 'Preparing…' : 'Share Image'}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
-                PNG
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
-                Share
-              </Button>
-              <Button size="sm" variant="secondary" onClick={downloadReceipt}>
-                PDF
-              </Button>
-            </div>
             <TransactionReceiptSheet
               id="history-receipt-sheet"
               transaction={detail.transaction}
@@ -637,6 +623,21 @@ export default function HistoryPage() {
                 </div>
               </div>
             )}
+
+            <div className="flex flex-wrap justify-center gap-2 border-t border-[var(--border)] pt-4">
+              <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
+                {exportingReceipt ? 'Preparing…' : 'Share Image'}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
+                PNG
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
+                Share
+              </Button>
+              <Button size="sm" variant="secondary" onClick={downloadReceipt}>
+                PDF
+              </Button>
+            </div>
           </div>
         )}
         </div>
@@ -661,20 +662,6 @@ export default function HistoryPage() {
               <div className="p-5 text-[11px] text-[var(--muted)]">No detail available.</div>
             ) : (
               <div className="space-y-4 p-4">
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
-                    {exportingReceipt ? 'Preparing…' : 'Share Image'}
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
-                    PNG
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
-                    Share
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={downloadReceipt}>
-                    PDF
-                  </Button>
-                </div>
                 <TransactionReceiptSheet
                   id="history-receipt-sheet"
                   transaction={detail.transaction}
@@ -709,6 +696,21 @@ export default function HistoryPage() {
                     </div>
                   </div>
                 )}
+
+                <div className="flex flex-wrap justify-center gap-2 border-t border-[var(--border)] pt-4">
+                  <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
+                    {exportingReceipt ? 'Preparing…' : 'Share Image'}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
+                    PNG
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
+                    Share
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={downloadReceipt}>
+                    PDF
+                  </Button>
+                </div>
               </div>
             )}
           </Card>
