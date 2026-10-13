@@ -20,8 +20,8 @@ import { createPlatformCryptoCostSnapshot } from '@/lib/server/crypto-platform-c
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
 import { createCexDepositIntent } from '@/lib/server/data'
 import { validateWalletAddressForAsset } from '@/lib/crypto-addresses'
-import { getMaxQuoteDriftPercentForAsset, getMinimumBuyNgnForAsset, getQuoteDriftPercent } from '@/lib/crypto-rules'
-import { formatCrypto, generateRef } from '@/lib/utils'
+import { getCryptoNetworkFeeNgn, getMaxQuoteDriftPercentForAsset, getMinimumBuyNgnForAsset, getQuoteDriftPercent } from '@/lib/crypto-rules'
+import { formatCrypto, formatNGN, generateRef } from '@/lib/utils'
 import type { CryptoAsset, CryptoPairId } from '@/types'
 
 const CRYPTO_MARKET_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_CRYPTO_MARKET === '1'
@@ -136,6 +136,8 @@ export async function POST(req: Request) {
   const action = body.action === 'sell' ? 'sell' : 'buy'
   const pairId = typeof body.pairId === 'string' ? body.pairId.trim() : ''
   const amount = Number(body.amount)
+  const desiredCryptoAmount = Number(body.desiredCryptoAmount)
+  const hasDesiredCryptoAmount = action === 'buy' && Number.isFinite(desiredCryptoAmount) && desiredCryptoAmount > 0
   const walletAddress = typeof body.walletAddress === 'string' ? body.walletAddress.trim() : ''
   const transactionPin = typeof body.transactionPin === 'string' ? body.transactionPin.trim() : ''
   const biometricApprovalToken = typeof body.biometricApprovalToken === 'string' ? body.biometricApprovalToken.trim() : ''
@@ -181,6 +183,66 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: 'Destination wallet address is required', success: false }, { status: 400 })
         }
         assertDestinationWalletAddressForAsset(requestedAsset, walletAddress)
+      }
+      if (hasDesiredCryptoAmount) {
+        if (!Number.isFinite(requestedAsset.buyRate) || requestedAsset.buyRate <= 0) {
+          throw new Error('Live buy pricing is unavailable for this asset.')
+        }
+
+        const quoteAtNgn = async (amountNgn: number) => {
+          if (executionRail === 'routed_treasury') {
+            const result = await getLifiQuotedReceiveForBuy({ pairId: requestedAsset.id, asset: requestedAsset, amountNgn, toAddress: walletAddress })
+            return { cryptoAmount: result.cryptoAmount, unitRate: result.unitRate, providerPayload: result.providerPayload }
+          }
+          if (executionRail === 'sui_treasury') {
+            const result = await getSuiQuotedReceiveForBuy({ amountNgn, toAddress: walletAddress })
+            return { cryptoAmount: result.cryptoAmount, unitRate: result.unitRate, providerPayload: result.providerPayload }
+          }
+          if (executionRail === 'ton_treasury') {
+            const result = await getTonQuotedReceiveForBuy({ amountNgn, toAddress: walletAddress })
+            return { cryptoAmount: result.cryptoAmount, unitRate: result.unitRate, providerPayload: result.providerPayload }
+          }
+          if (executionRail === 'near_intents') {
+            const result = await getNearQuotedReceiveForBuy({ amountNgn, toAddress: walletAddress })
+            return { cryptoAmount: result.cryptoAmount, unitRate: result.unitRate, providerPayload: result.providerPayload }
+          }
+          return { cryptoAmount: amountNgn / requestedAsset.buyRate, unitRate: requestedAsset.buyRate }
+        }
+
+        let amountNgn = desiredCryptoAmount * requestedAsset.buyRate
+        assertMinimumBuyAmount(requestedAsset, amountNgn)
+        let buyQuote = await quoteAtNgn(amountNgn)
+        // Routed providers quote an amount-in. Scale the NGN amount until the
+        // provider's minimum receive meets the amount the customer requested.
+        for (let attempt = 0; buyQuote.cryptoAmount + 1e-12 < desiredCryptoAmount && attempt < 4; attempt += 1) {
+          amountNgn = Math.ceil(amountNgn * desiredCryptoAmount / buyQuote.cryptoAmount * 1.002 * 100) / 100
+          assertMinimumBuyAmount(requestedAsset, amountNgn)
+          buyQuote = await quoteAtNgn(amountNgn)
+        }
+        if (buyQuote.cryptoAmount + 1e-12 < desiredCryptoAmount) {
+          throw new Error('Could not lock a quote that covers the requested crypto amount. Please try again.')
+        }
+        const data = await createCryptoQuote({
+          userId: user.id,
+          pairId: requestedAsset.id,
+          side: 'buy',
+          amountNgn,
+          cryptoAmount: buyQuote.cryptoAmount,
+          unitRate: buyQuote.unitRate,
+          providerPayload: {
+            ...buyQuote.providerPayload,
+            requestedCryptoAmount: desiredCryptoAmount,
+            amountMode: 'asset',
+          },
+        })
+        logCrypto('quote.target-receive.success', {
+          pairId,
+          desiredCryptoAmount,
+          amountNgn,
+          quotedCryptoAmount: buyQuote.cryptoAmount,
+          executionRail,
+        })
+        return NextResponse.json({ data, success: true })
       }
       if (action === 'buy' && executionRail === 'routed_treasury') {
         assertMinimumBuyAmount(requestedAsset, amount)
@@ -357,8 +419,13 @@ export async function POST(req: Request) {
       }, { status: 400 })
     }
 
-    if (wallet.balance < amount) {
-      return NextResponse.json({ error: 'Insufficient NGN balance', success: false }, { status: 400 })
+    const preflightFee = getCryptoNetworkFeeNgn(asset, 'buy')
+    const preflightTotal = amount + preflightFee
+    if (wallet.balance < preflightTotal) {
+      return NextResponse.json({
+        error: `Insufficient NGN balance. Need ${formatNGN(preflightTotal)} including ${formatNGN(preflightFee)} network fee.`,
+        success: false,
+      }, { status: 400 })
     }
 
     try {

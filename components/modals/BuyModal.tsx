@@ -95,13 +95,14 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       ? rawAmount * usdNgnRate
       : rawAmount
   const crypto = quote?.cryptoAmount ?? (asset ? (amountMode === 'asset' ? rawAmount : amt / asset.buyRate) : 0)
+  const orderNgn = quote?.amountNgn ?? amt
   // Prefer the fee locked into the quote; fall back to live asset/network default for the form.
   const fee = quote?.networkFeeNgn != null && Number.isFinite(quote.networkFeeNgn)
     ? Math.max(0, quote.networkFeeNgn)
     : asset
       ? getCryptoNetworkFeeNgn(asset, 'buy')
       : 0
-  const totalDebit = amt + fee
+  const totalDebit = orderNgn + fee
   const minimumBuyNgn = asset ? getMinimumBuyNgn(asset.id) : 1000
   const belowMinimum = amt > 0 && amt < minimumBuyNgn
   const addressValidation = asset ? validateWalletAddressForPair(asset.id, address) : { valid: false, error: 'Destination wallet address is required.' }
@@ -185,7 +186,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     showToast('Press and hold the address field to paste.', 'error')
   }
 
-  async function runBuyPreflight() {
+  async function runBuyPreflight(amountNgn: number) {
     if (!asset) {
       throw new Error('Asset is unavailable right now.')
     }
@@ -198,7 +199,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
         intent: 'preflight',
         action: 'buy',
         pairId: asset.id,
-        amount: amt,
+        amount: amountNgn,
         walletAddress: address,
       }),
     })
@@ -220,9 +221,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
 
     setLockingQuote(true)
     try {
-      const [preflightResult, quoteResult] = await Promise.allSettled([
-        runBuyPreflight(),
-        fetch('/api/crypto', {
+      const quoteResponse = await fetch('/api/crypto', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -231,25 +230,16 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             action: 'buy',
             pairId: asset.id,
             amount: amt,
+            ...(amountMode === 'asset' ? { desiredCryptoAmount: rawAmount } : {}),
             walletAddress: address,
           }),
-        }).then(async response => {
-          const payload = await response.json()
-          if (!response.ok || payload.success === false) {
-            throw new Error(payload.error || 'Quote request failed.')
-          }
-          return payload
-        }),
-      ])
-
-      if (preflightResult.status === 'rejected') {
-        throw preflightResult.reason
+        })
+      const quotePayload = await quoteResponse.json()
+      if (!quoteResponse.ok || quotePayload.success === false) {
+        throw new Error(quotePayload.error || 'Quote request failed.')
       }
-      if (quoteResult.status === 'rejected') {
-        throw quoteResult.reason
-      }
-
-      const lockedQuote = quoteResult.value.data.quote as CryptoQuote
+      const lockedQuote = quotePayload.data.quote as CryptoQuote
+      await runBuyPreflight(lockedQuote.amountNgn)
       setAvailabilityError(null)
       setQuote(lockedQuote)
       setPinVersion(current => current + 1)
@@ -436,12 +426,12 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               </select>
             </div>
             <div className="flex items-center justify-between bg-[var(--clay)] border border-[rgba(202,165,96,.22)] px-3.5 py-2.5 mt-2">
-              <span className="text-[9px] text-[var(--text2)]">Estimated receive</span>
+              <span className="text-[9px] text-[var(--text2)]">{quote ? 'Quoted minimum receive' : amountMode === 'asset' ? 'Requested receive' : 'Estimated receive'}</span>
               <span className="text-[14px] font-bold font-display text-[var(--gold)]">{formatCrypto(crypto, asset.symbol)}</span>
             </div>
             <div className="mt-1.5 text-[9px] text-[var(--muted)]">
               {amountMode === 'asset'
-                ? `Estimated NGN order: ${formatNGN(amt)}`
+                ? `NGN required for requested amount: ${formatNGN(orderNgn)}`
                 : amountMode === 'usd'
                   ? `Approximate NGN conversion: ${formatNGN(amt)}`
                   : `Rate includes platform margin. Network fee covers on-chain gas.`}
@@ -473,7 +463,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             </div>
           </div>
           <div className="bg-[var(--clay)] border border-[rgba(202,165,96,.24)] p-3 text-[11px] space-y-1">
-            <div className="flex justify-between py-0.5"><span className="text-[var(--muted)]">Order</span><span className="font-mono text-[var(--text)]">{formatNGN(amt)}</span></div>
+            <div className="flex justify-between py-0.5"><span className="text-[var(--muted)]">Order</span><span className="font-mono text-[var(--text)]">{formatNGN(orderNgn)}</span></div>
             <div className="flex justify-between py-0.5"><span className="text-[var(--muted)]">Network fee (gas)</span><span className="font-mono text-[var(--text)]">{formatNGN(fee)}</span></div>
             <div className="flex justify-between py-1 font-bold border-t border-[var(--border)] mt-1 pt-1.5"><span className="text-[var(--text)]">Total NGN debit</span><span className="text-[var(--gold)] font-mono">{formatNGN(totalDebit)}</span></div>
           </div>
