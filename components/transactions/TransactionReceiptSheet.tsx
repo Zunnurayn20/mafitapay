@@ -31,10 +31,11 @@ export function TransactionReceiptSheet({
     : transaction.type === 'crypto_buy' || transaction.type === 'crypto_sell'
       ? 'Wallet address'
       : 'Recipient'
+  const isCryptoDeposit = transaction.metadata?.settlementFlow === 'direct_crypto_deposit'
   const supportingDetails: ReceiptDetail[] = [
-    ...(transaction.recipient ? [{ label: recipientLabel, value: transaction.recipient }] : []),
-    ...(transaction.narration ? [{ label: 'Narration', value: transaction.narration }] : []),
-    ...details,
+    ...(!isCryptoDeposit && transaction.recipient ? [{ label: recipientLabel, value: transaction.recipient }] : []),
+    ...(!isCryptoDeposit && transaction.narration ? [{ label: 'Narration', value: transaction.narration }] : []),
+    ...(!isCryptoDeposit ? details : []),
   ]
 
   return (
@@ -51,7 +52,7 @@ export function TransactionReceiptSheet({
             </div>
             <div>
               <div className="text-[10px] font-extrabold uppercase tracking-[.19em] text-[#9b7131]">MafitaPay</div>
-              <div className="mt-0.5 text-[11px] font-medium text-[#75664d]">Official transaction receipt</div>
+              <div className="mt-0.5 text-[11px] font-medium text-[#75664d]">Official receipt</div>
             </div>
           </div>
           <div className="flex items-center gap-1.5 rounded-full border border-[#e6d7b9] bg-white/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-[.1em] text-[#7d6333]">

@@ -625,16 +625,16 @@ export default function HistoryPage() {
             )}
 
             <div className="flex flex-wrap justify-center gap-2 border-t border-[var(--border)] pt-4">
-              <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
-                {exportingReceipt ? 'Preparing…' : 'Share Image'}
+              <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} loading={exportingReceipt} aria-label="Share receipt image" title="Share receipt image">
+                Image
               </Button>
-              <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
+              <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt} aria-label="Download receipt PNG" title="Download receipt PNG">
                 PNG
               </Button>
-              <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
+              <Button size="sm" variant="secondary" onClick={() => void shareReceipt()} aria-label="Share receipt" title="Share receipt">
                 Share
               </Button>
-              <Button size="sm" variant="secondary" onClick={downloadReceipt}>
+              <Button size="sm" variant="secondary" onClick={downloadReceipt} aria-label="Download receipt PDF" title="Download receipt PDF">
                 PDF
               </Button>
             </div>
@@ -698,16 +698,16 @@ export default function HistoryPage() {
                 )}
 
                 <div className="flex flex-wrap justify-center gap-2 border-t border-[var(--border)] pt-4">
-                  <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} disabled={exportingReceipt}>
-                    {exportingReceipt ? 'Preparing…' : 'Share Image'}
+                  <Button size="sm" variant="secondary" onClick={() => void shareReceiptImage()} loading={exportingReceipt} aria-label="Share receipt image" title="Share receipt image">
+                    Image
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt}>
+                  <Button size="sm" variant="secondary" onClick={() => void downloadReceiptImage()} disabled={exportingReceipt} aria-label="Download receipt PNG" title="Download receipt PNG">
                     PNG
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void shareReceipt()}>
+                  <Button size="sm" variant="secondary" onClick={() => void shareReceipt()} aria-label="Share receipt" title="Share receipt">
                     Share
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={downloadReceipt}>
+                  <Button size="sm" variant="secondary" onClick={downloadReceipt} aria-label="Download receipt PDF" title="Download receipt PDF">
                     PDF
                   </Button>
                 </div>
