@@ -56,7 +56,7 @@ type AnalyticsPayload = {
     topWallets: Array<{ userId: string; name: string; email: string; balance: number; lockedBalance: number; fundingAccounts: number }>
     latestTransactions: Array<{ userId: string; transaction: Transaction }>
     cryptoOrders: { total: number; pending: number; success: number; failed: number }
-    cryptoDeposits: { total: number; matched: number; unmatched: number; ignored: number; swept: number; direct: number; volumeCrypto: number }
+    cryptoDeposits: { total: number; matched: number; unmatched: number; ignored: number; swept: number; direct: number; volumes: Array<{ asset: string; network: string; pairId: string; amount: number }> }
   }
 }
 
@@ -94,7 +94,7 @@ const emptyPayload: AnalyticsPayload['data'] = {
   topWallets: [],
   latestTransactions: [],
   cryptoOrders: { total: 0, pending: 0, success: 0, failed: 0 },
-  cryptoDeposits: { total: 0, matched: 0, unmatched: 0, ignored: 0, swept: 0, direct: 0, volumeCrypto: 0 },
+  cryptoDeposits: { total: 0, matched: 0, unmatched: 0, ignored: 0, swept: 0, direct: 0, volumes: [] },
 }
 
 function formatNgn(value: number) {
@@ -103,6 +103,10 @@ function formatNgn(value: number) {
 
 function formatNumber(value: number) {
   return value.toLocaleString('en-NG')
+}
+
+function formatCrypto(value: number) {
+  return value.toLocaleString('en-NG', { maximumFractionDigits: 8 })
 }
 
 function titleCase(value: string) {
@@ -164,7 +168,7 @@ export function AdminAnalyticsDashboard() {
               Money movement, users, providers, and operational risk in one place.
             </h1>
             <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-[var(--muted)]">
-              Built from live app data: transactions, wallets, KYC, provider events, settlements, bills, and crypto orders. Figures use the latest available records and are refreshed on demand.
+              All-time totals use full database aggregates. The chart covers the last 14 UTC days, and the activity list shows the 10 newest transactions.
             </p>
           </div>
           <div className="flex flex-col justify-between gap-3 border border-[var(--border)] bg-[var(--clay)] p-4">
@@ -182,19 +186,19 @@ export function AdminAnalyticsDashboard() {
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={<BadgeDollarSign size={18} />} label="Successful Volume" value={formatNgn(summary.successfulVolume)} detail={`${formatNumber(summary.transactionCount)} recent txs`} tone="gold" />
-        <MetricCard icon={<ArrowDownLeft size={18} />} label="Money In" value={formatNgn(summary.moneyIn)} detail={`${formatNgn(summary.deposits)} deposits`} tone="green" />
-        <MetricCard icon={<ArrowUpRight size={18} />} label="Money Out" value={formatNgn(summary.moneyOut)} detail={`${formatNgn(summary.withdrawals)} withdrawals`} tone="red" />
-        <MetricCard icon={<CreditCard size={18} />} label="Wallet Float" value={formatNgn(summary.walletBalance)} detail={`${formatNgn(summary.lockedBalance)} locked`} tone="blue" />
+        <MetricCard icon={<BadgeDollarSign size={18} />} label="All-Time Successful Amount" value={formatNgn(summary.successfulVolume)} detail={`${formatNumber(data.statusCounts.success ?? 0)} successful transaction records`} tone="gold" />
+        <MetricCard icon={<ArrowDownLeft size={18} />} label="All-Time Money In" value={formatNgn(summary.moneyIn)} detail={`${formatNgn(summary.deposits)} deposits`} tone="green" />
+        <MetricCard icon={<ArrowUpRight size={18} />} label="All-Time Money Out" value={formatNgn(summary.moneyOut)} detail={`${formatNgn(summary.withdrawals)} withdrawals`} tone="red" />
+        <MetricCard icon={<CreditCard size={18} />} label="Customer NGN Balance" value={formatNgn(summary.walletBalance)} detail={`${formatNgn(summary.lockedBalance)} locked`} tone="blue" />
         <MetricCard icon={<Users size={18} />} label="Users" value={formatNumber(summary.users)} detail={`${formatNumber(summary.activeUsers)} active · ${formatNumber(summary.verifiedUsers)} verified`} tone="plain" />
         <MetricCard icon={<ShieldCheck size={18} />} label="KYC Pending" value={formatNumber(summary.pendingKyc)} detail={`${summary.fundingAccountCoverage}% funding account coverage`} tone="gold" />
         <MetricCard icon={<RadioTower size={18} />} label="Provider Failures" value={formatNumber(summary.providerFailures)} detail={`${formatNumber(summary.pendingSettlements)} pending settlements`} tone={summary.providerFailures > 0 ? 'red' : 'green'} />
-        <MetricCard icon={<Activity size={18} />} label="Fees Captured" value={formatNgn(summary.fees)} detail={`${formatNgn(summary.crypto)} crypto · ${formatNgn(summary.bills)} bills`} tone="green" />
+        <MetricCard icon={<Activity size={18} />} label="Recorded Transaction Fees" value={formatNgn(summary.fees)} detail="Success-only fees; not net platform revenue" tone="green" />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.35fr_.65fr]">
         <Card className="p-4" pattern="soft">
-          <SectionHeader title="14-Day Money Movement" detail="Successful volume, money in, money out, fees, and signups." />
+          <SectionHeader title="14-Day Money Movement" detail="Successful transaction amounts and customer money in/out, by UTC date." />
           <div className="mt-4 flex h-64 items-end gap-2 overflow-x-auto pb-2">
             {data.daily.map(point => (
               <div key={point.day} className="flex min-w-14 flex-1 flex-col items-center gap-2">
@@ -215,7 +219,7 @@ export function AdminAnalyticsDashboard() {
         </Card>
 
         <Card className="p-4" pattern="soft">
-          <SectionHeader title="Status Mix" detail="Recent transaction and provider event status." />
+          <SectionHeader title="All-Time Status Mix" detail="Full transaction history; provider and settlement totals are also all-time." />
           <div className="mt-4 space-y-3">
             <StatusRow icon={<CheckCircle2 size={15} />} label="Successful Transactions" value={data.statusCounts.success ?? 0} tone="green" />
             <StatusRow icon={<Clock3 size={15} />} label="Pending Transactions" value={(data.statusCounts.pending ?? 0) + (data.statusCounts.processing ?? 0)} tone="gold" />
@@ -231,14 +235,16 @@ export function AdminAnalyticsDashboard() {
             <MiniStat label="Unmatched Deposits" value={formatNumber(data.cryptoDeposits.unmatched)} danger={data.cryptoDeposits.unmatched > 0} />
             <MiniStat label="Swept" value={formatNumber(data.cryptoDeposits.swept)} />
             <MiniStat label="Direct Credits" value={formatNumber(data.cryptoDeposits.direct)} />
-            <MiniStat label="Detected Crypto Vol" value={formatNgn(data.cryptoDeposits.volumeCrypto)} />
+            {data.cryptoDeposits.volumes.map(item => (
+              <MiniStat key={`${item.asset}-${item.network}`} label={`${item.asset} · ${item.network}`} value={formatCrypto(item.amount)} />
+            ))}
           </div>
         </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
         <Card className="p-4 xl:col-span-2">
-          <SectionHeader title="Revenue & Product Mix" detail="Volume by product bucket from recent successful transactions." />
+          <SectionHeader title="Transaction Amount by Product" detail="All-time NGN across successful records; internal transfers include both ledger sides, so this is not unique payment volume or revenue." />
           <div className="mt-4 space-y-3">
             {data.byType.length === 0 ? (
               <EmptyAnalytics label="No transaction buckets available." />
@@ -255,7 +261,7 @@ export function AdminAnalyticsDashboard() {
         </Card>
 
         <Card className="p-4">
-          <SectionHeader title="Provider Reliability" detail="Recent webhook/event processing." />
+          <SectionHeader title="Provider Reliability" detail="All recorded provider events." />
           <div className="mt-4 space-y-3">
             {data.providerBreakdown.length === 0 ? (
               <EmptyAnalytics label="No provider events recorded." />
@@ -267,7 +273,7 @@ export function AdminAnalyticsDashboard() {
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                   <MiniStat label="Processed" value={formatNumber(provider.processed)} />
-                  <MiniStat label="Pending" value={formatNumber(provider.pending)} />
+                  <MiniStat label="Unprocessed" value={formatNumber(provider.pending)} />
                   <MiniStat label="Failed" value={formatNumber(provider.failed)} danger={provider.failed > 0} />
                 </div>
               </div>
@@ -298,7 +304,7 @@ export function AdminAnalyticsDashboard() {
         </Card>
 
         <Card className="p-4">
-          <SectionHeader title="Latest Transactions" detail="Newest activity across all users." />
+          <SectionHeader title="Latest Transactions" detail="10 newest transactions across all users." />
           <div className="mt-4 space-y-2">
             {data.latestTransactions.length === 0 ? (
               <EmptyAnalytics label="No recent transactions available." />

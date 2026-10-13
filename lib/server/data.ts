@@ -3702,6 +3702,123 @@ export async function getTotalWalletLiability(): Promise<number> {
   return Math.round(Number(row?.total ?? 0) * 100) / 100
 }
 
+export async function getAdminAnalyticsSnapshot(days: string[]) {
+  await ensureDbReady()
+  const startDay = days[0] ?? new Date().toISOString().slice(0, 10)
+  const dailyParams: Array<string | number> = [startDay]
+  const dayExpr = 'substr(created_at, 1, 10)'
+
+  const [userTotalsResult, newUsersResult, transactionTotalsResult, transactionDaysResult, providerResult, depositResult, payoutResult, cryptoOrderResult, cryptoDepositResult, walletResult] = await Promise.all([
+    isPostgresEnabled()
+      ? queryPostgres<{ users: string; active: string; verified: string; pending_kyc: string }>(`
+          SELECT COUNT(*) AS users,
+            SUM(CASE WHEN "accountStatus" = 'active' THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN "kycStatus" = 'verified' THEN 1 ELSE 0 END) AS verified,
+            SUM(CASE WHEN "kycStatus" = 'pending' THEN 1 ELSE 0 END) AS pending_kyc
+          FROM users
+        `)
+      : Promise.resolve({ rows: getDb().prepare(`
+          SELECT COUNT(*) AS users,
+            SUM(CASE WHEN accountStatus = 'active' THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN kycStatus = 'verified' THEN 1 ELSE 0 END) AS verified,
+            SUM(CASE WHEN kycStatus = 'pending' THEN 1 ELSE 0 END) AS pending_kyc
+          FROM users
+        `).all() as Array<{ users: number; active: number; verified: number; pending_kyc: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ day: string; count: string }>(`SELECT substr("createdAt", 1, 10) AS day, COUNT(*) AS count FROM users WHERE "createdAt" >= ? GROUP BY day`, [startDay])
+      : Promise.resolve({ rows: getDb().prepare(`SELECT substr(createdAt, 1, 10) AS day, COUNT(*) AS count FROM users WHERE createdAt >= ? GROUP BY day`).all(startDay) as Array<{ day: string; count: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ type: string; status: string; count: string; amount: string; fee: string }>(`SELECT type, status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount, COALESCE(SUM(fee), 0) AS fee FROM transactions GROUP BY type, status`)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT type, status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount, COALESCE(SUM(fee), 0) AS fee FROM transactions GROUP BY type, status`).all() as Array<{ type: string; status: string; count: number; amount: number; fee: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ day: string; type: string; status: string; count: string; amount: string; fee: string }>(`SELECT ${dayExpr} AS day, type, status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount, COALESCE(SUM(fee), 0) AS fee FROM transactions WHERE created_at >= ? GROUP BY day, type, status`, dailyParams)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT ${dayExpr} AS day, type, status, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount, COALESCE(SUM(fee), 0) AS fee FROM transactions WHERE created_at >= ? GROUP BY day, type, status`).all(...dailyParams) as Array<{ day: string; type: string; status: string; count: number; amount: number; fee: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ provider: string; status: string; processed: boolean; count: string }>(`SELECT provider, status, (processed_at IS NOT NULL) AS processed, COUNT(*) AS count FROM provider_events GROUP BY provider, status, processed`)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT provider, status, (processed_at IS NOT NULL) AS processed, COUNT(*) AS count FROM provider_events GROUP BY provider, status, processed`).all() as Array<{ provider: string; status: string; processed: number; count: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ status: string; count: string; volume: string }>(`SELECT status, COUNT(*) AS count, COALESCE(SUM(CASE WHEN status = 'success' THEN net_amount ELSE 0 END), 0) AS volume FROM deposit_intents GROUP BY status`)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT status, COUNT(*) AS count, COALESCE(SUM(CASE WHEN status = 'success' THEN net_amount ELSE 0 END), 0) AS volume FROM deposit_intents GROUP BY status`).all() as Array<{ status: string; count: number; volume: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ status: string; count: string; volume: string }>(`SELECT status, COUNT(*) AS count, COALESCE(SUM(CASE WHEN status = 'success' THEN amount ELSE 0 END), 0) AS volume FROM payout_requests GROUP BY status`)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT status, COUNT(*) AS count, COALESCE(SUM(CASE WHEN status = 'success' THEN amount ELSE 0 END), 0) AS volume FROM payout_requests GROUP BY status`).all() as Array<{ status: string; count: number; volume: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ status: string; count: string }>(`SELECT status, COUNT(*) AS count FROM crypto_orders GROUP BY status`)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT status, COUNT(*) AS count FROM crypto_orders GROUP BY status`).all() as Array<{ status: string; count: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ status: string; sweep_status: string | null; crypto_order_id: string | null; asset_symbol: string; network: string | null; pair_id: string; count: string; amount: string }>(`SELECT status, sweep_status, crypto_order_id, asset_symbol, network, pair_id, COUNT(*) AS count, COALESCE(SUM(amount_crypto), 0) AS amount FROM crypto_deposit_events GROUP BY status, sweep_status, crypto_order_id, asset_symbol, network, pair_id`)
+      : Promise.resolve({ rows: getDb().prepare(`SELECT status, sweep_status, crypto_order_id, asset_symbol, network, pair_id, COUNT(*) AS count, COALESCE(SUM(amount_crypto), 0) AS amount FROM crypto_deposit_events GROUP BY status, sweep_status, crypto_order_id, asset_symbol, network, pair_id`).all() as Array<{ status: string; sweep_status: string | null; crypto_order_id: string | null; asset_symbol: string; network: string | null; pair_id: string; count: number; amount: number }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ user_id: string; name: string; email: string; balance: string; locked: string; virtual_accounts: string }>(`
+          SELECT w.user_id, u.name, u.email, w.virtual_accounts,
+            COALESCE(b.balance, 0) AS balance, COALESCE(b.locked, 0) AS locked
+          FROM wallets w JOIN users u ON u.id = w.user_id
+          LEFT JOIN (
+            SELECT user_id,
+              SUM(CASE WHEN account = 'available' THEN CASE WHEN direction = 'credit' THEN amount ELSE -amount END ELSE 0 END) AS balance,
+              SUM(CASE WHEN account = 'locked' THEN CASE WHEN direction = 'credit' THEN amount ELSE -amount END ELSE 0 END) AS locked
+            FROM ledger_entries
+            WHERE COALESCE(asset, 'NGN') = 'NGN' AND account IN ('available', 'locked')
+            GROUP BY user_id
+          ) b ON b.user_id = w.user_id
+        `)
+      : Promise.resolve({ rows: getDb().prepare(`
+          SELECT w.user_id, u.name, u.email, w.virtual_accounts,
+            COALESCE(b.balance, 0) AS balance, COALESCE(b.locked, 0) AS locked
+          FROM wallets w JOIN users u ON u.id = w.user_id
+          LEFT JOIN (
+            SELECT user_id,
+              SUM(CASE WHEN account = 'available' THEN CASE WHEN direction = 'credit' THEN amount ELSE -amount END ELSE 0 END) AS balance,
+              SUM(CASE WHEN account = 'locked' THEN CASE WHEN direction = 'credit' THEN amount ELSE -amount END ELSE 0 END) AS locked
+            FROM ledger_entries
+            WHERE COALESCE(asset, 'NGN') = 'NGN' AND account IN ('available', 'locked')
+            GROUP BY user_id
+          ) b ON b.user_id = w.user_id
+        `).all() as Array<{ user_id: string; name: string; email: string; balance: number; locked: number; virtual_accounts: string }> }),
+  ])
+
+  const userTotals = userTotalsResult.rows[0]
+  const transactions = transactionTotalsResult.rows.map(row => ({ ...row, count: Number(row.count), amount: Number(row.amount), fee: Number(row.fee) }))
+  const walletRows = walletResult.rows.map(row => ({
+    userId: row.user_id,
+    name: row.name,
+    email: row.email,
+    balance: Number(row.balance),
+    locked: Number(row.locked),
+    fundingAccounts: (parseJson(row.virtual_accounts, [] as Wallet['virtualAccounts']) ?? []).length,
+  }))
+
+  return {
+    users: {
+      total: Number(userTotals?.users ?? 0),
+      active: Number(userTotals?.active ?? 0),
+      verified: Number(userTotals?.verified ?? 0),
+      pendingKyc: Number(userTotals?.pending_kyc ?? 0),
+      daily: new Map(newUsersResult.rows.map(row => [row.day, Number(row.count)] as const)),
+    },
+    transactions: transactions.map(row => ({ ...row, status: row.status as Transaction['status'], type: row.type as Transaction['type'] })),
+    dailyTransactions: transactionDaysResult.rows.map(row => ({
+      ...row,
+      type: row.type as Transaction['type'],
+      status: row.status as Transaction['status'],
+      count: Number(row.count),
+      amount: Number(row.amount),
+      fee: Number(row.fee),
+    })),
+    providerEvents: providerResult.rows.map(row => ({ ...row, count: Number(row.count), processed: Boolean(row.processed) })),
+    deposits: depositResult.rows.map(row => ({ ...row, count: Number(row.count), volume: Number(row.volume) })),
+    payouts: payoutResult.rows.map(row => ({ ...row, count: Number(row.count), volume: Number(row.volume) })),
+    cryptoOrders: cryptoOrderResult.rows.map(row => ({ ...row, count: Number(row.count) })),
+    cryptoDeposits: cryptoDepositResult.rows.map(row => ({ ...row, count: Number(row.count), amount: Number(row.amount) })),
+    wallets: {
+      balance: walletRows.reduce((sum, row) => sum + row.balance, 0),
+      locked: walletRows.reduce((sum, row) => sum + row.locked, 0),
+      withFundingAccount: walletRows.filter(row => row.fundingAccounts > 0).length,
+      top: walletRows.sort((a, b) => b.balance - a.balance).slice(0, 8),
+    },
+  }
+}
+
 export type ProfitMarginRecord = {
   key: string
   valueNgn: number
