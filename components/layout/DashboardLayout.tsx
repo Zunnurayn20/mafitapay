@@ -140,7 +140,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (kycSubmission.status === 'rejected') return
 
     const permanentAccounts = wallet?.virtualAccounts.filter(item => item.isPermanent) ?? []
-    const missingProviders = (['palmpay', 'flutterwave'] as const).filter(
+    // PalmPay accounts are created only when the user explicitly requests one from Deposit Funds.
+    const missingProviders = (['flutterwave'] as const).filter(
       provider => !permanentAccounts.some(item => item.provider === provider)
     )
     if (!missingProviders.length) return
@@ -172,8 +173,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       if (!cancelled) {
         await refreshSession()
         if (failedProviders.length === missingProviders.length) {
-          const providerNames = failedProviders.map(provider => provider === 'palmpay' ? 'PalmPay' : 'Flutterwave').join(' and ')
-          showToast(`We couldn't create your ${providerNames} funding account yet. Open Deposit Funds to retry.`, 'error')
+          showToast("We couldn't create your Flutterwave funding account yet. Open Deposit Funds to retry.", 'error')
         }
       }
     })()
