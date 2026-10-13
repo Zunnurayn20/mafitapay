@@ -10,7 +10,7 @@ import { TransactionReceiptSheet } from '@/components/transactions/TransactionRe
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import { formatTransactionTitle } from '@/lib/transaction-title'
-import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
+import type { CryptoDepositEvent, CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 const FILTERS = ['All','Deposits','Withdrawals','Bills','Crypto']
 
@@ -116,18 +116,21 @@ function getCryptoSettlementLabel(order: CryptoOrder) {
 function buildReceiptShareText(detail: {
   transaction: Transaction
   cryptoOrder: CryptoOrder | null
+  cryptoDepositEvents?: CryptoDepositEvent[]
 }, cryptoAsset?: { symbol?: string; network?: string }) {
+  const txHash = detail.cryptoOrder?.destinationTxHash || detail.cryptoDepositEvents?.find(event => event.txHash)?.txHash
   return [
     'MafitaPay Receipt',
     formatTransactionTitle(detail.transaction, cryptoAsset),
     `Amount: ${formatNGN(detail.transaction.amount)}`,
     `Status: ${detail.transaction.status}`,
     `Reference: ${detail.transaction.reference}`,
+    ...(txHash ? [`Transaction hash: ${txHash}`] : []),
     `Date: ${fmtDate(detail.transaction.createdAt)}`,
   ].join('\n')
 }
 
-function buildReceiptDetails(detail: { transaction: Transaction; cryptoOrder: CryptoOrder | null }) {
+function buildReceiptDetails(detail: { transaction: Transaction; cryptoOrder: CryptoOrder | null; cryptoDepositEvents?: CryptoDepositEvent[] }) {
   const recipientPhone = (detail.transaction.type === 'airtime' || detail.transaction.type === 'data')
     && typeof detail.transaction.metadata?.account === 'string'
     ? detail.transaction.metadata.account
@@ -135,6 +138,11 @@ function buildReceiptDetails(detail: { transaction: Transaction; cryptoOrder: Cr
   return [
     ...(recipientPhone ? [{ label: 'Recipient phone', value: recipientPhone }] : []),
     ...(detail.cryptoOrder?.walletAddress ? [{ label: 'Wallet address', value: detail.cryptoOrder.walletAddress, mono: true }] : []),
+    ...(detail.cryptoOrder?.destinationTxHash
+      ? [{ label: 'Transaction hash', value: detail.cryptoOrder.destinationTxHash, mono: true }]
+      : detail.cryptoDepositEvents?.find(event => event.txHash)?.txHash
+        ? [{ label: 'Transaction hash', value: detail.cryptoDepositEvents.find(event => event.txHash)!.txHash!, mono: true }]
+        : []),
   ]
 }
 
@@ -149,6 +157,7 @@ export default function HistoryPage() {
   const [detail, setDetail] = useState<{
     transaction: Transaction
     cryptoOrder: CryptoOrder | null
+    cryptoDepositEvents: CryptoDepositEvent[]
     depositIntent: DepositIntent | null
     payoutRequest: PayoutRequest | null
     timeline: Array<{ label: string; at: string; tone: string }>

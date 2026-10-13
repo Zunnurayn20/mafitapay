@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
 import {
   getCryptoOrderByTransactionId,
+  listCryptoDepositEventsByTransactionIds,
   getDepositIntentByTransactionId,
   getLedgerEntriesForTransaction,
   getPayoutRequestByTransactionId,
@@ -19,8 +20,9 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[i
     return NextResponse.json({ error: 'Transaction not found.', success: false }, { status: 404 })
   }
 
-  const [cryptoOrder, ledgerEntries, providerEvents, depositIntent, payoutRequest] = await Promise.all([
+  const [cryptoOrder, cryptoDepositEvents, ledgerEntries, providerEvents, depositIntent, payoutRequest] = await Promise.all([
     getCryptoOrderByTransactionId(id),
+    listCryptoDepositEventsByTransactionIds([id]),
     getLedgerEntriesForTransaction(user.id, id),
     getProviderEventsByReference(transaction.reference),
     getDepositIntentByTransactionId(id),
@@ -43,6 +45,7 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[i
     data: {
       transaction,
       cryptoOrder,
+      cryptoDepositEvents,
       ledgerEntries,
       providerEvents,
       depositIntent,

@@ -11,7 +11,7 @@ import { TransactionIcon } from '@/components/transactions/TransactionIcon'
 import { TransactionReceiptSheet } from '@/components/transactions/TransactionReceiptSheet'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import { formatTransactionTitle } from '@/lib/transaction-title'
-import type { CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
+import type { CryptoDepositEvent, CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 function getStatusIcon(status: Transaction['status']) {
   if (status === 'success') {
@@ -44,6 +44,7 @@ export function RecentTransactions() {
   const [detail, setDetail] = useState<{
     transaction: Transaction
     cryptoOrder: CryptoOrder | null
+    cryptoDepositEvents: CryptoDepositEvent[]
     depositIntent: DepositIntent | null
     payoutRequest: PayoutRequest | null
     timeline: Array<{ label: string; at: string; tone: string }>
@@ -277,6 +278,14 @@ export function RecentTransactions() {
             <TransactionReceiptSheet
               id="dashboard-receipt-sheet"
               transaction={detail.transaction}
+              details={[
+                ...(detail.cryptoOrder?.walletAddress ? [{ label: 'Wallet address', value: detail.cryptoOrder.walletAddress, mono: true }] : []),
+                ...(detail.cryptoOrder?.destinationTxHash
+                  ? [{ label: 'Transaction hash', value: detail.cryptoOrder.destinationTxHash, mono: true }]
+                  : detail.cryptoDepositEvents?.find(event => event.txHash)?.txHash
+                    ? [{ label: 'Transaction hash', value: detail.cryptoDepositEvents.find(event => event.txHash)!.txHash!, mono: true }]
+                    : []),
+              ]}
               title={formatTransactionTitle(detail.transaction, (() => {
                 const pairId = typeof detail.transaction.metadata?.pairId === 'string' ? detail.transaction.metadata.pairId : ''
                 return pairId ? cryptoAssets.find(asset => asset.id === pairId) : undefined
