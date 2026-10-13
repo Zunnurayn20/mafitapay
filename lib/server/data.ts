@@ -16,6 +16,7 @@ import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryp
 import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../routed-assets'
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
+import { BILL_SERVICE_TYPES } from '../bill-config'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
 import { isPostgresEnabled, queryPostgres, queryPostgresClient, withPostgresTransaction } from './postgres'
 import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositIntent, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
@@ -2184,6 +2185,13 @@ function initSchema(db: DatabaseSync) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS bill_type_settings (
+      service_type TEXT PRIMARY KEY,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS profit_margins (
       key TEXT PRIMARY KEY,
       value_ngn REAL NOT NULL,
@@ -2533,6 +2541,23 @@ function migrateSchema(db: DatabaseSync) {
     VALUES (1, 1, 1, '${new Date().toISOString()}')
     ON CONFLICT(id) DO NOTHING;
   `)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bill_type_settings (
+      service_type TEXT PRIMARY KEY,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `)
+  const seedBillTypeSetting = db.prepare(`
+    INSERT INTO bill_type_settings (service_type, is_enabled, updated_at)
+    VALUES (?, 1, ?)
+    ON CONFLICT(service_type) DO NOTHING
+  `)
+  const billTypeSettingsCreatedAt = new Date().toISOString()
+  for (const serviceType of BILL_SERVICE_TYPES) {
+    seedBillTypeSetting.run(serviceType, billTypeSettingsCreatedAt)
+  }
   ensureColumn(db, 'users', 'accountStatus', "TEXT NOT NULL DEFAULT 'active'")
   ensureColumn(db, 'users', 'referredByUserId', 'TEXT')
   ensureColumn(db, 'users', 'referredByReferralCode', 'TEXT')
@@ -9091,6 +9116,52 @@ export async function consumeCryptoQuote(userId: string, quoteId: string, side: 
   const asset = await getCryptoAssetById(quote.pairId)
   if (!asset) throw new Error('Crypto pair no longer exists.')
   return { asset, quote: { ...quote, usedAt: new Date().toISOString() } }
+}
+
+export type BillTypeSetting = {
+  type: BillProvider['type']
+  enabled: boolean
+  updatedBy?: string
+  updatedAt: string
+}
+
+export async function getBillTypeSettings(): Promise<BillTypeSetting[]> {
+  await ensureDbReady()
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<{ service_type: string; is_enabled: boolean; updated_by: string | null; updated_at: string }>(
+      'SELECT service_type, is_enabled, updated_by, updated_at FROM bill_type_settings'
+    )).rows
+    : getDb().prepare('SELECT service_type, is_enabled, updated_by, updated_at FROM bill_type_settings').all() as Array<{
+      service_type: string; is_enabled: number; updated_by: string | null; updated_at: string
+    }>
+  const byType = new Map(rows.map(row => [row.service_type, row] as const))
+  return BILL_SERVICE_TYPES.map(type => {
+    const row = byType.get(type)
+    return row
+      ? { type, enabled: Boolean(row.is_enabled), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
+      : { type, enabled: true, updatedAt: new Date(0).toISOString() }
+  })
+}
+
+export async function updateBillTypeSetting(input: { type: BillProvider['type']; enabled: boolean; updatedBy: string }) {
+  await ensureDbReady()
+  const updatedAt = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres(`
+      INSERT INTO bill_type_settings (service_type, is_enabled, updated_by, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (service_type) DO UPDATE SET is_enabled = excluded.is_enabled,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `, [input.type, input.enabled, input.updatedBy, updatedAt])
+  } else {
+    getDb().prepare(`
+      INSERT INTO bill_type_settings (service_type, is_enabled, updated_by, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(service_type) DO UPDATE SET is_enabled = excluded.is_enabled,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `).run(input.type, input.enabled ? 1 : 0, input.updatedBy, updatedAt)
+  }
+  return (await getBillTypeSettings()).find(item => item.type === input.type)!
 }
 
 export async function getBillProviders(): Promise<BillProvider[]> {

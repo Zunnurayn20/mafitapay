@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { Modal } from '@/components/ui/Modal'
+import { BillTypeAvailabilityControl } from './BillTypeAvailabilityControl'
 import {
   Callout,
   Disclosure,
@@ -1626,6 +1627,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
             Open the service form only when you need to add a new bill provider.
           </div>
         )}
+        <BillTypeAvailabilityControl />
         {showNewBillProviderForm && <div className="border border-[var(--border)] bg-[var(--clay)] p-4">
           <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--muted)]">Add Bill Service</div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">

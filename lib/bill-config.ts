@@ -128,6 +128,8 @@ export const BILL_SERVICE_CONFIG: Record<BillProvider['type'], BillServiceConfig
   },
 }
 
+export const BILL_SERVICE_TYPES = Object.keys(BILL_SERVICE_CONFIG) as BillProvider['type'][]
+
 export function getBillServiceConfig(provider?: Pick<BillProvider, 'type' | 'name'> | null) {
   if (!provider) return null
   return BILL_SERVICE_CONFIG[provider.type] ?? null

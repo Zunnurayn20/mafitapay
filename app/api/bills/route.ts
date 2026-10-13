@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
-import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
@@ -35,10 +35,12 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const forceRefresh = url.searchParams.get('refresh') === '1'
-  const [baseProviders, baseNetworkProviders] = await Promise.all([
+  const [baseProviders, baseNetworkProviders, billTypeSettings] = await Promise.all([
     getBillProviders(),
     getNetworkProviders(),
+    getBillTypeSettings(),
   ])
+  const enabledBillTypes = new Set(billTypeSettings.filter(setting => setting.enabled).map(setting => setting.type))
   let providers = baseProviders
   let networkProviders = baseNetworkProviders
   if (isFlutterwaveBillsEnabled()) {
@@ -72,6 +74,7 @@ export async function GET(req: Request) {
       ...item,
       isActive:
         item.isActive !== false
+        && enabledBillTypes.has(item.type)
         && hasProviderForBillType(item.type)
         && (
           (item.type !== 'cable' && item.type !== 'electric')
@@ -117,11 +120,14 @@ async function handleBillPayment(req: Request) {
   // Older app builds omit this; fall back to the previous inference in that case.
   const providerName = typeof body.providerName === 'string' ? body.providerName.trim() : undefined
   const rawAccount = typeof body.account === 'string' ? body.account.trim() : ''
-  const providers = await getBillProviders()
+  const [providers, billTypeSettings] = await Promise.all([getBillProviders(), getBillTypeSettings()])
   const selectedProvider = providers.find(item => item.name === service || item.id === service)
 
   if (!selectedProvider) {
     return NextResponse.json({ error: 'Unsupported bill service', success: false }, { status: 400 })
+  }
+  if (!billTypeSettings.some(setting => setting.type === selectedProvider.type && setting.enabled)) {
+    return NextResponse.json({ error: `${selectedProvider.name} is temporarily unavailable.`, success: false }, { status: 503 })
   }
   if (selectedProvider.isActive === false) {
     return NextResponse.json({ error: `${selectedProvider.name} is temporarily unavailable.`, success: false }, { status: 400 })
