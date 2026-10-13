@@ -1,5 +1,6 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
-import { getDisabledDataPlans } from '@/lib/server/data'
+import { getDisabledDataPlanCategories, getDisabledDataPlans } from '@/lib/server/data'
+import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
 import {
   loadPricingRules,
@@ -262,9 +263,13 @@ function toAmigoBundles(plans: PricedAmigoPlan[]): BillDataBundle[] {
 
 /** Static Amigo catalog with current pricing rules applied. */
 export async function getPricedAmigoPlans(): Promise<PricedAmigoPlan[]> {
-  const [rules, disabled] = await Promise.all([loadPricingRules(), getDisabledDataPlans()])
+  const [rules, disabled, disabledCategories] = await Promise.all([loadPricingRules(), getDisabledDataPlans(), getDisabledDataPlanCategories()])
   const disabledKeys = new Set(disabled.filter(plan => plan.vendor === 'amigo').map(plan => `${plan.networkId}:${plan.planId}`))
-  return applyAmigoPricing(rules).filter(plan => !disabledKeys.has(`${plan.networkId}:${plan.planId}`))
+  return applyAmigoPricing(rules).filter(plan => (
+    !disabledKeys.has(`${plan.networkId}:${plan.planId}`)
+    && !isDataPlanCategoryDisabled(disabledCategories, 'network', plan.network)
+    && !isDataPlanCategoryDisabled(disabledCategories, 'plan_type', plan.planType)
+  ))
 }
 
 /**

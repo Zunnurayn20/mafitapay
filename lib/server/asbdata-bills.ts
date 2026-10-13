@@ -1,5 +1,6 @@
 import type { BillDataBundle, NetworkProvider } from '@/types'
-import { getDisabledDataPlans } from '@/lib/server/data'
+import { getDisabledDataPlanCategories, getDisabledDataPlans } from '@/lib/server/data'
+import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { findBalanceInPayload, type ProviderBalance } from '@/lib/server/provider-balance'
 import {
   loadPricingRules,
@@ -475,13 +476,18 @@ export async function getCachedAsbdataPlans(options?: { forceRefresh?: boolean }
 
 /** Vendor catalog (cached) with current pricing rules (uncached) applied. */
 export async function getPricedAsbdataPlans(options?: { forceRefresh?: boolean }): Promise<PricedAsbdataPlan[]> {
-  const [plans, rules, disabled] = await Promise.all([
+  const [plans, rules, disabled, disabledCategories] = await Promise.all([
     getCachedAsbdataPlans(options),
     loadPricingRules(),
     getDisabledDataPlans(),
+    getDisabledDataPlanCategories(),
   ])
   const disabledKeys = new Set(disabled.filter(plan => plan.vendor === 'asbdata').map(plan => `${plan.networkId}:${plan.planId}`))
-  return applyAsbdataPricing(plans, rules).filter(plan => !disabledKeys.has(`${plan.networkId}:${plan.planId}`))
+  return applyAsbdataPricing(plans, rules).filter(plan => (
+    !disabledKeys.has(`${plan.networkId}:${plan.planId}`)
+    && !isDataPlanCategoryDisabled(disabledCategories, 'network', plan.network)
+    && !isDataPlanCategoryDisabled(disabledCategories, 'plan_type', plan.planTypeNormalized)
+  ))
 }
 
 /**

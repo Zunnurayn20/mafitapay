@@ -17,6 +17,7 @@ import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
 import { BILL_SERVICE_TYPES } from '../bill-config'
+import { DATA_PLAN_CATEGORY_TYPES, getDataPlanCategoryKey, type DataPlanCategoryType } from '../data-plan-categories'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
 import { isPostgresEnabled, queryPostgres, queryPostgresClient, withPostgresTransaction } from './postgres'
 import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositIntent, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
@@ -8128,6 +8129,77 @@ export async function isDataPlanDisabled(vendor: DisabledDataPlanRecord['vendor'
   await ensureDisabledDataPlansReady()
   if (isPostgresEnabled()) return (await queryPostgres('SELECT 1 FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ? LIMIT 1', [vendor, networkId, planId])).rows.length > 0
   return Boolean(getDb().prepare('SELECT 1 FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ? LIMIT 1').get(vendor, networkId, planId))
+}
+
+export type DisabledDataPlanCategoryRecord = {
+  categoryType: DataPlanCategoryType
+  categoryKey: string
+  reason?: string
+  disabledAt: string
+  disabledBy?: string
+}
+
+async function ensureDisabledDataPlanCategoriesReady() {
+  const sql = `
+    CREATE TABLE IF NOT EXISTS disabled_data_plan_categories (
+      category_type TEXT NOT NULL CHECK (category_type IN ('network', 'plan_type')),
+      category_key TEXT NOT NULL,
+      reason TEXT,
+      disabled_at TEXT NOT NULL,
+      disabled_by TEXT,
+      PRIMARY KEY (category_type, category_key)
+    )
+  `
+  if (isPostgresEnabled()) {
+    await queryPostgres(sql)
+    return
+  }
+  getDb().exec(sql)
+}
+
+export async function getDisabledDataPlanCategories(): Promise<DisabledDataPlanCategoryRecord[]> {
+  await ensureDbReady()
+  await ensureDisabledDataPlanCategoriesReady()
+  const rows = isPostgresEnabled()
+    ? (await queryPostgres<{ category_type: DataPlanCategoryType; category_key: string; reason: string | null; disabled_at: string; disabled_by: string | null }>(
+      'SELECT category_type, category_key, reason, disabled_at, disabled_by FROM disabled_data_plan_categories ORDER BY category_type, category_key'
+    )).rows
+    : getDb().prepare('SELECT category_type, category_key, reason, disabled_at, disabled_by FROM disabled_data_plan_categories ORDER BY category_type, category_key').all() as Array<{
+      category_type: DataPlanCategoryType; category_key: string; reason: string | null; disabled_at: string; disabled_by: string | null
+    }>
+  return rows.map(row => ({
+    categoryType: row.category_type,
+    categoryKey: row.category_key,
+    reason: row.reason ?? undefined,
+    disabledAt: row.disabled_at,
+    disabledBy: row.disabled_by ?? undefined,
+  }))
+}
+
+export async function setDataPlanCategoryDisabled(input: {
+  categoryType: DataPlanCategoryType
+  categoryKey: string
+  disabled: boolean
+  reason?: string
+  disabledBy?: string
+}) {
+  await ensureDbReady()
+  await ensureDisabledDataPlanCategoriesReady()
+  if (!DATA_PLAN_CATEGORY_TYPES.includes(input.categoryType)) throw new Error('Unsupported data plan category type.')
+  const categoryKey = getDataPlanCategoryKey(input.categoryType, input.categoryKey)
+  if (!categoryKey || categoryKey.length > 48) throw new Error('Invalid data plan category key.')
+
+  if (input.disabled) {
+    const now = new Date().toISOString()
+    const params = [input.categoryType, categoryKey, input.reason?.trim() || null, now, input.disabledBy ?? null]
+    if (isPostgresEnabled()) await queryPostgres('INSERT INTO disabled_data_plan_categories (category_type, category_key, reason, disabled_at, disabled_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (category_type, category_key) DO UPDATE SET reason = excluded.reason, disabled_at = excluded.disabled_at, disabled_by = excluded.disabled_by', params)
+    else getDb().prepare('INSERT INTO disabled_data_plan_categories (category_type, category_key, reason, disabled_at, disabled_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT(category_type, category_key) DO UPDATE SET reason = excluded.reason, disabled_at = excluded.disabled_at, disabled_by = excluded.disabled_by').run(...params)
+  } else if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM disabled_data_plan_categories WHERE category_type = ? AND category_key = ?', [input.categoryType, categoryKey])
+  } else {
+    getDb().prepare('DELETE FROM disabled_data_plan_categories WHERE category_type = ? AND category_key = ?').run(input.categoryType, categoryKey)
+  }
+  return getDisabledDataPlanCategories()
 }
 
 export async function deleteSessionsByUserId(userId: string) {

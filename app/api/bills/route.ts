@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
-import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
@@ -35,10 +36,11 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const forceRefresh = url.searchParams.get('refresh') === '1'
-  const [baseProviders, baseNetworkProviders, billTypeSettings] = await Promise.all([
+  const [baseProviders, baseNetworkProviders, billTypeSettings, disabledDataPlanCategories] = await Promise.all([
     getBillProviders(),
     getNetworkProviders(),
     getBillTypeSettings(),
+    getDisabledDataPlanCategories(),
   ])
   const enabledBillTypes = new Set(billTypeSettings.filter(setting => setting.enabled).map(setting => setting.type))
   let providers = baseProviders
@@ -68,6 +70,14 @@ export async function GET(req: Request) {
   if (isBardetechBillsEnabled()) {
     networkProviders = await listBardetechDataBundleNetworkProvidersSafe(networkProviders, { forceRefresh })
   }
+
+  networkProviders = networkProviders.map(network => ({
+    ...network,
+    dataBundles: network.dataBundles?.filter(bundle => (
+      !isDataPlanCategoryDisabled(disabledDataPlanCategories, 'network', network.name)
+      && !isDataPlanCategoryDisabled(disabledDataPlanCategories, 'plan_type', bundle.planType)
+    )),
+  }))
 
   const hydratedProviders = providers
     .map(item => ({
@@ -193,6 +203,16 @@ async function handleBillPayment(req: Request) {
     : providerName === 'asbdata' || providerName === 'amigo' || providerName === 'flutterwave' || providerName === 'bardetech'
       ? providerName
       : 'amigo'
+
+  if (selectedProvider.type === 'data') {
+    const disabledCategories = await getDisabledDataPlanCategories()
+    if (isDataPlanCategoryDisabled(disabledCategories, 'network', provider)) {
+      return NextResponse.json({ error: 'Data plans for this network are temporarily unavailable.', success: false }, { status: 503 })
+    }
+    if ((!resolvedDataProvider || resolvedDataProvider === 'flutterwave') && isDataPlanCategoryDisabled(disabledCategories, 'plan_type', 'STANDARD')) {
+      return NextResponse.json({ error: 'Standard data plans are temporarily unavailable.', success: false }, { status: 503 })
+    }
+  }
 
   // Server-authoritative price for plan-based data. Client amount is only used to detect that
   // the catalog moved under the user mid-checkout — never to decide what we charge.
