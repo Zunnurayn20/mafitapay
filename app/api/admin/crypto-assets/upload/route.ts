@@ -23,11 +23,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Logo must be 2MB or smaller.', success: false }, { status: 400 })
   }
 
-  const saved = await saveCryptoLogo(
-    Buffer.from(await file.arrayBuffer()),
-    file.type,
-    pairId || symbol || file.name.replace(/\.[^.]+$/, ''),
-  )
+  try {
+    const saved = await saveCryptoLogo(
+      Buffer.from(await file.arrayBuffer()),
+      file.type,
+      pairId || symbol || file.name.replace(/\.[^.]+$/, ''),
+    )
 
-  return NextResponse.json({ data: saved, success: true })
+    return NextResponse.json({ data: saved, success: true })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Logo upload failed.'
+    console.error('[crypto-assets/upload] Logo upload failed:', message)
+    return NextResponse.json({ error: message, success: false }, { status: 503 })
+  }
 }

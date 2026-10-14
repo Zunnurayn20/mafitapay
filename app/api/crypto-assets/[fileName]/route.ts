@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { NextResponse } from 'next/server'
+import { getSupabaseCryptoLogoPublicUrl } from '@/lib/server/crypto-logo-store'
 
 export const runtime = 'nodejs'
 
@@ -12,16 +13,15 @@ const CONTENT_TYPES = new Map([
 ])
 
 /**
- * Serve an admin-uploaded crypto logo from the persistent volume.
+ * Serve an admin-uploaded crypto logo from the configured persistent storage backend.
  *
  * Deliberately public, unlike its sibling `/api/kyc/files/[fileId]`: these logos render for every
  * customer on the crypto list, including before a session resolves, and they carry nothing private.
  * Requiring auth here would simply break the images.
  *
  * Uploads cannot live in `public/` -- that directory is rebuilt from git in the Docker image on every
- * deploy, so a runtime write there survives only until the next release. The upload route therefore
- * writes to `data/uploads/crypto-assets/` on the Railway volume, and this route is how those files
- * reach the browser. Logos seeded in git keep being served straight from `public/crypto-assets/`.
+ * deploy, so runtime uploads use Supabase Storage on Vercel and the persistent data volume on
+ * self-hosted deployments. Logos seeded in git keep being served straight from `public/crypto-assets/`.
  */
 export async function GET(_req: Request, ctx: RouteContext<'/api/crypto-assets/[fileName]'>) {
   const { fileName } = await ctx.params
@@ -30,6 +30,25 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/crypto-assets/[
   const contentType = CONTENT_TYPES.get(path.extname(safeFileName).toLowerCase())
   if (!contentType) {
     return NextResponse.json({ error: 'Unsupported crypto logo type.', success: false }, { status: 404 })
+  }
+
+  if (process.env.VERCEL) {
+    const publicUrl = getSupabaseCryptoLogoPublicUrl(safeFileName)
+    if (!publicUrl) {
+      return NextResponse.json({ error: 'Logo storage is not configured.', success: false }, { status: 503 })
+    }
+
+    const stored = await fetch(publicUrl, { signal: AbortSignal.timeout(10_000) }).catch(() => null)
+    if (!stored?.ok) {
+      return NextResponse.json({ error: 'Crypto logo not found.', success: false }, { status: 404 })
+    }
+
+    return new Response(stored.body, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      },
+    })
   }
 
   // Left to inference rather than annotated `Buffer`: readFile resolves to Buffer<ArrayBuffer>,

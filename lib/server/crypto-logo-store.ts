@@ -16,6 +16,75 @@ export const CRYPTO_LOGO_EXTENSIONS = new Map([
   ['image/webp', '.webp'],
 ])
 
+const SUPABASE_CRYPTO_LOGO_BUCKET = 'crypto-assets'
+
+function getSupabaseStorageConfig() {
+  const projectUrl = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/$/, '')
+  const secretKey = (process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
+  return projectUrl && secretKey ? { projectUrl, secretKey } : null
+}
+
+function storageHeaders(secretKey: string) {
+  return {
+    apikey: secretKey,
+    Authorization: `Bearer ${secretKey}`,
+  }
+}
+
+async function ensureSupabaseCryptoLogoBucket(projectUrl: string, secretKey: string) {
+  const response = await fetch(`${projectUrl}/storage/v1/bucket`, {
+    method: 'POST',
+    headers: { ...storageHeaders(secretKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: SUPABASE_CRYPTO_LOGO_BUCKET,
+      name: SUPABASE_CRYPTO_LOGO_BUCKET,
+      public: true,
+      file_size_limit: CRYPTO_LOGO_MAX_BYTES,
+      allowed_mime_types: [...CRYPTO_LOGO_EXTENSIONS.keys()],
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+
+  // A concurrent first upload may have created the bucket already. Supabase returns 409 then.
+  if (response.status === 409) return
+  if (!response.ok) {
+    throw new Error(`Supabase Storage could not prepare the crypto-assets bucket (HTTP ${response.status}).`)
+  }
+}
+
+async function saveCryptoLogoToSupabase(bytes: Buffer, contentType: string, fileName: string) {
+  const config = getSupabaseStorageConfig()
+  if (!config) {
+    throw new Error('Logo storage is not configured. Add SUPABASE_URL and SUPABASE_SECRET_KEY to the Vercel Production environment.')
+  }
+
+  await ensureSupabaseCryptoLogoBucket(config.projectUrl, config.secretKey)
+  const response = await fetch(
+    `${config.projectUrl}/storage/v1/object/${SUPABASE_CRYPTO_LOGO_BUCKET}/${encodeURIComponent(fileName)}`,
+    {
+      method: 'POST',
+      headers: {
+        ...storageHeaders(config.secretKey),
+        'Content-Type': contentType,
+        'Cache-Control': 'max-age=31536000',
+        'x-upsert': 'false',
+      },
+      body: new Uint8Array(bytes),
+      signal: AbortSignal.timeout(20_000),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`Supabase Storage could not save the logo (HTTP ${response.status}).`)
+  }
+}
+
+export function getSupabaseCryptoLogoPublicUrl(fileName: string) {
+  const config = getSupabaseStorageConfig()
+  if (!config) return null
+  return `${config.projectUrl}/storage/v1/object/public/${SUPABASE_CRYPTO_LOGO_BUCKET}/${encodeURIComponent(fileName)}`
+}
+
 export function toSafeLogoBasename(value: string) {
   return value
     .toLowerCase()
@@ -25,11 +94,9 @@ export function toSafeLogoBasename(value: string) {
 }
 
 /**
- * Written to the Railway volume, not `public/`. `public/` is baked into the Docker image from git
- * (Dockerfile: `COPY --from=builder /app/public ./public`), so a logo written there at runtime
- * lived in one container's writable layer and disappeared on the next deploy -- while the pair in
- * the database went on pointing at a path that now 404s. That is why two earlier uploads had to be
- * aliased by hand in sanitizeCryptoIcon. `data/` is the mounted volume, so these survive releases.
+ * On Vercel, logos go to Supabase Storage because function filesystems are temporary. On persistent
+ * self-hosted deployments, keep using the mounted data volume. Both return the same app URL so the
+ * database and UI do not need to know which storage backend serves the file.
  */
 export async function saveCryptoLogo(bytes: Buffer, contentType: string, basename: string) {
   const ext = CRYPTO_LOGO_EXTENSIONS.get(contentType)
@@ -37,6 +104,17 @@ export async function saveCryptoLogo(bytes: Buffer, contentType: string, basenam
   if (bytes.byteLength > CRYPTO_LOGO_MAX_BYTES) throw new Error('Logo must be 2MB or smaller.')
 
   const fileName = `${toSafeLogoBasename(basename)}-${randomUUID().slice(0, 8)}${ext}`
+
+  if (process.env.VERCEL) {
+    await saveCryptoLogoToSupabase(bytes, contentType, fileName)
+    return {
+      fileName,
+      path: `/api/crypto-assets/${fileName}`,
+      contentType,
+      size: bytes.byteLength,
+    }
+  }
+
   const targetDir = path.join(process.cwd(), 'data', 'uploads', 'crypto-assets')
 
   await mkdir(targetDir, { recursive: true })
