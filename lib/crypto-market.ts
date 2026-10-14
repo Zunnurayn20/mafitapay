@@ -10,6 +10,7 @@ export const DEFAULT_CRYPTO_MARKET_SOURCE_IDS: Record<KnownCryptoSymbol, string>
   TON: 'the-open-network',
   SUI: 'sui',
   NEAR: 'near',
+  CNGN: 'compliant-naira',
 }
 
 /** Default ₦ profit added (buy) or removed (sell) per $1 of asset value when unset. */

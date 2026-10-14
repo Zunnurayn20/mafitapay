@@ -23,6 +23,7 @@ import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
 import { Account, FailoverRpcProvider, JsonRpcProvider, KeyPair } from 'near-api-js'
 import { NEAR } from 'near-api-js/tokens'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig, logBaseAttribution } from '@/lib/server/base-executor'
+import { CNGN_BASE_TOKEN_ADDRESS } from '@/lib/routed-assets'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { getRobinhoodRpcUrls, robinhoodChain } from '@/lib/server/robinhood-chain'
 import { getLifiQuoteForConversion } from './lifi'
@@ -477,6 +478,17 @@ function getSweepAsset(pairId: CryptoOrder['pairId']): SweepAsset | null {
       pairId,
       kind: 'erc20',
       tokenAddress: baseConfig.usdcAddress,
+      gasBufferWei: BASE_GAS_BUFFER_WEI,
+      tokenGasTopupWei: BASE_TOKEN_GAS_TOPUP_WEI,
+    }
+  }
+
+  if (pairId === 'CNGN_BASE') {
+    return {
+      chain: 'base',
+      pairId,
+      kind: 'erc20',
+      tokenAddress: CNGN_BASE_TOKEN_ADDRESS as Address,
       gasBufferWei: BASE_GAS_BUFFER_WEI,
       tokenGasTopupWei: BASE_TOKEN_GAS_TOPUP_WEI,
     }

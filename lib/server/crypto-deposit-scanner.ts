@@ -11,6 +11,7 @@ import {
 import { base, bsc, polygon } from 'viem/chains'
 import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
+import { CNGN_BASE_TOKEN_ADDRESS } from '@/lib/routed-assets'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { sanitizeEvmRpcUrls } from '@/lib/server/evm-rpc'
 import { getRobinhoodRpcUrls, robinhoodChain } from '@/lib/server/robinhood-chain'
@@ -455,6 +456,15 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       tokenAddress: baseConfig.usdcAddress,
     },
     {
+      chain: 'base',
+      pairId: 'CNGN_BASE',
+      network: 'Base',
+      symbol: 'CNGN',
+      decimals: 6,
+      kind: 'erc20',
+      tokenAddress: CNGN_BASE_TOKEN_ADDRESS,
+    },
+    {
       chain: 'bsc',
       pairId: 'BNB_BSC',
       network: 'BSC',
@@ -843,6 +853,11 @@ export async function settleDirectCryptoDeposit(input: {
 
   if (!Number.isFinite(sellRate) || sellRate <= 0) {
     console.error(`[crypto-deposit-scanner] No usable sell rate for direct NGN credit of ${input.asset.pairId}. For CEX deposits, use a valid full pairId with configured sellRate (e.g. USDT_BSC) or the base symbol (fallback will attempt to resolve). Event left unmatched.`)
+    return input.event
+  }
+
+  if (!assetForRate || assetForRate.isActive === false || assetForRate.sellEnabled === false) {
+    console.log(`[crypto-deposit-scanner] leaving ${input.asset.pairId} deposit unmatched because customer sell/deposit credit is disabled`)
     return input.event
   }
 

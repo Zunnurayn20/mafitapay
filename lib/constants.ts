@@ -19,6 +19,31 @@ function seedCrypto(input: Omit<CryptoAsset, 'buyRate' | 'sellRate' | 'buyMargin
 }
 
 export const CRYPTO_ASSETS: CryptoAsset[] = [
+  // Seeded for operator setup. Keep it hidden and both customer actions disabled until live routing is validated.
+  seedCrypto({
+    id: 'CNGN_BASE',
+    name: 'Compliant Naira',
+    symbol: 'CNGN',
+    network: 'Base',
+    icon: 'CNGN',
+    marketSourceId: 'compliant-naira',
+    marketPriceUsd: 0,
+    marketRate: 0,
+    buyNetworkFeeNgn: 60,
+    quoteTtlSeconds: 90,
+    isActive: false,
+    buyEnabled: false,
+    sellEnabled: false,
+    baseExecutionEnabled: false,
+    executionRail: 'routed_treasury',
+    routedToChain: '8453',
+    routedToToken: '0x46C85152bFe9f96829aA94755D9f915F9B10EF5F',
+    routedDecimals: 6,
+    routedAddressFamily: 'evm',
+    minimumBuyNgn: 500,
+    maxQuoteDriftPercent: 1,
+    change24h: 0,
+  }),
   // Margin default ₦50 per $1 (e.g. mid FX 1500 → buy at 1550 per dollar of crypto).
   // Network fees recover gas separately (stables cheap, Ethereum high, sell ≥ buy).
   seedCrypto({ id: 'USDT_BSC', name: 'Tether USD', symbol: 'USDT', network: 'BSC', icon: '/crypto-assets/usdt.png', marketSourceId: 'tether', marketPriceUsd: 1, marketRate: 1600, buyNetworkFeeNgn: 50, sellNetworkFeeNgn: 90, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.3 }),

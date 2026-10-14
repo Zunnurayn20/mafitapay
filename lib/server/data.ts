@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { access, mkdir, readFile } from 'node:fs/promises'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'node:crypto'
 import path from 'node:path'
+import type { PoolClient } from 'pg'
 import {
   BILL_PROVIDERS,
   CRYPTO_ASSETS,
@@ -2797,9 +2798,9 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
   const upsertAsset = db.prepare(`
     INSERT INTO crypto_pairs (
       id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds,
-      is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+      is_active, buy_enabled, sell_enabled, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       symbol = excluded.symbol,
       name = excluded.name,
@@ -2862,6 +2863,8 @@ function backfillCryptoCatalogExpansions(db: DatabaseSync) {
       asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
       asset.quoteTtlSeconds,
       asset.isActive === false ? 0 : 1,
+      (asset.buyEnabled ?? asset.isActive !== false) ? 1 : 0,
+      (asset.sellEnabled ?? asset.isActive !== false) ? 1 : 0,
       asset.baseExecutionEnabled === true ? 1 : 0,
       executionRail ?? null,
       routedConfig?.toChain ?? null,
@@ -3055,8 +3058,8 @@ function seedCatalogTables(db: DatabaseSync) {
   if (!hasCatalogRows(db, 'crypto_pairs')) {
     const insertAsset = db.prepare(`
       INSERT INTO crypto_pairs (
-        id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd, market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps, buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn, quote_ttl_seconds, is_active, buy_enabled, sell_enabled, base_execution_enabled, execution_rail, routed_to_chain, routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn, max_quote_drift_percent, change_24h, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (const asset of CRYPTO_ASSETS) {
@@ -3087,6 +3090,8 @@ function seedCatalogTables(db: DatabaseSync) {
         asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
         asset.quoteTtlSeconds,
         asset.isActive === false ? 0 : 1,
+        (asset.buyEnabled ?? asset.isActive !== false) ? 1 : 0,
+        (asset.sellEnabled ?? asset.isActive !== false) ? 1 : 0,
         asset.baseExecutionEnabled === true ? 1 : 0,
         executionRail ?? null,
         routedConfig?.toChain ?? null,
@@ -3143,6 +3148,43 @@ function seedCatalogTables(db: DatabaseSync) {
   }
 }
 
+async function insertSeedCryptoAssetPostgres(client: PoolClient, asset: CryptoAsset, now: string) {
+  const executionRail = getConfigurableAssetExecutionRail(asset)
+  const routedConfig = isRoutedTreasuryPairId(asset.id)
+    ? getRoutedTreasuryPairConfigForAsset({ ...asset, executionRail })
+    : null
+  const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+  const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
+  const marketPriceUsd = asset.marketPriceUsd ?? 0
+
+  await queryPostgresClient(client, `
+    INSERT INTO crypto_pairs (
+      id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd,
+      market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps,
+      buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn,
+      quote_ttl_seconds, is_active, buy_enabled, sell_enabled, base_execution_enabled, execution_rail, routed_to_chain,
+      routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn,
+      max_quote_drift_percent, change_24h, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'seed', ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO NOTHING
+  `, [
+    asset.id, asset.symbol, asset.name, asset.network, asset.icon, asset.marketSourceId,
+    asset.marketPriceUsd ?? null, asset.marketRate,
+    computeBuyRate(marketPriceUsd, asset.marketRate, buyMargin),
+    computeSellRate(marketPriceUsd, asset.marketRate, sellMargin), buyMargin, sellMargin,
+    asset.buyNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id),
+    asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
+    asset.quoteTtlSeconds, asset.isActive !== false,
+    asset.buyEnabled ?? asset.isActive !== false,
+    asset.sellEnabled ?? asset.isActive !== false,
+    asset.baseExecutionEnabled === true, executionRail ?? null,
+    routedConfig?.toChain ?? null, routedConfig?.toToken ?? null,
+    routedConfig?.decimals ?? null, routedConfig?.addressFamily ?? null,
+    routedConfig?.minimumBuyNgn ?? null, routedConfig?.maxQuoteDriftPercent ?? null,
+    asset.change24h, now, now,
+  ])
+}
+
 async function seedPostgresCatalogTables() {
   const now = new Date().toISOString()
 
@@ -3150,39 +3192,13 @@ async function seedPostgresCatalogTables() {
     const cryptoCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM crypto_pairs')
     if (Number(cryptoCount.rows[0]?.count ?? 0) === 0) {
       for (const asset of CRYPTO_ASSETS) {
-        const executionRail = getConfigurableAssetExecutionRail(asset)
-        const routedConfig = isRoutedTreasuryPairId(asset.id) ? getRoutedTreasuryPairConfigForAsset({
-          ...asset,
-          executionRail,
-        }) : null
-        const buyMargin = asset.buyMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
-        const sellMargin = asset.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN
-        const marketPriceUsd = asset.marketPriceUsd ?? 0
-        await queryPostgresClient(client, `
-          INSERT INTO crypto_pairs (
-            id, symbol, name, network, icon, market_source_id, market_price_source, market_price_usd,
-            market_price_updated_at, market_rate, buy_rate, sell_rate, buy_spread_bps, sell_spread_bps,
-            buy_margin_ngn_per_usd, sell_margin_ngn_per_usd, buy_network_fee_ngn, sell_network_fee_ngn,
-            quote_ttl_seconds, is_active, base_execution_enabled, execution_rail, routed_to_chain,
-            routed_to_token, routed_decimals, routed_address_family, minimum_buy_ngn,
-            max_quote_drift_percent, change_24h, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'seed', ?, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO NOTHING
-        `, [
-          asset.id, asset.symbol, asset.name, asset.network, asset.icon, asset.marketSourceId,
-          asset.marketPriceUsd ?? null, asset.marketRate,
-          computeBuyRate(marketPriceUsd, asset.marketRate, buyMargin),
-          computeSellRate(marketPriceUsd, asset.marketRate, sellMargin), buyMargin, sellMargin,
-          asset.buyNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id),
-          asset.sellNetworkFeeNgn ?? getDefaultNetworkFeeNgn(asset.network, 'sell', asset.id),
-          asset.quoteTtlSeconds, asset.isActive !== false ? 1 : 0, asset.baseExecutionEnabled === true,
-          executionRail ?? null, routedConfig?.toChain ?? null, routedConfig?.toToken ?? null,
-          routedConfig?.decimals ?? null, routedConfig?.addressFamily ?? null,
-          routedConfig?.minimumBuyNgn ?? null, routedConfig?.maxQuoteDriftPercent ?? null,
-          asset.change24h, now, now,
-        ])
+        await insertSeedCryptoAssetPostgres(client, asset, now)
       }
     }
+
+    // Add new default pairs to existing databases without resetting admin-managed settings on conflict.
+    const cngnAsset = CRYPTO_ASSETS.find(asset => asset.id === 'CNGN_BASE')
+    if (cngnAsset) await insertSeedCryptoAssetPostgres(client, cngnAsset, now)
 
     const billProviderCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM bill_providers')
     if (Number(billProviderCount.rows[0]?.count ?? 0) === 0) {

@@ -2,7 +2,7 @@ import type { CryptoAsset, CryptoNetwork, CryptoPairId, CryptoSymbol, KnownCrypt
 
 export type RoutedTreasuryPairId = Extract<
   KnownCryptoPairId,
-  'USDT_BSC' | 'BNB_BSC' | 'ETH_ARB' | 'ETH_OP' | 'POL_POLYGON' | 'ETH_LINEA' | 'ETH_ROBINHOOD' | 'USDC_SOLANA' | 'SOL_SOLANA'
+  'CNGN_BASE' | 'USDT_BSC' | 'BNB_BSC' | 'ETH_ARB' | 'ETH_OP' | 'POL_POLYGON' | 'ETH_LINEA' | 'ETH_ROBINHOOD' | 'USDC_SOLANA' | 'SOL_SOLANA'
 >
 
 export type RoutedTreasuryAddressFamily = 'evm' | 'solana'
@@ -26,8 +26,20 @@ export type RoutedTreasuryResolvedConfig = Omit<RoutedTreasuryPairConfig, 'pairI
 const EVM_NATIVE_SENTINEL = '0x0000000000000000000000000000000000000000'
 const SOL_NATIVE_SENTINEL = '11111111111111111111111111111111'
 const SOL_USDC_ADDRESS = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+export const CNGN_BASE_TOKEN_ADDRESS = '0x46C85152bFe9f96829aA94755D9f915F9B10EF5F' as const
 
 export const ROUTED_TREASURY_PAIR_CONFIG: Record<RoutedTreasuryPairId, RoutedTreasuryPairConfig> = {
+  CNGN_BASE: {
+    pairId: 'CNGN_BASE',
+    symbol: 'CNGN',
+    network: 'Base',
+    toChain: '8453',
+    toToken: CNGN_BASE_TOKEN_ADDRESS,
+    decimals: 6,
+    addressFamily: 'evm',
+    minimumBuyNgn: 500,
+    maxQuoteDriftPercent: 1,
+  },
   USDT_BSC: {
     pairId: 'USDT_BSC',
     symbol: 'USDT',
