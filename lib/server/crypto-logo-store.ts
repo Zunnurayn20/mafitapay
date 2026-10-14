@@ -25,10 +25,11 @@ function getSupabaseStorageConfig() {
 }
 
 function storageHeaders(secretKey: string) {
-  return {
-    apikey: secretKey,
-    Authorization: `Bearer ${secretKey}`,
-  }
+  const headers: Record<string, string> = { apikey: secretKey }
+  // Current sb_secret_* keys are opaque API keys, not JWTs. Supabase translates them using the
+  // apikey header; sending one as a Bearer token makes Storage reject it as an invalid JWT.
+  if (!secretKey.startsWith('sb_')) headers.Authorization = `Bearer ${secretKey}`
+  return headers
 }
 
 async function ensureSupabaseCryptoLogoBucket(projectUrl: string, secretKey: string) {
