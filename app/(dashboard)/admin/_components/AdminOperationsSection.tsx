@@ -7,6 +7,37 @@ import { Modal } from '@/components/ui/Modal'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
 
+const cryptoAmountFormatter = new Intl.NumberFormat('en-NG', { maximumFractionDigits: 8 })
+const dateTimeFormatter = new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short' })
+
+function formatCryptoAmount(value: unknown) {
+  const amount = Number(value)
+  return Number.isFinite(amount) ? cryptoAmountFormatter.format(amount) : '—'
+}
+
+function formatDateTime(value: unknown) {
+  const date = value ? new Date(String(value)) : null
+  return date && Number.isFinite(date.getTime()) ? dateTimeFormatter.format(date) : '—'
+}
+
+function shortReference(value: unknown, start = 10, end = 6) {
+  const text = String(value ?? '')
+  return text.length > start + end + 3 ? `${text.slice(0, start)}…${text.slice(-end)}` : text || '—'
+}
+
+function statusTone(value: unknown) {
+  const status = String(value ?? '').toLowerCase()
+  if (['matched', 'swept', 'fulfilled', 'completed', 'success'].includes(status)) return 'text-[var(--green2)]'
+  if (['failed', 'error'].includes(status)) return 'text-[var(--red2)]'
+  if (['unmatched', 'pending', 'sweeping', 'expired'].includes(status)) return 'text-[var(--gold2)]'
+  return 'text-[var(--muted)]'
+}
+
+function StatusBadge({ value, fallback = 'Unknown' }: { value?: unknown; fallback?: string }) {
+  const label = String(value || fallback).replaceAll('_', ' ')
+  return <span className={`inline-flex rounded-full border border-[var(--border)] bg-[var(--clay2)] px-2 py-0.5 text-[10px] font-semibold capitalize ${statusTone(value)}`}>{label}</span>
+}
+
 function PendingCexIntentsList({ reloadKey }: { reloadKey?: number }) {
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -262,9 +293,9 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const RichCryptoDepositsView = showCryptoDeposits ? (
     <div className="space-y-4">
       {/* Header + Stats */}
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Crypto Deposit Events</div>
+          <div className="text-base font-bold text-[var(--text)]">Crypto deposits</div>
           <div className="text-[10px] text-[var(--text2)]">On-chain detections from user deposit addresses • auto NGN credit at live sell rate • auto-sweep to treasury</div>
         </div>
         <div className="flex gap-2">
@@ -328,7 +359,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
       </Modal>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
         {[
           { label: 'Loaded Events', value: depositStats.total },
           { label: 'Matched Orders', value: depositStats.matched },
@@ -336,9 +367,9 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           { label: 'Swept to Treasury', value: depositStats.swept },
           { label: 'Pending / Failed Sweep', value: depositStats.pendingSweep },
         ].map((s, i) => (
-          <div key={i} className="border border-[var(--border)] bg-[var(--clay)] p-2">
-            <div className="text-[8px] uppercase tracking-[1px] text-[var(--muted)]">{s.label}</div>
-            <div className="text-[18px] font-bold tabular-nums">{s.value}</div>
+          <div key={i} className="border border-[var(--border)] bg-[var(--clay)] p-3">
+            <div className="text-[10px] font-medium text-[var(--muted)]">{s.label}</div>
+            <div className="mt-1 text-2xl font-bold tabular-nums text-[var(--text)]">{s.value.toLocaleString('en-NG')}</div>
           </div>
         ))}
       </div>
@@ -513,71 +544,62 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
         </div>
       </div>
 
-      {/* Events Table */}
-      <div className="border border-[var(--border)] bg-[var(--clay)] overflow-hidden">
-        <div className="max-h-[520px] overflow-auto">
-          <table className="w-full text-[9px]">
-            <thead className="sticky top-0 bg-[var(--clay2)] text-[var(--muted)]">
+      {/* Deposit events */}
+      <div className="overflow-hidden border border-[var(--border)] bg-[var(--clay)]">
+        <div className="max-h-[620px] overflow-auto">
+          <table className="w-full min-w-[900px] text-xs">
+            <thead className="sticky top-0 z-10 bg-[var(--clay2)] text-[var(--muted)]">
               <tr>
-                <th className="text-left p-2">External / Tx</th>
-                <th className="text-left p-2">Asset</th>
-                <th className="text-right p-2">Amount</th>
-                <th className="text-left p-2">User</th>
-                <th className="text-left p-2">Status</th>
-                <th className="text-left p-2">Source</th>
-                <th className="text-left p-2">Memo / CEX</th>
-                <th className="text-left p-2">Sweep</th>
-                <th className="text-left p-2">Sweep Tx / Error</th>
-                <th className="text-left p-2">Time</th>
-                <th className="p-2 w-20"></th>
+                <th className="p-3 text-left font-semibold">Date</th>
+                <th className="p-3 text-left font-semibold">Asset</th>
+                <th className="p-3 text-right font-semibold">Received</th>
+                <th className="p-3 text-left font-semibold">Customer</th>
+                <th className="p-3 text-left font-semibold">Deposit</th>
+                <th className="p-3 text-left font-semibold">Treasury sweep</th>
+                <th className="p-3 text-left font-semibold">Reference</th>
+                <th className="p-3 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {paginatedDepositEvents.length === 0 && (
-                <tr><td colSpan={11} className="p-3 text-center text-[var(--muted)]">No events match the current filters.</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center text-sm text-[var(--muted)]">No deposits match these filters.</td></tr>
               )}
               {paginatedDepositEvents.map((ev: any) => {
                 const ext = ev.externalEventId || ev.external_event_id
-                const sw = ev.sweepStatus || ev.sweep_status
+                const txHash = ev.txHash || ev.tx_hash
+                const sweepTxHash = ev.sweepTxHash || ev.sweep_tx_hash
+                const sweepError = ev.sweepError || ev.sweep_error
+                const sw = ev.sweepStatus || ev.sweep_status || 'pending'
                 const isSwept = sw === 'swept'
-                const isFailing = sw === 'failed'
+                const status = ev.status || ev.Status
+                const source = ev.source || 'onchain'
+                const userId = ev.userId || ev.user_id
+                const symbol = ev.assetSymbol || ev.asset_symbol || ''
                 return (
-                  <tr key={ev.id || ext} className="border-t border-[var(--border)] hover:bg-[var(--clay2)]">
-                    <td className="p-2 font-mono text-[8px] max-w-[140px] truncate cursor-pointer" onClick={() => setSelectedDepositEventId(ext)} title={ext}>{ext}</td>
-                    <td className="p-2">{ev.pairId || ev.pair_id} <span className="text-[var(--muted)]">· {ev.assetSymbol || ev.asset_symbol}</span></td>
-                    <td className="p-2 text-right tabular-nums">{Number(ev.amountCrypto || ev.amount_crypto || 0).toFixed(6)}</td>
-                    <td className="p-2 font-mono text-[8px]">{String(ev.userId || ev.user_id || '').slice(0, 10)}</td>
-                    <td className="p-2">
-                      <span className={`px-1 py-px ${ev.status === 'matched' ? 'text-[var(--green2)]' : ev.status === 'unmatched' ? 'text-[var(--gold2)]' : ''}`}>
-                        {(ev.status || ev.Status || '').toUpperCase()}
-                      </span>
+                  <tr key={ev.id || ext} className="border-t border-[var(--border)] align-top hover:bg-[var(--clay2)]">
+                    <td className="whitespace-nowrap p-3 text-[11px] text-[var(--muted)]">{formatDateTime(ev.createdAt || ev.created_at)}</td>
+                    <td className="p-3">
+                      <div className="font-semibold text-[var(--text)]">{symbol || ev.pairId || ev.pair_id || 'Crypto'}</div>
+                      <div className="mt-0.5 text-[10px] capitalize text-[var(--muted)]">{ev.network || ev.pairId || ev.pair_id || 'Network unavailable'}{source !== 'onchain' ? ` · ${String(source).replaceAll('_', ' ')}` : ''}</div>
                     </td>
-                    <td className="p-2 text-[8px]">{(ev.source || 'onchain').toUpperCase()}</td>
-                    <td className="p-2 font-mono text-[8px] max-w-[120px] truncate" title={ev.memo || ev.cexUid || ''}>
-                      {ev.memo || (ev.cexUid ? `UID:${String(ev.cexUid).slice(0,8)}` : '—')}
+                    <td className="whitespace-nowrap p-3 text-right font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(ev.amountCrypto ?? ev.amount_crypto)} <span className="text-[var(--muted)]">{symbol}</span></td>
+                    <td className="p-3">
+                      <div className="font-mono text-[11px] text-[var(--text)]" title={userId}>{shortReference(userId, 8, 5)}</div>
+                      {(ev.memo || ev.cexExchange) && <div className="mt-0.5 max-w-[150px] truncate text-[10px] text-[var(--muted)]" title={ev.memo}>{ev.cexExchange ? `${ev.cexExchange} · ` : ''}{ev.memo || 'CEX deposit'}</div>}
                     </td>
-                    <td className="p-2">
-                      <span className={`px-1 py-px ${isSwept ? 'text-[var(--green2)]' : isFailing ? 'text-[var(--red2)]' : 'text-[var(--muted)]'}`}>
-                        {(sw || 'pending').toUpperCase()}
-                      </span>
+                    <td className="p-3"><StatusBadge value={status} /></td>
+                    <td className="p-3">
+                      <StatusBadge value={sw} />
+                      {(sweepError || sweepTxHash) && <div className={`mt-1 max-w-[180px] truncate text-[10px] ${sweepError ? 'text-[var(--red2)]' : 'font-mono text-[var(--muted)]'}`} title={sweepError || sweepTxHash}>{sweepError || shortReference(sweepTxHash, 9, 5)}</div>}
                     </td>
-                    <td className="p-2 font-mono text-[8px] max-w-[160px] truncate" title={ev.sweepError || ev.sweep_error || ev.sweepTxHash || ev.sweep_tx_hash}>
-                      {ev.sweepTxHash || ev.sweep_tx_hash || (ev.sweepError || ev.sweep_error ? 'ERR' : '—')}
+                    <td className="p-3">
+                      <button type="button" className="font-mono text-[11px] text-[var(--gold2)] hover:underline" onClick={() => setSelectedDepositEventId(ext)} title={txHash || ext}>{shortReference(txHash || ext)}</button>
+                      <div className="mt-0.5 text-[10px] text-[var(--muted)]">{txHash ? 'Transaction hash' : 'Event reference'}</div>
                     </td>
-                    <td className="p-2 text-[var(--muted)]">{new Date(ev.createdAt || ev.created_at).toLocaleDateString('en-NG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-                    <td className="p-2">
-                      <div className="flex gap-1 justify-end">
-                        <Button variant="secondary" className="text-[8px] px-1 py-0" onClick={() => setSelectedDepositEventId(ext)}>Details</Button>
-                        {!isSwept && (
-                          <Button
-                            variant="secondary"
-                            className="text-[8px] px-1 py-0"
-                            disabled={resweepingEventId === ext}
-                            onClick={() => handleResweep(ext)}
-                          >
-                            {resweepingEventId === ext ? '...' : 'Re-sweep'}
-                          </Button>
-                        )}
+                    <td className="whitespace-nowrap p-3">
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => setSelectedDepositEventId(ext)}>Details</Button>
+                        {!isSwept && <Button size="sm" variant="secondary" disabled={resweepingEventId === ext} onClick={() => handleResweep(ext)}>{resweepingEventId === ext ? 'Working…' : 'Re-sweep'}</Button>}
                       </div>
                     </td>
                   </tr>
@@ -586,17 +608,14 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             </tbody>
           </table>
         </div>
-
-        {/* Pagination for option 3 deeper polish */}
-        <div className="flex items-center justify-between mt-2 text-[9px]">
-          <div>Page {depositPage + 1} / {totalDepositPages} ({displayedDepositEvents.length} loaded)</div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--muted)]">
+          <div>Showing {displayedDepositEvents.length === 0 ? 0 : depositPage * DEPOSIT_PAGE_SIZE + 1}–{Math.min((depositPage + 1) * DEPOSIT_PAGE_SIZE, displayedDepositEvents.length)} of {displayedDepositEvents.length} loaded</div>
           <div className="flex gap-1">
-            <Button variant="secondary" className="text-[9px] py-0.5 px-2" disabled={depositPage === 0} onClick={() => setDepositPage(p => Math.max(0, p-1))}>Prev</Button>
-            <Button variant="secondary" className="text-[9px] py-0.5 px-2" disabled={depositPage >= totalDepositPages - 1} onClick={() => setDepositPage(p => Math.min(totalDepositPages - 1, p+1))}>Next</Button>
+            <Button size="sm" variant="secondary" disabled={depositPage === 0} onClick={() => setDepositPage(p => Math.max(0, p - 1))}>Previous</Button>
+            <Button size="sm" variant="secondary" disabled={depositPage >= totalDepositPages - 1} onClick={() => setDepositPage(p => Math.min(totalDepositPages - 1, p + 1))}>Next</Button>
           </div>
         </div>
       </div>
-
       {refreshingCryptoDepositEvents && (
         <div className="text-[10px] text-[var(--muted)]">Loading crypto deposit transactions...</div>
       )}
@@ -690,30 +709,36 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               key={item.id}
               type="button"
               onClick={() => setSelectedCryptoOrderId(item.id)}
-              className="grid gap-4 border border-[var(--border)] bg-[var(--clay)] p-4 text-left transition-all hover:border-[var(--border2)] lg:grid-cols-[minmax(0,1fr)_auto]"
+              className="grid gap-4 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-4 text-left transition-colors hover:border-[var(--border2)] sm:grid-cols-[minmax(0,1fr)_auto]"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-[12px] font-bold text-[var(--text)]">{item.pairId}</div>
-                  <div className="mt-1 text-[10px] text-[var(--muted)]">
-                    {item.side.toUpperCase()} · {item.status.toUpperCase()} · ₦{item.amountNgn.toLocaleString('en-NG')}
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold text-[var(--text)]">{item.pairId}</span>
+                  <StatusBadge value={item.status} />
+                  <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] capitalize text-[var(--muted)]">{item.side}</span>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <div className="text-[10px] text-[var(--muted)]">NGN amount</div>
+                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">₦{Number(item.amountNgn || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div>
                   </div>
-                  <div className="mt-1 text-[10px] text-[var(--muted)]">
-                    Crypto: {item.cryptoAmount.toFixed(8)} · Rate: ₦{item.unitRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}
+                  <div>
+                    <div className="text-[10px] text-[var(--muted)]">Crypto amount</div>
+                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(item.cryptoAmount)} <span className="text-[var(--muted)]">{String(item.pairId || '').split('_')[0]}</span></div>
                   </div>
-                  <div className="mt-1 text-[10px] text-[var(--muted)]">
-                    Destination: {item.destinationLabel || item.destinationType}
+                  <div>
+                    <div className="text-[10px] text-[var(--muted)]">Created</div>
+                    <div className="mt-0.5 text-xs text-[var(--text2)]">{formatDateTime(item.createdAt)}</div>
                   </div>
-                  {item.provider && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider: {item.provider}</div>}
-                  {item.executionRail && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution rail: {item.executionRail}</div>}
-                  {item.executionStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution status: {item.executionStatus}</div>}
-                  {item.executionReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution ref: {item.executionReference}</div>}
-                  {item.destinationTxHash && <div className="mt-1 text-[10px] text-[var(--muted)]">Destination tx: {item.destinationTxHash}</div>}
-                  {item.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {item.providerStatus}</div>}
-                  {item.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {item.providerReference}</div>}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-[var(--muted)]">
+                  <span>Order <span className="font-mono text-[var(--text2)]">{shortReference(item.id, 8, 5)}</span></span>
+                  {item.executionStatus && <span className="flex items-center gap-1">Delivery <StatusBadge value={item.executionStatus} /></span>}
+                  {item.provider && <span>Provider {item.provider}</span>}
+                  {item.destinationTxHash && <span className="font-mono" title={item.destinationTxHash}>Tx {shortReference(item.destinationTxHash, 9, 5)}</span>}
                 </div>
               </div>
-              <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)] lg:self-center">Open Order Actions</div>
+              <div className="self-center text-xs font-semibold text-[var(--gold2)]">Open order details →</div>
             </button>
           ))}
         </div>
@@ -726,23 +751,37 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           className="max-w-4xl"
         >
           {selectedCryptoOrder && (
-            <div className="border border-[var(--gold)] bg-[var(--clay)] p-4">
-              <div className="flex items-start justify-between gap-4">
+            <div className="space-y-4 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <div className="text-[12px] font-bold text-[var(--text)]">{selectedCryptoOrder.pairId}</div>
-                  <div className="mt-1 text-[10px] text-[var(--muted)]">
-                    {selectedCryptoOrder.side.toUpperCase()} · {selectedCryptoOrder.status.toUpperCase()} · ₦{selectedCryptoOrder.amountNgn.toLocaleString('en-NG')}
-                  </div>
-                  <div className="mt-1 text-[10px] text-[var(--muted)]">Crypto: {selectedCryptoOrder.cryptoAmount.toFixed(8)} · Rate: ₦{selectedCryptoOrder.unitRate.toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div>
-                  <div className="mt-1 text-[10px] text-[var(--muted)]">Destination: {selectedCryptoOrder.destinationLabel || selectedCryptoOrder.destinationType}</div>
-                  {selectedCryptoOrder.provider && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider: {selectedCryptoOrder.provider}</div>}
-                  {selectedCryptoOrder.executionRail && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution rail: {selectedCryptoOrder.executionRail}</div>}
-                  {selectedCryptoOrder.executionStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution status: {selectedCryptoOrder.executionStatus}</div>}
-                  {selectedCryptoOrder.executionReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Execution ref: {selectedCryptoOrder.executionReference}</div>}
-                  {selectedCryptoOrder.destinationTxHash && <div className="mt-1 text-[10px] text-[var(--muted)]">Destination tx: {selectedCryptoOrder.destinationTxHash}</div>}
-                  {selectedCryptoOrder.providerStatus && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider status: {selectedCryptoOrder.providerStatus}</div>}
-                  {selectedCryptoOrder.providerReference && <div className="mt-1 text-[10px] text-[var(--muted)]">Provider ref: {selectedCryptoOrder.providerReference}</div>}
+                  <div className="text-xs text-[var(--muted)]">{selectedCryptoOrder.side === 'buy' ? 'Crypto purchase' : 'Crypto sale'}</div>
+                  <div className="mt-1 text-lg font-bold text-[var(--text)]">{selectedCryptoOrder.pairId}</div>
                 </div>
+                <div className="flex flex-wrap gap-2"><StatusBadge value={selectedCryptoOrder.status} /><StatusBadge value={selectedCryptoOrder.executionStatus || 'not routed'} /></div>
+              </div>
+              <div className="grid gap-3 rounded-md border border-[var(--border)] bg-[var(--clay2)] p-3 sm:grid-cols-3">
+                <div><div className="text-[10px] text-[var(--muted)]">NGN amount</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">₦{Number(selectedCryptoOrder.amountNgn || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div></div>
+                <div><div className="text-[10px] text-[var(--muted)]">Crypto amount</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(selectedCryptoOrder.cryptoAmount)} {String(selectedCryptoOrder.pairId || '').split('_')[0]}</div></div>
+                <div><div className="text-[10px] text-[var(--muted)]">Rate</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">₦{Number(selectedCryptoOrder.unitRate || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div></div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  ['Order ID', selectedCryptoOrder.id],
+                  ['Created', formatDateTime(selectedCryptoOrder.createdAt)],
+                  ['Destination', selectedCryptoOrder.destinationLabel || selectedCryptoOrder.destinationType],
+                  ['Wallet address', selectedCryptoOrder.walletAddress],
+                  ['Provider', selectedCryptoOrder.provider],
+                  ['Execution rail', selectedCryptoOrder.executionRail],
+                  ['Provider reference', selectedCryptoOrder.providerReference],
+                  ['Execution reference', selectedCryptoOrder.executionReference],
+                  ['Provider status', selectedCryptoOrder.providerStatus],
+                  ['Destination transaction', selectedCryptoOrder.destinationTxHash],
+                ].filter(([, value]) => value !== undefined && value !== null && value !== '').map(([label, value]) => (
+                  <div key={String(label)} className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--clay2)] p-3">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{label}</div>
+                    <div className="mt-1 break-all font-mono text-xs text-[var(--text)]">{String(value)}</div>
+                  </div>
+                ))}
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {(selectedCryptoOrder.executionRail === 'base_legacy' || selectedCryptoOrder.executionRail === 'base_treasury') && selectedCryptoOrder.pairId === 'ETH_BASE' && selectedCryptoOrder.executionStatus !== 'broadcasted' && (
@@ -1433,38 +1472,59 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
         </div>
       </Modal>
 
-      {/* Rich Deposit Event Detail Modal - shown from the polished deposits table */}
-      <Modal open={!!selectedDepositEventId} onClose={() => setSelectedDepositEventId(null)} title="Crypto Deposit Event" size="lg">
-        <div className="p-4 text-[10px] space-y-3 max-h-[65vh] overflow-auto">
+      {/* Deposit event details */}
+      <Modal open={!!selectedDepositEventId} onClose={() => setSelectedDepositEventId(null)} title="Crypto deposit details" size="lg">
+        <div className="max-h-[75vh] space-y-4 overflow-auto p-5">
           {!selectedDepositEvent ? (
-            <div className="text-[var(--muted)]">Event details not available.</div>
-          ) : (
-            <>
-              <div className="font-mono break-all bg-[var(--clay2)] p-2 text-[9px]">{selectedDepositEvent.externalEventId || selectedDepositEvent.external_event_id}</div>
-              <div><span className="text-[var(--muted)]">Pair / Asset:</span> {selectedDepositEvent.pairId || selectedDepositEvent.pair_id} · {selectedDepositEvent.assetSymbol || selectedDepositEvent.asset_symbol} on {selectedDepositEvent.network}</div>
-              <div><span className="text-[var(--muted)]">Amount:</span> {Number(selectedDepositEvent.amountCrypto || selectedDepositEvent.amount_crypto || 0).toFixed(8)}</div>
-              <div><span className="text-[var(--muted)]">User:</span> <span className="font-mono">{selectedDepositEvent.userId || selectedDepositEvent.user_id}</span></div>
-              <div><span className="text-[var(--muted)]">Status:</span> {selectedDepositEvent.status || selectedDepositEvent.Status} &nbsp; <span className="text-[var(--muted)]">Sweep:</span> {selectedDepositEvent.sweepStatus || selectedDepositEvent.sweep_status || 'pending'}</div>
-              <div className="font-mono text-[9px] break-all"><span className="text-[var(--muted)]">Deposit Tx:</span> {selectedDepositEvent.txHash || selectedDepositEvent.tx_hash}</div>
-              {(selectedDepositEvent.sweepTxHash || selectedDepositEvent.sweep_tx_hash) && <div className="font-mono text-[9px] break-all"><span className="text-[var(--muted)]">Sweep Tx:</span> {selectedDepositEvent.sweepTxHash || selectedDepositEvent.sweep_tx_hash}</div>}
-              {(selectedDepositEvent.sweepError || selectedDepositEvent.sweep_error) && <div className="text-[var(--red2)]">Sweep error: {selectedDepositEvent.sweepError || selectedDepositEvent.sweep_error}</div>}
-              <div className="text-[var(--muted)] text-[9px]">Created: {new Date(selectedDepositEvent.createdAt || selectedDepositEvent.created_at).toLocaleString('en-NG')}</div>
-              {selectedDepositEvent.payload && (
+            <div className="py-8 text-center text-sm text-[var(--muted)]">Deposit details are no longer in the loaded results.</div>
+          ) : (() => {
+            const event = selectedDepositEvent
+            const eventId = event.externalEventId || event.external_event_id
+            const userId = event.userId || event.user_id
+            const pairId = event.pairId || event.pair_id
+            const symbol = event.assetSymbol || event.asset_symbol || String(pairId || '').split('_')[0]
+            const txHash = event.txHash || event.tx_hash
+            const sweepTxHash = event.sweepTxHash || event.sweep_tx_hash
+            const sweepError = event.sweepError || event.sweep_error
+            const sweepStatus = event.sweepStatus || event.sweep_status || 'pending'
+            const depositStatus = event.status || event.Status
+            const createdAt = event.createdAt || event.created_at
+            return <>
+              <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-4">
                 <div>
-                  <div className="text-[var(--muted)] text-[9px] mb-1">Payload</div>
-                  <pre className="bg-[var(--clay2)] p-2 text-[8px] overflow-auto max-h-40">{JSON.stringify(selectedDepositEvent.payload, null, 2)}</pre>
+                  <div className="text-xs text-[var(--muted)]">{pairId || 'Crypto deposit'}{event.network ? ` · ${event.network}` : ''}</div>
+                  <div className="mt-1 text-2xl font-bold tabular-nums text-[var(--text)]">{formatCryptoAmount(event.amountCrypto ?? event.amount_crypto)} <span className="text-base text-[var(--muted)]">{symbol}</span></div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">Received {formatDateTime(createdAt)}</div>
                 </div>
-              )}
-              <div className="pt-2 flex gap-2">
-                {!((selectedDepositEvent.sweepStatus || selectedDepositEvent.sweep_status) === 'swept') && (
-                  <Button onClick={() => { handleResweep(selectedDepositEvent.externalEventId || selectedDepositEvent.external_event_id); setSelectedDepositEventId(null) }} disabled={!!resweepingEventId}>
-                    {resweepingEventId ? 'Re-sweeping…' : 'Re-sweep'}
-                  </Button>
-                )}
+                <div className="flex flex-wrap gap-2"><StatusBadge value={depositStatus} /><StatusBadge value={sweepStatus} /></div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  ['Customer', userId],
+                  ['Event reference', eventId],
+                  ['Source', event.source || 'onchain'],
+                  ['Exchange', event.cexExchange || event.cex_exchange],
+                  ['Memo', event.memo],
+                  ['Block', event.blockNumber || event.block_number],
+                  ['Log index', event.logIndex ?? event.log_index],
+                  ['Swept at', formatDateTime(event.sweptAt || event.swept_at)],
+                ].filter(([, value]) => value !== undefined && value !== null && value !== '').map(([label, value]) => (
+                  <div key={String(label)} className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--clay)] p-3">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{label}</div>
+                    <div className="mt-1 break-all text-xs text-[var(--text)]">{String(value)}</div>
+                  </div>
+                ))}
+              </div>
+              {txHash && <div className="rounded-md border border-[var(--border)] bg-[var(--clay)] p-3"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">Deposit transaction</div><div className="mt-1 break-all font-mono text-xs text-[var(--text)]">{txHash}</div></div>}
+              {sweepTxHash && <div className="rounded-md border border-[var(--border)] bg-[var(--clay)] p-3"><div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">Sweep transaction</div><div className="mt-1 break-all font-mono text-xs text-[var(--text)]">{sweepTxHash}</div></div>}
+              {sweepError && <div className="rounded-md border border-[var(--border)] bg-[var(--clay)] p-3 text-sm text-[var(--red2)]"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wide">Sweep error</div>{sweepError}</div>}
+              {event.payload && <details className="rounded-md border border-[var(--border)] bg-[var(--clay)] p-3"><summary className="cursor-pointer text-xs font-semibold text-[var(--muted)]">Raw provider payload</summary><pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-all text-[10px] text-[var(--text2)]">{JSON.stringify(event.payload, null, 2)}</pre></details>}
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-4">
+                {sweepStatus !== 'swept' && <Button onClick={() => { void handleResweep(eventId); setSelectedDepositEventId(null) }} disabled={!!resweepingEventId}>{resweepingEventId ? 'Re-sweeping…' : 'Re-sweep deposit'}</Button>}
                 <Button variant="secondary" onClick={() => setSelectedDepositEventId(null)}>Close</Button>
               </div>
             </>
-          )}
+          })()}
         </div>
       </Modal>
     </>
