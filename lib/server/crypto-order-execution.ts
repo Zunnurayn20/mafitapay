@@ -1,5 +1,5 @@
-import { insertAuditLog, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
-import { getRoutedTreasuryPairConfig, type RoutedTreasuryPairId } from '@/lib/routed-assets'
+import { getCryptoAssetById, insertAuditLog, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
+import { getRoutedTreasuryPairConfigForAsset } from '@/lib/routed-assets'
 import { broadcastBaseDeliveryForOrder, broadcastBaseTransaction, ensureBaseTokenAllowance, getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { kickBaseReceiptAutoSync, scheduleBaseReceiptAutoSync } from '@/lib/server/base-receipt-sync'
 import { broadcastBscDeliveryForOrder } from '@/lib/server/bsc-executor'
@@ -128,7 +128,11 @@ export async function triggerCryptoOrderExecution(input: {
         })
       }
     } else {
-      const routedConfig = getRoutedTreasuryPairConfig(order.pairId as RoutedTreasuryPairId)
+      const routedAsset = await getCryptoAssetById(order.pairId)
+      if (!routedAsset) {
+        throw new Error('Routed crypto asset config is unavailable.')
+      }
+      const routedConfig = getRoutedTreasuryPairConfigForAsset(routedAsset)
       pair = {
         ...routedConfig,
         toChain: typeof storedPayload.toChain === 'string' || typeof storedPayload.toChain === 'number' ? String(storedPayload.toChain) : routedConfig.toChain,
