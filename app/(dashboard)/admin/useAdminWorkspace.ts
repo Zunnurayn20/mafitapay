@@ -530,7 +530,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
           fetchAdminJsonCached<Array<{ userId: string; transaction: Transaction }>>('/api/admin/transactions?limit=30'),
           fetchAdminJsonCached<DepositIntent[]>('/api/admin/deposit-intents?limit=20'),
           fetchAdminJsonCached<PayoutRequest[]>('/api/admin/payout-requests?limit=20'),
-          fetchAdminJsonCached<CryptoOrder[]>('/api/admin/crypto-orders?status=pending&limit=20'),
+          fetchAdminJsonCached<CryptoOrder[]>('/api/admin/crypto-orders?limit=100'),
         ])
 
         if (!active) return
@@ -544,7 +544,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
         // Load crypto deposit events (the admin crypto trxn list) for the deposits page and index
         try {
           setRefreshingCryptoDepositEvents(true)
-          const params = new URLSearchParams({ limit: '80' })
+          const params = new URLSearchParams({ limit: '200' })
           if (cryptoDepositStatusFilter !== 'all') params.set('status', cryptoDepositStatusFilter)
           if (cryptoDepositSweepFilter !== 'all') params.set('sweepStatus', cryptoDepositSweepFilter)
           if (cryptoDepositPairFilter) params.set('pairId', cryptoDepositPairFilter)
@@ -1315,7 +1315,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Crypto order update failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       showToast(`Crypto order ${status}.`)
@@ -1337,7 +1337,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Crypto execution update failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.cryptoOrder?.id === orderId && referenceCase.reference) await inspectReference(referenceCase.reference)
@@ -1360,7 +1360,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Base broadcast failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.cryptoOrder?.id === orderId && referenceCase.reference) await inspectReference(referenceCase.reference)
@@ -1383,7 +1383,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || '0x swap execution failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.cryptoOrder?.id === orderId && referenceCase.reference) await inspectReference(referenceCase.reference)
@@ -1401,7 +1401,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       const response = await fetch(`/api/admin/crypto-orders/${encodeURIComponent(orderId)}/receipt-sync`, { method: 'POST', credentials: 'include' })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Base receipt sync failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.cryptoOrder?.id === orderId && referenceCase.reference) await inspectReference(referenceCase.reference)
@@ -1419,7 +1419,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       const response = await fetch('/api/admin/crypto-orders/base-sync-pending', { method: 'POST', credentials: 'include' })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Base batch sync failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.reference) await inspectReference(referenceCase.reference)
@@ -1437,7 +1437,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       const response = await fetch(`/api/admin/crypto-orders/${encodeURIComponent(orderId)}/sync`, { method: 'POST', credentials: 'include' })
       const payload = await response.json()
       if (!response.ok || payload.success === false) throw new Error(payload.error || 'Crypto order sync failed.')
-      const ordersResponse = await fetch('/api/admin/crypto-orders?status=pending&limit=20', { credentials: 'include', cache: 'no-store' })
+      const ordersResponse = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
       const ordersPayload = await ordersResponse.json()
       if (ordersResponse.ok && ordersPayload.success !== false && Array.isArray(ordersPayload.data)) setCryptoOrders(ordersPayload.data)
       if (referenceCase?.cryptoOrder?.id === orderId && referenceCase.reference) await inspectReference(referenceCase.reference)
@@ -1764,6 +1764,14 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     depositIntents,
     payoutRequests,
     cryptoOrders,
+    reloadCryptoOrders: async () => {
+      const response = await fetch('/api/admin/crypto-orders?limit=100', { credentials: 'include', cache: 'no-store' })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Unable to refresh crypto orders.')
+      }
+      setCryptoOrders(Array.isArray(payload.data) ? payload.data : [])
+    },
     cryptoPricing,
     setCryptoPricing,
     cryptoCatalogFilter,
@@ -1908,9 +1916,11 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     reloadCryptoDepositEvents: async (overrides?: { status?: string; sweepStatus?: string; pairId?: string }) => {
       setRefreshingCryptoDepositEvents(true)
       try {
-        const params = new URLSearchParams({ limit: '80' })
-        const status = overrides?.status ?? (cryptoDepositStatusFilter !== 'all' ? cryptoDepositStatusFilter : undefined)
-        const sweep = overrides?.sweepStatus ?? (cryptoDepositSweepFilter !== 'all' ? cryptoDepositSweepFilter : undefined)
+        const params = new URLSearchParams({ limit: '200' })
+        const requestedStatus = overrides?.status ?? cryptoDepositStatusFilter
+        const requestedSweep = overrides?.sweepStatus ?? cryptoDepositSweepFilter
+        const status = requestedStatus !== 'all' ? requestedStatus : undefined
+        const sweep = requestedSweep !== 'all' ? requestedSweep : undefined
         const pair = overrides?.pairId ?? (cryptoDepositPairFilter || undefined)
         if (status) params.set('status', status)
         if (sweep) params.set('sweepStatus', sweep)

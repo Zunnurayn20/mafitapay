@@ -52,6 +52,9 @@ function PendingCexIntentsList({ reloadKey }: { reloadKey?: number }) {
 
 export function AdminOperationsSection({ workspace, submodule }: { workspace: AdminWorkspaceState; submodule?: AdminSubmodule }) {
   const [selectedCryptoOrderId, setSelectedCryptoOrderId] = useState<string | null>(null)
+  const [cryptoOrderStatusFilter, setCryptoOrderStatusFilter] = useState<'all' | 'pending' | 'fulfilled' | 'failed' | 'expired'>('all')
+  const [cryptoOrderSearch, setCryptoOrderSearch] = useState('')
+  const [refreshingCryptoOrders, setRefreshingCryptoOrders] = useState(false)
   const [selectedSettlementReference, setSelectedSettlementReference] = useState<string | null>(null)
   const [selectedProviderEventId, setSelectedProviderEventId] = useState<string | null>(null)
   const [showWebhookTester, setShowWebhookTester] = useState(false)
@@ -68,6 +71,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const DEPOSIT_PAGE_SIZE = 20
   const {
     cryptoOrders,
+    reloadCryptoOrders,
     cryptoDepositEvents,
     recentSweepGasStats,
     reloadCryptoDepositEvents,
@@ -147,6 +151,13 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const showCryptoDeposits = !submodule || submodule === 'crypto-deposits'
   const showSupport = !submodule || submodule === 'support'
   const selectedCryptoOrder = cryptoOrders.find(item => item.id === selectedCryptoOrderId) ?? null
+  const visibleCryptoOrders = cryptoOrders.filter(item => {
+    if (cryptoOrderStatusFilter !== 'all' && item.status !== cryptoOrderStatusFilter) return false
+    if (!cryptoOrderSearch.trim()) return true
+    const search = cryptoOrderSearch.trim().toLowerCase()
+    return [item.id, item.transactionId, item.pairId, item.userId, item.walletAddress, item.destinationTxHash]
+      .some(value => String(value ?? '').toLowerCase().includes(search))
+  })
   const isOperationsIndex = !submodule
 
   // Local handlers for deposits filters on the dedicated page
@@ -319,7 +330,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {[
-          { label: 'Total Events', value: depositStats.total },
+          { label: 'Loaded Events', value: depositStats.total },
           { label: 'Matched Orders', value: depositStats.matched },
           { label: 'Direct Credits (unmatched)', value: depositStats.unmatched },
           { label: 'Swept to Treasury', value: depositStats.swept },
@@ -375,7 +386,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
           </select>
           <input
             value={cryptoDepositPairFilter}
-            onChange={(e) => applyDepositFilter({ pairId: e.target.value })}
+            onChange={(e) => { setCryptoDepositPairFilter(e.target.value); setDepositPage(0) }}
             placeholder="Pair ID (e.g. USDC_BASE)"
             className="bg-[var(--clay2)] border border-[var(--border)] text-[10px] px-2 py-1 w-40"
           />
@@ -385,7 +396,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             placeholder="Search tx / external / user"
             className="bg-[var(--clay2)] border border-[var(--border)] text-[10px] px-2 py-1 flex-1 min-w-[160px]"
           />
-          <Button variant="secondary" className="text-[10px]" onClick={() => void reloadCryptoDepositEvents?.()}>Apply Filters</Button>
+          <Button variant="secondary" className="text-[10px]" onClick={() => void reloadCryptoDepositEvents?.({ pairId: cryptoDepositPairFilter })}>Apply Filters</Button>
         </div>
 
         {/* Prominent Force Scan */}
@@ -578,7 +589,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
 
         {/* Pagination for option 3 deeper polish */}
         <div className="flex items-center justify-between mt-2 text-[9px]">
-          <div>Page {depositPage + 1} / {totalDepositPages} ({displayedDepositEvents.length} total)</div>
+          <div>Page {depositPage + 1} / {totalDepositPages} ({displayedDepositEvents.length} loaded)</div>
           <div className="flex gap-1">
             <Button variant="secondary" className="text-[9px] py-0.5 px-2" disabled={depositPage === 0} onClick={() => setDepositPage(p => Math.max(0, p-1))}>Prev</Button>
             <Button variant="secondary" className="text-[9px] py-0.5 px-2" disabled={depositPage >= totalDepositPages - 1} onClick={() => setDepositPage(p => Math.min(totalDepositPages - 1, p+1))}>Next</Button>
@@ -627,16 +638,54 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   return (
     <>
       {showOrders && <Card className="p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="text-[11px] font-bold text-[var(--text)]">Crypto Order Operations</div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-bold text-[var(--text)]">Crypto Orders</div>
+            <div className="mt-1 text-[10px] text-[var(--muted)]">Up to 100 most recent orders across all statuses</div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={async () => {
+            setRefreshingCryptoOrders(true)
+            try {
+              await reloadCryptoOrders()
+            } catch (error) {
+              alert(error instanceof Error ? error.message : 'Unable to refresh crypto orders.')
+            } finally {
+              setRefreshingCryptoOrders(false)
+            }
+          }} disabled={refreshingCryptoOrders}>
+            {refreshingCryptoOrders ? 'Refreshing…' : 'Refresh Orders'}
+          </Button>
           <Button size="sm" variant="secondary" onClick={() => void syncAllBaseReceipts()} disabled={syncingAllBaseReceipts}>
             {syncingAllBaseReceipts ? 'Scanning Base…' : 'Sync All Base Receipts'}
           </Button>
+          </div>
+        </div>
+        <div className="mb-3 flex flex-wrap gap-2">
+          <select
+            aria-label="Filter crypto orders by status"
+            value={cryptoOrderStatusFilter}
+            onChange={event => setCryptoOrderStatusFilter(event.target.value as typeof cryptoOrderStatusFilter)}
+            className="border border-[var(--border)] bg-[var(--clay2)] px-2 py-1 text-[10px] text-[var(--text)]"
+          >
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="fulfilled">Fulfilled</option>
+            <option value="failed">Failed</option>
+            <option value="expired">Expired</option>
+          </select>
+          <input
+            aria-label="Search crypto orders"
+            value={cryptoOrderSearch}
+            onChange={event => setCryptoOrderSearch(event.target.value)}
+            placeholder="Search pair, order, user, wallet, tx"
+            className="min-w-[220px] flex-1 border border-[var(--border)] bg-[var(--clay2)] px-2 py-1 text-[10px] text-[var(--text)]"
+          />
         </div>
         <div className="grid gap-3">
-          {cryptoOrders.length === 0 ? (
-            <div className="text-[11px] text-[var(--muted)]">No pending crypto orders.</div>
-          ) : cryptoOrders.map(item => (
+          {visibleCryptoOrders.length === 0 ? (
+            <div className="text-[11px] text-[var(--muted)]">No crypto orders match these filters.</div>
+          ) : visibleCryptoOrders.map(item => (
             <button
               key={item.id}
               type="button"
