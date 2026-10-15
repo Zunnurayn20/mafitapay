@@ -33,9 +33,28 @@ function storageHeaders(secretKey: string) {
 }
 
 async function ensureSupabaseCryptoLogoBucket(projectUrl: string, secretKey: string) {
+  const bucketUrl = `${projectUrl}/storage/v1/bucket/${SUPABASE_CRYPTO_LOGO_BUCKET}`
+  const headers = storageHeaders(secretKey)
+  const existing = await fetch(bucketUrl, { headers, signal: AbortSignal.timeout(10_000) })
+  if (existing.ok) return
+
+  const existingError = await existing.json().catch(() => ({})) as {
+    code?: string
+    message?: string
+    statusCode?: string
+  }
+  const bucketMissing = existing.status === 404
+    || existingError.code === 'NoSuchBucket'
+    || /bucket not found/i.test(existingError.message ?? '')
+  if (!bucketMissing) {
+    throw new Error(
+      `Supabase Storage could not check the crypto-assets bucket (HTTP ${existing.status}, ${existingError.code ?? existingError.message ?? 'unknown error'}).`,
+    )
+  }
+
   const response = await fetch(`${projectUrl}/storage/v1/bucket`, {
     method: 'POST',
-    headers: { ...storageHeaders(secretKey), 'Content-Type': 'application/json' },
+    headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       id: SUPABASE_CRYPTO_LOGO_BUCKET,
       name: SUPABASE_CRYPTO_LOGO_BUCKET,
@@ -46,10 +65,17 @@ async function ensureSupabaseCryptoLogoBucket(projectUrl: string, secretKey: str
     signal: AbortSignal.timeout(10_000),
   })
 
-  // A concurrent first upload may have created the bucket already. Supabase returns 409 then.
-  if (response.status === 409) return
+  // A concurrent first upload may have created the bucket already. Verify before treating a
+  // conflict as success because Storage versions have returned both 400 and 409 for duplicates.
+  if (response.status === 409 || response.status === 400) {
+    const createdByAnotherRequest = await fetch(bucketUrl, { headers, signal: AbortSignal.timeout(10_000) })
+    if (createdByAnotherRequest.ok) return
+  }
   if (!response.ok) {
-    throw new Error(`Supabase Storage could not prepare the crypto-assets bucket (HTTP ${response.status}).`)
+    const details = await response.json().catch(() => ({})) as { code?: string; message?: string }
+    throw new Error(
+      `Supabase Storage could not prepare the crypto-assets bucket (HTTP ${response.status}, ${details.code ?? details.message ?? 'unknown error'}).`,
+    )
   }
 }
 
