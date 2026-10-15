@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, Delete, Fingerprint, Landmark, Loader2, ReceiptText, ShoppingBag, XCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Clock3, Delete, Fingerprint, Landmark, Loader2, ReceiptText, ShoppingBag, XCircle } from 'lucide-react'
 import { createBiometricApproval } from '@/lib/client/biometric'
 import { clearPendingConfirmation, loadPendingConfirmation, type PendingConfirmation } from '@/lib/client/transaction-confirmation'
 import { formatNGN } from '@/lib/utils'
 import { useAppStore } from '@/store'
 
-type Phase = 'review' | 'processing' | 'success' | 'failed'
+type Phase = 'review' | 'processing' | 'pending' | 'success' | 'failed'
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -84,7 +84,7 @@ export default function ConfirmTransactionPage() {
       setReference(transaction?.reference || '')
       await refreshSession()
       clearPendingConfirmation()
-      setPhase('success')
+      setPhase(transaction?.status === 'pending' ? 'pending' : 'success')
     } catch (cause) {
       setPin(''); setError(cause instanceof Error ? cause.message : 'Network error. Please try again.'); setPhase('failed')
     }
@@ -109,9 +109,9 @@ export default function ConfirmTransactionPage() {
   if (!payload) return <main className="flex h-[100dvh] items-center justify-center bg-[var(--bg)] px-5"><section className="w-full max-w-sm border border-[var(--border)] bg-[var(--coal)] p-7 text-center"><p className="text-sm text-[var(--text2)]">No transaction waiting for confirmation.</p><button onClick={() => router.push('/dashboard')} className="mt-6 text-xs font-bold text-[var(--gold2)]">Go to dashboard</button></section></main>
 
   const Icon = payload.kind === 'bill' ? ReceiptText : payload.kind === 'crypto_buy' ? ShoppingBag : Landmark
-  const stateLabel = phase === 'processing' ? 'Processing' : phase === 'success' ? 'Successful' : 'Failed'
-  const stateTitle = phase === 'processing' ? 'Please wait…' : payload.title
-  const stateCopy = phase === 'processing' ? 'Do not close this page while we complete your transaction.' : phase === 'success' ? 'Your transaction was completed and your wallet has been updated.' : phase === 'failed' ? 'Nothing was completed successfully. You can try again.' : ''
+  const stateLabel = phase === 'processing' ? 'Processing' : phase === 'pending' ? 'Pending' : phase === 'success' ? 'Successful' : 'Failed'
+  const stateTitle = phase === 'processing' ? 'Please wait…' : phase === 'pending' ? payload.kind === 'transfer' ? 'Transfer pending' : 'Payment pending' : payload.title
+  const stateCopy = phase === 'processing' ? 'Do not close this page while we complete your transaction.' : phase === 'pending' ? payload.kind === 'transfer' ? 'Your bank transfer was submitted and is waiting for provider confirmation. We’ll update its status when it settles.' : 'Your request was submitted and is waiting for provider confirmation.' : phase === 'success' ? 'Your transaction was completed and your wallet has been updated.' : phase === 'failed' ? 'Nothing was completed successfully. You can try again.' : ''
 
   return (
     <main className="flex h-[100dvh] max-w-lg flex-col overflow-hidden bg-[var(--bg)] px-3 pb-5 pt-5 sm:mx-auto sm:px-4">
@@ -141,6 +141,7 @@ export default function ConfirmTransactionPage() {
         </div>}
 
         {phase === 'processing' && <div className="border border-[var(--border)] bg-[var(--coal)] p-8 text-center"><Loader2 size={36} className="mx-auto animate-spin text-[var(--gold)]" /><div className="mt-4 text-sm font-semibold text-[var(--text)]">Processing payment</div><p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">Stay on this screen. We’re confirming with the provider and updating your wallet.</p><div className="mt-5 h-1.5 overflow-hidden rounded-full bg-[var(--clay2)]"><div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--gold)]" /></div></div>}
+        {phase === 'pending' && <div className="border border-[var(--border)] bg-[var(--coal)] p-7 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(202,165,96,.12)]"><Clock3 size={30} className="text-[var(--gold2)]" /></div><div className="mt-4 text-lg font-bold text-[var(--text)]">{payload.kind === 'transfer' ? 'Transfer pending' : 'Request pending'}</div><p className="mt-1.5 text-xs text-[var(--muted)]">{formatNGN(payload.amountNgn)} · {payload.title}</p>{reference && <p className="mt-2 text-[10px] text-[var(--muted)]">Reference: {reference}</p>}<button onClick={() => router.push('/history')} className="mt-6 w-full bg-[var(--gold)] py-3 text-xs font-bold text-white">View history</button><button onClick={() => router.push(payload.returnPath)} className="mt-2.5 w-full border border-[var(--border)] py-3 text-xs font-bold text-[var(--text)]">Done</button></div>}
         {phase === 'success' && <div className="border border-[var(--border)] bg-[var(--coal)] p-7 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50"><CheckCircle2 size={32} className="text-emerald-600" /></div><div className="mt-4 text-lg font-bold text-[var(--text)]">Transaction successful</div><p className="mt-1.5 text-xs text-[var(--muted)]">{formatNGN(payload.amountNgn)} · {payload.title}</p><button onClick={() => router.push('/history')} className="mt-6 w-full bg-[var(--gold)] py-3 text-xs font-bold text-white">View history</button><button onClick={() => router.push(payload.returnPath)} className="mt-2.5 w-full border border-[var(--border)] py-3 text-xs font-bold text-[var(--text)]">Done</button></div>}
         {phase === 'failed' && <div className="border border-[var(--border)] bg-[var(--coal)] p-7 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(239,68,68,.12)]"><XCircle size={32} className="text-[var(--red2)]" /></div><div className="mt-4 text-lg font-bold text-[var(--text)]">Transaction failed</div><p className="mt-1.5 text-xs font-medium text-[var(--red2)]">{error}</p><button onClick={() => { setPhase('review'); setPin(''); setError(''); setPinError('') }} className="mt-6 w-full bg-[var(--gold)] py-3 text-xs font-bold text-white">Try again</button><button onClick={() => { clearPendingConfirmation(); router.push(payload.returnPath) }} className="mt-2.5 w-full border border-[var(--border)] py-3 text-xs font-bold text-[var(--text)]">Cancel</button></div>}
       </section>
