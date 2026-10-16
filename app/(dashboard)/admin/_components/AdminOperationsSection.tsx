@@ -87,6 +87,8 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const [cryptoOrderSearch, setCryptoOrderSearch] = useState('')
   const [refreshingCryptoOrders, setRefreshingCryptoOrders] = useState(false)
   const [selectedSettlementReference, setSelectedSettlementReference] = useState<string | null>(null)
+  const [syncingPayoutReference, setSyncingPayoutReference] = useState<string | null>(null)
+  const [payoutSyncFeedback, setPayoutSyncFeedback] = useState<string | null>(null)
   const [selectedProviderEventId, setSelectedProviderEventId] = useState<string | null>(null)
   const [showWebhookTester, setShowWebhookTester] = useState(false)
   const [showLedgerTools, setShowLedgerTools] = useState(false)
@@ -212,6 +214,36 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
       await resweepCryptoDepositEvent(externalEventId)
     } finally {
       setResweepingEventId(null)
+    }
+  }
+
+  const syncPayoutReference = async (reference: string) => {
+    setSyncingPayoutReference(reference)
+    setPayoutSyncFeedback(null)
+    try {
+      const response = await fetch(`/api/admin/payout-requests/${encodeURIComponent(reference)}/sync`, {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Payout status sync failed.')
+      }
+      const currentStatus = typeof payload.data?.providerStatus === 'string'
+        ? payload.data.providerStatus
+        : payload.data?.status
+      setPayoutSyncFeedback(payload.data?.synced
+        ? `Provider confirmed ${String(currentStatus || payload.data.status).toUpperCase()}.`
+        : `Provider still reports ${String(currentStatus || 'a pending status').toUpperCase()}.`)
+      await Promise.all([
+        inspectReference(reference),
+        reloadSettlementQueues(reference, 'all', ''),
+      ])
+    } catch (error) {
+      setPayoutSyncFeedback(error instanceof Error ? error.message : 'Payout status sync failed.')
+    } finally {
+      setSyncingPayoutReference(null)
     }
   }
 
@@ -1360,6 +1392,17 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                       <div>Amount: ₦{referenceCase.payoutRequest.amount.toLocaleString('en-NG')}</div>
                       {referenceCase.payoutRequest.beneficiary && <div>Beneficiary: {referenceCase.payoutRequest.beneficiary}</div>}
                       {referenceCase.payoutRequest.failureReason && <div className="text-[var(--red2)]">Failure: {referenceCase.payoutRequest.failureReason}</div>}
+                      {referenceCase.payoutRequest.status === 'pending' && <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void syncPayoutReference(referenceCase.reference)}
+                          disabled={syncingPayoutReference === referenceCase.reference}
+                        >
+                          {syncingPayoutReference === referenceCase.reference ? 'Checking provider…' : 'Sync this payout'}
+                        </Button>
+                        {payoutSyncFeedback && <span className="text-[10px] text-[var(--muted)]">{payoutSyncFeedback}</span>}
+                      </div>}
                     </div>
                   ) : (
                     <div className="mt-2 text-[10px] text-[var(--muted)]">No deposit or payout record linked to this reference.</div>

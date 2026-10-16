@@ -5023,18 +5023,27 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
   if (!isReferralRewardEligibleTransaction(transaction)) return
 
   await ensureDbReady()
-  const db = getDb()
-  const firstQualifyingTransaction = db
-    .prepare(`
-      SELECT id
-      FROM transactions
-      WHERE user_id = ?
-        AND status = 'success'
-        AND type NOT IN ('referral_bonus', 'reward_bonus')
-      ORDER BY datetime(created_at) ASC, id ASC
-      LIMIT 1
-    `)
-    .get(userId) as { id?: string } | undefined
+  const firstQualifyingTransaction = isPostgresEnabled()
+    ? (await queryPostgres<{ id: string }>(`
+        SELECT id
+        FROM transactions
+        WHERE user_id = ?
+          AND status = 'success'
+          AND type NOT IN ('referral_bonus', 'reward_bonus')
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `, [userId])).rows[0]
+    : getDb()
+      .prepare(`
+        SELECT id
+        FROM transactions
+        WHERE user_id = ?
+          AND status = 'success'
+          AND type NOT IN ('referral_bonus', 'reward_bonus')
+        ORDER BY datetime(created_at) ASC, id ASC
+        LIMIT 1
+      `)
+      .get(userId) as { id?: string } | undefined
 
   if (firstQualifyingTransaction?.id !== transaction.id) return
 
@@ -5711,8 +5720,109 @@ export async function getProviderEventsByReference(reference: string): Promise<P
 
 export async function getProviderDiagnosticsReport(): Promise<ProviderDiagnosticsReport> {
   await ensureDbReady()
-  const db = getDb()
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+  if (isPostgresEnabled()) {
+    const providerRows = (await queryPostgres<{ provider: string }>(`
+      SELECT DISTINCT provider
+      FROM provider_events
+      ORDER BY lower(provider), provider
+    `)).rows
+
+    const providers = await Promise.all(providerRows.map(async row => {
+      const [countsResult, lastFailureResult, topFailureReasonsResult] = await Promise.all([
+        queryPostgres<{
+          total_events_24h: string | number
+          pending_count: string | number
+          failed_count: string | number
+          retrying_count: string | number
+          last_event_at: string | null
+          last_processed_at: string | null
+          last_success_at: string | null
+          last_failure_at: string | null
+        }>(`
+          SELECT
+            COUNT(*) FILTER (WHERE created_at >= ?) AS total_events_24h,
+            COUNT(*) FILTER (WHERE processed_at IS NULL AND failure_reason IS NULL AND lower(status) != 'failed') AS pending_count,
+            COUNT(*) FILTER (WHERE failure_reason IS NOT NULL OR lower(status) = 'failed') AS failed_count,
+            COUNT(*) FILTER (WHERE COALESCE(retry_count, 0) > 0 AND processed_at IS NULL) AS retrying_count,
+            MAX(created_at) AS last_event_at,
+            MAX(processed_at) AS last_processed_at,
+            MAX(created_at) FILTER (WHERE processed_at IS NOT NULL AND failure_reason IS NULL AND lower(status) != 'failed') AS last_success_at,
+            MAX(created_at) FILTER (WHERE failure_reason IS NOT NULL OR lower(status) = 'failed') AS last_failure_at
+          FROM provider_events
+          WHERE provider = ?
+        `, [since24h, row.provider]),
+        queryPostgres<{ failure_reason: string | null; status: string | null }>(`
+          SELECT failure_reason, status
+          FROM provider_events
+          WHERE provider = ? AND (failure_reason IS NOT NULL OR lower(status) = 'failed')
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [row.provider]),
+        queryPostgres<{ reason: string; count: string | number }>(`
+          SELECT COALESCE(NULLIF(failure_reason, ''), status, 'failed') AS reason, COUNT(*) AS count
+          FROM provider_events
+          WHERE provider = ? AND (failure_reason IS NOT NULL OR lower(status) = 'failed')
+          GROUP BY COALESCE(NULLIF(failure_reason, ''), status, 'failed')
+          ORDER BY count DESC, reason ASC
+          LIMIT 3
+        `, [row.provider]),
+      ])
+      const counts = countsResult.rows[0]
+      const lastFailureRow = lastFailureResult.rows[0]
+
+      return {
+        provider: row.provider,
+        totalEvents24h: Number(counts?.total_events_24h ?? 0),
+        pendingCount: Number(counts?.pending_count ?? 0),
+        failedCount: Number(counts?.failed_count ?? 0),
+        retryingCount: Number(counts?.retrying_count ?? 0),
+        lastEventAt: counts?.last_event_at ?? undefined,
+        lastProcessedAt: counts?.last_processed_at ?? undefined,
+        lastSuccessAt: counts?.last_success_at ?? undefined,
+        lastFailureAt: counts?.last_failure_at ?? undefined,
+        lastFailureReason: lastFailureRow?.failure_reason || lastFailureRow?.status || undefined,
+        topFailureReasons: topFailureReasonsResult.rows.map(item => ({ reason: item.reason, count: Number(item.count) })),
+      }
+    }))
+
+    const [totalsResult, recentFailuresResult] = await Promise.all([
+      queryPostgres<{ total_pending_events: string | number; total_failed_events_24h: string | number; total_retrying_events: string | number }>(`
+        SELECT
+          COUNT(*) FILTER (WHERE processed_at IS NULL AND failure_reason IS NULL AND lower(status) != 'failed') AS total_pending_events,
+          COUNT(*) FILTER (WHERE created_at >= ? AND (failure_reason IS NOT NULL OR lower(status) = 'failed')) AS total_failed_events_24h,
+          COUNT(*) FILTER (WHERE COALESCE(retry_count, 0) > 0 AND processed_at IS NULL) AS total_retrying_events
+        FROM provider_events
+      `, [since24h]),
+      queryPostgres<ProviderEventRow>(`
+        SELECT *
+        FROM provider_events
+        WHERE failure_reason IS NOT NULL OR lower(status) = 'failed'
+        ORDER BY created_at DESC
+        LIMIT 12
+      `),
+    ])
+    const totals = totalsResult.rows[0]
+
+    return {
+      totalPendingEvents: Number(totals?.total_pending_events ?? 0),
+      totalFailedEvents24h: Number(totals?.total_failed_events_24h ?? 0),
+      totalRetryingEvents: Number(totals?.total_retrying_events ?? 0),
+      providers,
+      recentFailures: recentFailuresResult.rows.map(row => ({
+        provider: row.provider,
+        externalEventId: row.external_event_id,
+        reference: row.reference,
+        status: row.status,
+        failureReason: row.failure_reason ?? undefined,
+        retryCount: row.retry_count != null ? Number(row.retry_count) : undefined,
+        createdAt: row.created_at,
+      })),
+    }
+  }
+
+  const db = getDb()
 
   const providerRows = db.prepare(`
     SELECT DISTINCT provider
