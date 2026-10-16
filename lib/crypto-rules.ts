@@ -61,7 +61,9 @@ const FALLBACK_NETWORK_FEE_NGN: NetworkFeePair = { buy: 150, sell: 200 }
 const MINIMUM_BUY_NGN_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   USDC_BASE: 500,
   ETH_BASE: 500,
-  SUI_SUI: 500,
+  // LI.FI returned no Base USDC → Sui USDC route at about $0.31, while live quotes
+  // succeeded at $1.25+. Keep the customer minimum above that observed route threshold.
+  SUI_SUI: 2500,
   NEAR_NEAR: 500,
   TON_TON: 800,
 }
