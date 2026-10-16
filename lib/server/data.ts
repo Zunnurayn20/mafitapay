@@ -7385,7 +7385,7 @@ export async function getPayoutRequestByReference(reference: string): Promise<Pa
   return row ? mapPayoutRequestRow(row) : null
 }
 
-export async function listPayoutRequests(input?: { status?: PayoutRequest['status']; provider?: string; reference?: string; limit?: number }): Promise<PayoutRequest[]> {
+export async function listPayoutRequests(input?: { status?: PayoutRequest['status']; userId?: string; provider?: string; reference?: string; limit?: number }): Promise<PayoutRequest[]> {
   await ensureDbReady()
   const limit = Math.max(1, Math.min(100, input?.limit ?? 50))
   const where: string[] = []
@@ -7394,6 +7394,11 @@ export async function listPayoutRequests(input?: { status?: PayoutRequest['statu
   if (input?.status) {
     where.push('status = ?')
     args.push(input.status)
+  }
+
+  if (input?.userId?.trim()) {
+    where.push('user_id = ?')
+    args.push(input.userId.trim())
   }
 
   if (input?.reference?.trim()) {

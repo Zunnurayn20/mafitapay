@@ -1,6 +1,7 @@
 import { appendNotification, createNotification } from '@/lib/server/auth'
 import { insertAuditLog, recordProviderEvent, resolvePendingTransaction, updatePayoutRequestStatus } from '@/lib/server/data'
 import { initiateFlutterwaveBankTransfer, isFlutterwavePayoutEnabled } from '@/lib/server/flutterwave-transfers'
+import { ensureFlutterwavePayoutSyncScheduler, kickPendingFlutterwavePayoutSync } from '@/lib/server/payout-sync-batch'
 import { processSettlementEvent } from '@/lib/server/settlements'
 import type { Transaction } from '@/types'
 
@@ -85,6 +86,7 @@ export async function executeBankPayout(input: {
         rawStatus: payout.rawStatus ?? null,
       },
     })
+    ensureFlutterwavePayoutSyncScheduler()
     return {
       mode: 'success' as const,
       payout,
@@ -112,6 +114,11 @@ export async function executeBankPayout(input: {
       rawStatus: payout.rawStatus ?? null,
     },
   })
+
+  // Initiation answers NEW. Settlement arrives later, by webhook or by retrieving the transfer.
+  // Arm the retriever here so a bank transfer does not stay pending until an admin syncs it.
+  ensureFlutterwavePayoutSyncScheduler()
+  void kickPendingFlutterwavePayoutSync().catch(() => null)
 
   return {
     mode: 'initiated' as const,

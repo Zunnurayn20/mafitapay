@@ -2,7 +2,30 @@ import { getPayoutRequestByReference, insertAuditLog, markPayoutRequestSync, rec
 import { retrieveFlutterwaveTransfer, mapFlutterwaveTransferStatus } from '@/lib/server/flutterwave-transfers'
 import { processSettlementEvent } from '@/lib/server/settlements'
 
-export async function syncFlutterwavePayout(reference: string, actorUserId?: string) {
+const inFlightPayoutSyncs = new Map<string, Promise<PayoutSyncResult>>()
+
+export type PayoutSyncResult = {
+  reference: string
+  payoutRequest: Awaited<ReturnType<typeof getPayoutRequestByReference>>
+  status: string
+  providerStatus: string | null
+  providerReference: string
+  synced: boolean
+  duplicate?: boolean
+}
+
+export function syncFlutterwavePayout(reference: string, actorUserId?: string) {
+  const existing = inFlightPayoutSyncs.get(reference)
+  if (existing) return existing
+
+  const run = syncFlutterwavePayoutOnce(reference, actorUserId).finally(() => {
+    if (inFlightPayoutSyncs.get(reference) === run) inFlightPayoutSyncs.delete(reference)
+  })
+  inFlightPayoutSyncs.set(reference, run)
+  return run
+}
+
+async function syncFlutterwavePayoutOnce(reference: string, actorUserId?: string): Promise<PayoutSyncResult> {
   const payoutRequest = await getPayoutRequestByReference(reference)
   if (!payoutRequest) {
     throw new Error('Payout request not found.')

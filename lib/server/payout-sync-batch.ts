@@ -4,6 +4,7 @@ import { syncFlutterwavePayout } from '@/lib/server/payout-sync'
 import { sanitizeErrorForLogs } from '@/lib/utils'
 
 let pendingFlutterwavePayoutSyncPromise: Promise<Awaited<ReturnType<typeof syncPendingFlutterwavePayouts>>> | null = null
+let payoutSyncFollowUp = false
 let flutterwavePayoutSyncIntervalStarted = false
 
 // Poll cadence for reconciling pending payouts. Each pending payout costs one HTTPS retrieve, so
@@ -14,11 +15,23 @@ const PAYOUT_SYNC_INTERVAL_MS = Math.max(
   Number(process.env.MAFITAPAY_FLUTTERWAVE_PAYOUT_SYNC_INTERVAL_MS ?? 60_000) || 60_000
 )
 
-export async function syncPendingFlutterwavePayouts(actorUserId?: string) {
-  const pending = await listPayoutRequests({ status: 'pending', limit: 50 })
+// A payout that was retrieved moments ago is still in flight at Flutterwave. Skip it on the
+// user-facing poll so a 20s dashboard refresh does not retrieve the same transfer twice.
+const PAYOUT_SYNC_MIN_GAP_MS = 15_000
+
+function isPayoutSyncDue(lastSyncAt?: string) {
+  if (!lastSyncAt) return true
+  const syncedAt = Date.parse(lastSyncAt)
+  if (!Number.isFinite(syncedAt)) return true
+  return Date.now() - syncedAt >= PAYOUT_SYNC_MIN_GAP_MS
+}
+
+export async function syncPendingFlutterwavePayouts(actorUserId?: string, options?: { userId?: string; onlyDue?: boolean }) {
+  const pending = await listPayoutRequests({ status: 'pending', userId: options?.userId, limit: 50 })
   const targets = pending.filter(item =>
     item.providerReference
     && (item.provider.toLowerCase().includes('bank_') || item.provider.toLowerCase().includes('flutterwave'))
+    && (!options?.onlyDue || isPayoutSyncDue(item.lastSyncAt))
   )
 
   const results = await Promise.allSettled(targets.map(item => syncFlutterwavePayout(item.reference, actorUserId)))
@@ -55,11 +68,22 @@ export async function syncPendingFlutterwavePayouts(actorUserId?: string) {
 
 /** Run a reconcile pass, collapsing concurrent callers onto one in-flight run. */
 export function kickPendingFlutterwavePayoutSync(actorUserId?: string) {
-  if (!pendingFlutterwavePayoutSyncPromise) {
-    pendingFlutterwavePayoutSyncPromise = syncPendingFlutterwavePayouts(actorUserId).finally(() => {
-      pendingFlutterwavePayoutSyncPromise = null
-    })
+  if (pendingFlutterwavePayoutSyncPromise) {
+    // A payout created while a pass is already listing rows must get its own pass.
+    // Returning the in-flight promise alone would skip that new transfer until the next tick.
+    payoutSyncFollowUp = true
+    return pendingFlutterwavePayoutSyncPromise
   }
+
+  pendingFlutterwavePayoutSyncPromise = syncPendingFlutterwavePayouts(actorUserId).finally(() => {
+    pendingFlutterwavePayoutSyncPromise = null
+    if (payoutSyncFollowUp) {
+      payoutSyncFollowUp = false
+      void kickPendingFlutterwavePayoutSync(actorUserId).catch(error => {
+        console.warn('[flutterwave-payout-sync] scheduler_error', sanitizeErrorForLogs(error))
+      })
+    }
+  })
   return pendingFlutterwavePayoutSyncPromise
 }
 
@@ -77,9 +101,14 @@ export function ensureFlutterwavePayoutSyncScheduler() {
   if (!isFlutterwavePayoutEnabled()) return
   flutterwavePayoutSyncIntervalStarted = true
 
-  setInterval(() => {
+  const run = () => {
     void kickPendingFlutterwavePayoutSync().catch(error => {
       console.warn('[flutterwave-payout-sync] scheduler_error', sanitizeErrorForLogs(error))
     })
-  }, PAYOUT_SYNC_INTERVAL_MS)
+  }
+
+  // The first pass has to happen now. Waiting for the interval left a payout that Flutterwave had
+  // already paid sitting at pending until something else — usually an admin sync — retrieved it.
+  run()
+  setInterval(run, PAYOUT_SYNC_INTERVAL_MS)
 }

@@ -208,6 +208,10 @@ export default function HistoryPage() {
         throw new Error(payload.error || 'Failed to load transaction detail.')
       }
       setDetail(payload.data)
+      const previousStatus = transactions.find(item => item.id === id)?.status
+      if (previousStatus && previousStatus !== payload.data?.transaction?.status) {
+        void refreshSession()
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Failed to load transaction detail.', 'error')
     } finally {

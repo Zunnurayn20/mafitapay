@@ -39,6 +39,10 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { authResolved, isAuthenticated, refreshSession, showToast, theme, user, wallet, securitySettings, kycSubmission, cryptoDepositAddresses } = useAppStore()
+  const hasPendingBankPayout = useAppStore(state => state.transactions.some(tx =>
+    (tx.status === 'pending' || tx.status === 'processing')
+    && (tx.metadata?.settlementKind === 'bank_transfer_out' || tx.metadata?.settlementKind === 'bank_payout')
+  ))
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
@@ -46,6 +50,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [initialSecuritySetupActive, setInitialSecuritySetupActive] = useState(false)
   const fundingProvisionKeyRef = useRef('')
   const cryptoDepositProvisionKeyRef = useRef('')
+  const pendingPayoutSyncRef = useRef(false)
+  pendingPayoutSyncRef.current = hasPendingBankPayout
   const isAdminRoute = pathname.startsWith('/admin')
   const isAnalyticsRoute = pathname.startsWith('/analytics')
   /** Admin/analytics chrome comes from their server layouts — only pass children through the fixed viewport. */
@@ -113,8 +119,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (!authResolved || !isAuthenticated) return
 
     const refreshNow = () => {
-      void refreshSession()
+      void (async () => {
+        if (pendingPayoutSyncRef.current) {
+          try {
+            await fetch('/api/wallet/payouts/sync', { method: 'POST', credentials: 'include' })
+          } catch {
+            // Session refresh still shows the last status stored for this payout.
+          }
+        }
+        await refreshSession()
+      })()
     }
+
+    if (hasPendingBankPayout) refreshNow()
 
     const interval = setInterval(refreshNow, 20_000)
     const handleVisibility = () => {
@@ -132,7 +149,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleFocus)
     }
-  }, [authResolved, isAuthenticated, refreshSession])
+  }, [authResolved, hasPendingBankPayout, isAuthenticated, refreshSession])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return

@@ -130,7 +130,10 @@ export async function handleFlutterwaveWebhook(input: {
   let rawStatus = ''
   let status: 'success' | 'failed' | null = null
 
-  if (eventType === 'transfer.disburse') {
+  // v4 sends `transfer.disburse`. v3 sends `transfer.completed` for the same payout, including
+  // failures. Both carry data.reference and data.status. Ignoring the v3 name acknowledged the
+  // callback with 200 and left the payout pending until a manual retrieve.
+  if (eventType === 'transfer.disburse' || eventType === 'transfer.completed' || eventType === 'transfer.failed') {
     reference = readString(data.reference)
     // v4 names the envelope id `webhook_id`; v3 used `id`. Prefer the transfer's own id so retries
     // of the same transfer dedupe against each other rather than against a per-delivery id.

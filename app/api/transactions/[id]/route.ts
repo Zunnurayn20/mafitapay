@@ -9,24 +9,39 @@ import {
   getProviderEventsByReference,
   getTransactionById,
 } from '@/lib/server/data'
+import { syncFlutterwavePayout } from '@/lib/server/payout-sync'
 
 export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[id]'>) {
   const user = await requireUser()
   if (!user) return unauthorized()
 
   const { id } = await ctx.params
-  const transaction = await getTransactionById(user.id, id)
+  let transaction = await getTransactionById(user.id, id)
   if (!transaction) {
     return NextResponse.json({ error: 'Transaction not found.', success: false }, { status: 404 })
   }
 
-  const [cryptoOrder, cryptoDepositEvents, ledgerEntries, providerEvents, depositIntent, payoutRequest] = await Promise.all([
+  let payoutRequest = await getPayoutRequestByTransactionId(id)
+  if (payoutRequest?.status === 'pending' && payoutRequest.providerReference && payoutRequest.userId === user.id) {
+    try {
+      await syncFlutterwavePayout(payoutRequest.reference, user.id)
+      const [freshTransaction, freshPayout] = await Promise.all([
+        getTransactionById(user.id, id),
+        getPayoutRequestByTransactionId(id),
+      ])
+      if (freshTransaction) transaction = freshTransaction
+      payoutRequest = freshPayout
+    } catch (error) {
+      console.warn('[transactions] payout sync failed', error instanceof Error ? error.message : error)
+    }
+  }
+
+  const [cryptoOrder, cryptoDepositEvents, ledgerEntries, providerEvents, depositIntent] = await Promise.all([
     getCryptoOrderByTransactionId(id),
     listCryptoDepositEventsByTransactionIds([id]),
     getLedgerEntriesForTransaction(user.id, id),
     getProviderEventsByReference(transaction.reference),
     getDepositIntentByTransactionId(id),
-    getPayoutRequestByTransactionId(id),
   ])
 
   const timeline = [

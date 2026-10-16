@@ -35,7 +35,7 @@ function getStatusIcon(status: Transaction['status']) {
 }
 
 export function RecentTransactions() {
-  const { transactions, showToast } = useAppStore()
+  const { transactions, showToast, refreshSession } = useAppStore()
   const router = useRouter()
   const cryptoAssets = useCryptoAssets()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -64,6 +64,10 @@ export function RecentTransactions() {
         throw new Error(payload.error || 'Failed to load transaction detail.')
       }
       setDetail(payload.data)
+      const previousStatus = transactions.find(item => item.id === id)?.status
+      if (previousStatus && previousStatus !== payload.data?.transaction?.status) {
+        void refreshSession()
+      }
     } catch (error) {
       setSelectedId(null)
       setDetail(null)
