@@ -32,6 +32,7 @@ export type FlutterwaveBillPaymentResult = {
   provider: 'flutterwave'
   reference: string
   status: 'pending' | 'success' | 'failed'
+  indeterminate?: boolean
   rawStatus?: string
   reason?: string
   providerReference?: string
@@ -200,9 +201,9 @@ function resolveDataBundleValidity(itemCode: string, name: string) {
 
 function mapFlutterwaveBillStatus(rawStatus: string | undefined, fallbackStatus: string | undefined): FlutterwaveBillPaymentResult['status'] {
   const normalized = readString(rawStatus || fallbackStatus).toLowerCase()
-  if (normalized.includes('fail') || normalized.includes('error')) return 'failed'
-  if (normalized.includes('pending') || normalized.includes('process') || normalized.includes('queue')) return 'pending'
-  return 'success'
+  if (['successful', 'success', 'completed', 'complete', 'delivered'].some(status => normalized.includes(status))) return 'success'
+  if (['failed', 'failure', 'error', 'reversed', 'cancelled', 'canceled', 'declined'].some(status => normalized.includes(status))) return 'failed'
+  return 'pending'
 }
 
 async function flutterwaveRequest(path: string, init?: RequestInit) {
@@ -649,8 +650,8 @@ export async function listFlutterwaveElectricBillProvidersSafe(
 export function mapFlutterwaveBillPaymentStatus(status: string | null | undefined): 'success' | 'failed' | null {
   const normalized = readString(status).toLowerCase()
   if (!normalized) return null
-  if (normalized.includes('success') || normalized.includes('complete')) return 'success'
-  if (normalized.includes('fail') || normalized.includes('error')) return 'failed'
+  if (['successful', 'success', 'completed', 'complete', 'delivered'].some(value => normalized === value || normalized.includes(value))) return 'success'
+  if (['failed', 'failure', 'reversed', 'cancelled', 'canceled', 'declined'].some(value => normalized === value || normalized.includes(value))) return 'failed'
   return null
 }
 
@@ -661,17 +662,18 @@ export async function retrieveFlutterwaveBillPayment(reference: string): Promise
     const rawStatus =
       readString(data.status)
       || readString(data.payment_status)
-      || readString(data.processor_response)
-      || readString(body.message)
+      || readString(data.transaction_status)
       || 'PENDING'
 
     return {
       provider: 'flutterwave',
       reference: readString(data.reference) || reference,
-      status: mapFlutterwaveBillStatus(rawStatus, readString(body.status)),
+      // The outer `status: success` and `message: Bill status fetch successful` only confirm
+      // that the lookup request worked; they do not confirm that the airtime/data was delivered.
+      status: mapFlutterwaveBillStatus(rawStatus, undefined),
       rawStatus,
-      reason: readString(body.message) || undefined,
-      providerReference: readString(data.id) || reference,
+      reason: readString(data.message) || undefined,
+      providerReference: readString(data.tx_ref) || reference,
       payload: body,
       billerCode: readString(data.biller_code) || undefined,
       itemCode: readString(data.item_code) || undefined,
@@ -681,8 +683,8 @@ export async function retrieveFlutterwaveBillPayment(reference: string): Promise
     return {
       provider: 'flutterwave',
       reference,
-      status: 'failed',
-      rawStatus: 'REQUEST_ERROR',
+      status: 'pending',
+      rawStatus: 'LOOKUP_ERROR',
       reason: error instanceof Error ? error.message : 'Unable to retrieve Flutterwave bill payment.',
     }
   }
@@ -767,21 +769,26 @@ export async function createFlutterwaveBillPayment(input: {
       || readString(data.payment_status)
       || readString(data.processor_response)
       || readString(body.message)
-      || 'SUCCESS'
+      || 'PENDING'
 
     return {
       provider: 'flutterwave',
       reference: input.reference,
-      status: mapFlutterwaveBillStatus(rawStatus, readString(body.status)),
+      status: mapFlutterwaveBillStatus(rawStatus, undefined),
       rawStatus,
       reason: readString(body.message) || undefined,
-      providerReference: readString(data.id) || readString(data.reference) || input.reference,
+      // Flutterwave's bill-status endpoint is keyed by tx_ref. Keep that instead of the
+      // separate bill reference / Flutterwave bill ID returned in the same response.
+      providerReference: readString(data.tx_ref) || input.reference,
       payload: body,
       billerCode: target.billerCode,
       itemCode: target.itemCode,
       itemName: target.name,
     }
   } catch (error) {
+    const indeterminate = error instanceof FlutterwaveRequestError
+      ? error.statusCode >= 500
+      : true
     logFlutterwaveBills('payment.error', {
       type: input.type,
       networkProvider: input.networkProvider || null,
@@ -801,8 +808,10 @@ export async function createFlutterwaveBillPayment(input: {
       provider: 'flutterwave',
       reference: input.reference,
       status: 'failed',
-      rawStatus: 'REQUEST_ERROR',
+      rawStatus: indeterminate ? 'INDETERMINATE' : 'REQUEST_ERROR',
       reason: error instanceof Error ? error.message : 'Flutterwave bill payment failed.',
+      providerReference: input.reference,
+      indeterminate,
     }
   }
 }

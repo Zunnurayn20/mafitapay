@@ -4668,45 +4668,43 @@ export async function listTransactionsByStatuses(
   return rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
 }
 
-export async function listPendingBillTransactions(limit = 50): Promise<Array<{ userId: string; transaction: Transaction }>> {
+export async function listPendingBillTransactions(limit = 50, userId?: string): Promise<Array<{ userId: string; transaction: Transaction }>> {
   await ensureDbReady()
+  const resultLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50
+  // Fetch extra rows because pending bills from other providers are intentionally excluded below.
+  // Keep the provider filter identical for PostgreSQL and SQLite.
+  const queryLimit = Math.min(resultLimit * 5, 250)
+  const userClause = userId ? 'AND user_id = ?' : ''
+  const params = userId ? [userId, queryLimit] : [queryLimit]
+  let rows: TransactionRow[]
   if (isPostgresEnabled()) {
     const result = await queryPostgres<TransactionRow>(`
       SELECT * FROM transactions WHERE status = 'pending'
       AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+      ${userClause}
       ORDER BY created_at DESC LIMIT ?
-    `, [limit])
-    return result.rows.map(row => ({ userId: row.user_id, transaction: mapTransactionRow(row) }))
+    `, params)
+    rows = result.rows
+  } else {
+    rows = getDb()
+      .prepare(`
+        SELECT * FROM transactions
+        WHERE status = 'pending'
+          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+          ${userClause}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `)
+      .all(...params) as TransactionRow[]
   }
-  const rows = getDb()
-    .prepare(`
-      SELECT * FROM transactions
-      WHERE status = 'pending'
-        AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
-      ORDER BY created_at DESC
-      LIMIT ?
-    `)
-    .all(limit) as TransactionRow[]
 
   return rows
     .map(row => ({
       userId: row.user_id,
-      transaction: {
-        id: row.id,
-        type: row.type,
-        status: row.status,
-        amount: Number(row.amount),
-        fee: Number(row.fee),
-        description: row.description,
-        reference: row.reference,
-        recipient: row.recipient ?? undefined,
-        narration: row.narration ?? undefined,
-        createdAt: row.created_at,
-        icon: row.icon ?? undefined,
-        metadata: parseJson(row.metadata, undefined as Transaction['metadata']),
-      },
+      transaction: mapTransactionRow(row),
     }))
     .filter(item => item.transaction.metadata?.providerName === 'flutterwave' && item.transaction.metadata?.settlementKind === 'provider_bill')
+    .slice(0, resultLimit)
 }
 
 export async function getLedgerEntriesForTransaction(userId: string, transactionId: string): Promise<LedgerEntry[]> {

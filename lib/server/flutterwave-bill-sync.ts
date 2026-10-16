@@ -1,14 +1,40 @@
 import { appendNotification, createNotification } from '@/lib/server/auth'
-import { getTransactionByReference, insertAuditLog, markProviderEventProcessed, recordProviderEvent, resolvePendingTransactionByReference } from '@/lib/server/data'
+import { getTransactionByReference, insertAuditLog, markProviderEventProcessed, recordProviderEvent, resolvePendingTransactionByReference, updatePendingTransactionMetadata } from '@/lib/server/data'
 import { mapFlutterwaveBillPaymentStatus, retrieveFlutterwaveBillPayment } from '@/lib/server/flutterwave-bills'
 
-export async function syncFlutterwaveBill(reference: string, actorUserId?: string) {
+const inFlightBillSyncs = new Map<string, Promise<Awaited<ReturnType<typeof syncFlutterwaveBillOnce>>>>()
+
+export function syncFlutterwaveBill(reference: string, actorUserId?: string) {
+  const existing = inFlightBillSyncs.get(reference)
+  if (existing) return existing
+
+  const run = syncFlutterwaveBillOnce(reference, actorUserId).finally(() => {
+    if (inFlightBillSyncs.get(reference) === run) inFlightBillSyncs.delete(reference)
+  })
+  inFlightBillSyncs.set(reference, run)
+  return run
+}
+
+async function syncFlutterwaveBillOnce(reference: string, actorUserId?: string) {
   const match = await getTransactionByReference(reference)
   if (!match) {
     throw new Error('Bill transaction not found.')
   }
 
   const metadata = match.transaction.metadata ?? {}
+  if (metadata.settlementKind !== 'provider_bill' || metadata.providerName !== 'flutterwave') {
+    throw new Error('This bill is not awaiting Flutterwave settlement.')
+  }
+  if (match.transaction.status !== 'pending') {
+    return {
+      reference,
+      synced: false,
+      status: match.transaction.status,
+      providerStatus: typeof metadata.providerStatus === 'string' ? metadata.providerStatus : null,
+      providerReference: typeof metadata.providerReference === 'string' ? metadata.providerReference : reference,
+    }
+  }
+
   const providerReference = typeof metadata.providerReference === 'string' ? metadata.providerReference : ''
   if (!providerReference) {
     throw new Error('Bill transaction has no provider reference to sync.')
@@ -18,6 +44,11 @@ export async function syncFlutterwaveBill(reference: string, actorUserId?: strin
   const normalized = mapFlutterwaveBillPaymentStatus(bill.rawStatus)
 
   if (!normalized) {
+    await updatePendingTransactionMetadata(match.userId, match.transaction.id, {
+      ...metadata,
+      providerStatus: bill.rawStatus ?? 'PENDING',
+      providerLastSyncAt: new Date().toISOString(),
+    })
     await insertAuditLog({
       userId: match.userId,
       actorUserId,

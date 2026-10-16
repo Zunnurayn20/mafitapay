@@ -2,14 +2,28 @@ import { listPendingBillTransactions } from '@/lib/server/data'
 import { syncFlutterwaveBill } from '@/lib/server/flutterwave-bill-sync'
 
 let pendingFlutterwaveBillSyncPromise: Promise<Awaited<ReturnType<typeof syncPendingFlutterwaveBills>>> | null = null
+let billSyncFollowUp = false
 let flutterwaveBillSyncIntervalStarted = false
 
-export async function syncPendingFlutterwaveBills(actorUserId?: string) {
-  const pending = await listPendingBillTransactions(50)
-  const results = await Promise.allSettled(pending.map(item => syncFlutterwaveBill(item.transaction.reference, actorUserId)))
+const BILL_SYNC_MIN_GAP_MS = 15_000
+
+function isBillSyncDue(lastSyncAt?: unknown) {
+  if (typeof lastSyncAt !== 'string') return true
+  const syncedAt = Date.parse(lastSyncAt)
+  return !Number.isFinite(syncedAt) || Date.now() - syncedAt >= BILL_SYNC_MIN_GAP_MS
+}
+
+export async function syncPendingFlutterwaveBills(actorUserId?: string, options?: { userId?: string; onlyDue?: boolean }) {
+  const pending = await listPendingBillTransactions(50, options?.userId)
+  const targets = pending.filter(item => (
+    item.transaction.metadata?.providerName === 'flutterwave'
+    && item.transaction.metadata?.settlementKind === 'provider_bill'
+    && (!options?.onlyDue || isBillSyncDue(item.transaction.metadata?.providerLastSyncAt))
+  ))
+  const results = await Promise.allSettled(targets.map(item => syncFlutterwaveBill(item.transaction.reference, actorUserId)))
 
   return results.reduce((acc, result, index) => {
-    const reference = pending[index]?.transaction.reference
+    const reference = targets[index]?.transaction.reference
     if (result.status === 'fulfilled') {
       acc.checked += 1
       if (result.value.synced) acc.synced += 1
@@ -39,11 +53,20 @@ export async function syncPendingFlutterwaveBills(actorUserId?: string) {
 }
 
 export function kickPendingFlutterwaveBillSync(actorUserId?: string) {
-  if (!pendingFlutterwaveBillSyncPromise) {
-    pendingFlutterwaveBillSyncPromise = syncPendingFlutterwaveBills(actorUserId).finally(() => {
-      pendingFlutterwaveBillSyncPromise = null
-    })
+  if (pendingFlutterwaveBillSyncPromise) {
+    billSyncFollowUp = true
+    return pendingFlutterwaveBillSyncPromise
   }
+
+  pendingFlutterwaveBillSyncPromise = syncPendingFlutterwaveBills(actorUserId).finally(() => {
+    pendingFlutterwaveBillSyncPromise = null
+    if (billSyncFollowUp) {
+      billSyncFollowUp = false
+      void kickPendingFlutterwaveBillSync(actorUserId).catch(error => {
+        console.warn('[flutterwave-bill-sync] follow_up_error', error instanceof Error ? error.message : 'Sync failed.')
+      })
+    }
+  })
   return pendingFlutterwaveBillSyncPromise
 }
 
@@ -51,7 +74,9 @@ export function ensureFlutterwaveBillSyncScheduler() {
   if (flutterwaveBillSyncIntervalStarted) return
   flutterwaveBillSyncIntervalStarted = true
 
-  setInterval(() => {
+  const run = () => {
     void kickPendingFlutterwaveBillSync()
-  }, 30_000)
+  }
+  run()
+  setInterval(run, 30_000)
 }

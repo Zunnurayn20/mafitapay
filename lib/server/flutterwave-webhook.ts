@@ -151,11 +151,13 @@ export async function handleFlutterwaveWebhook(input: {
     status = mapFlutterwaveChargeStatus(rawStatus)
   } else if (
     (eventType.toLowerCase().includes('bill') || eventType.toLowerCase().includes('payment'))
-    && (readString(data.reference) || readString(body.reference))
+    && (readString(data.customer_reference) || readString(data.reference) || readString(data.tx_ref) || readString(body.reference))
   ) {
-    reference = readString(data.reference) || readString(body.reference)
-    externalEventId = readString(data.id) || readString(body.id) || `${eventType}:${reference}`
-    providerReference = readString(data.id) || reference || undefined
+    // singlebillpayment.status sends our supplied reference as customer_reference and uses
+    // tx_ref for Flutterwave's own bill-status lookup. `reference` is often null in this event.
+    reference = readString(data.customer_reference) || readString(data.reference) || readString(body.reference) || readString(data.tx_ref)
+    externalEventId = readString(data.flw_ref) || readString(data.id) || readString(body.id) || `${eventType}:${readString(data.tx_ref) || reference}:${readString(data.status)}`
+    providerReference = readString(data.tx_ref) || readString(data.flw_ref) || readString(data.id) || undefined
     failureReason = readString(data.message) || readString(body.message) || undefined
     rawStatus = readString(data.status) || readString(body.status)
     status = mapFlutterwaveBillPaymentStatus(rawStatus)

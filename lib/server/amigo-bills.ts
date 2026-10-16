@@ -24,6 +24,7 @@ export type AmigoDataPaymentResult = {
   provider: 'amigo'
   reference: string
   status: 'success' | 'failed'
+  indeterminate?: boolean
   rawStatus?: string
   reason?: string
   providerReference?: string
@@ -35,6 +36,12 @@ export type AmigoDataPaymentResult = {
 const AMIGO_BASE_URL = process.env.MAFITAPAY_AMIGO_BASE_URL?.trim().replace(/\/$/, '') || 'https://amigo.ng/api'
 const BILLS_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_BILLS === '1'
 const AMIGO_VENDOR: PricingVendor = 'amigo'
+
+function isTransportError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : ''
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|socket|timeout|aborted/i.test(`${message} ${code}`)
+}
 
 /**
  * No-op kept for call sites that used to invalidate a price-baked catalog cache.
@@ -461,12 +468,15 @@ export async function createAmigoDataPayment(input: {
 
     return result
   } catch (error) {
+    const indeterminate = isTransportError(error)
     const result: AmigoDataPaymentResult = {
       provider: 'amigo',
       reference: input.reference,
       status: 'failed',
-      rawStatus: 'REQUEST_ERROR',
+      rawStatus: indeterminate ? 'TRANSPORT_ERROR' : 'REQUEST_ERROR',
       reason: error instanceof Error ? error.message : 'Amigo data purchase failed.',
+      providerReference: input.reference,
+      indeterminate,
       networkId: input.networkId,
       planId: Number(input.planId),
     }

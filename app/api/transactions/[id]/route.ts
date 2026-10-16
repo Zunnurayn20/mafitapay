@@ -10,6 +10,7 @@ import {
   getTransactionById,
 } from '@/lib/server/data'
 import { syncFlutterwavePayout } from '@/lib/server/payout-sync'
+import { syncFlutterwaveBill } from '@/lib/server/flutterwave-bill-sync'
 
 export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[id]'>) {
   const user = await requireUser()
@@ -33,6 +34,20 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[i
       payoutRequest = freshPayout
     } catch (error) {
       console.warn('[transactions] payout sync failed', error instanceof Error ? error.message : error)
+    }
+  }
+
+  if (
+    transaction.status === 'pending'
+    && transaction.metadata?.settlementKind === 'provider_bill'
+    && transaction.metadata?.providerName === 'flutterwave'
+  ) {
+    try {
+      await syncFlutterwaveBill(transaction.reference, user.id)
+      const freshTransaction = await getTransactionById(user.id, id)
+      if (freshTransaction) transaction = freshTransaction
+    } catch (error) {
+      console.warn('[transactions] bill sync failed', error instanceof Error ? error.message : 'Sync failed.')
     }
   }
 
