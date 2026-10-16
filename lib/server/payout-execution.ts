@@ -1,6 +1,7 @@
 import { appendNotification, createNotification } from '@/lib/server/auth'
 import { insertAuditLog, recordProviderEvent, resolvePendingTransaction, updatePayoutRequestStatus } from '@/lib/server/data'
 import { initiateFlutterwaveBankTransfer, isFlutterwavePayoutEnabled } from '@/lib/server/flutterwave-transfers'
+import { processSettlementEvent } from '@/lib/server/settlements'
 import type { Transaction } from '@/types'
 
 export async function executeBankPayout(input: {
@@ -59,6 +60,35 @@ export async function executeBankPayout(input: {
       mode: 'failed' as const,
       payout,
       released,
+    }
+  }
+
+  if (payout.status === 'success') {
+    const settled = await processSettlementEvent({
+      provider: payout.provider,
+      externalEventId: `init-success:${input.transaction.reference}`,
+      reference: input.transaction.reference,
+      status: 'success',
+      providerReference: payout.providerReference,
+      providerStatus: payout.rawStatus,
+      payload: payout.payload,
+    })
+    await insertAuditLog({
+      userId: input.userId,
+      action: 'payout_request.initiation_success',
+      entityType: 'transaction',
+      entityId: input.transaction.id,
+      metadata: {
+        reference: input.transaction.reference,
+        provider: payout.provider,
+        providerReference: payout.providerReference ?? null,
+        rawStatus: payout.rawStatus ?? null,
+      },
+    })
+    return {
+      mode: 'success' as const,
+      payout,
+      settled: settled.result,
     }
   }
 

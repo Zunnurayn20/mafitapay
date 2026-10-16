@@ -163,6 +163,19 @@ export async function POST(req: Request) {
       }, { status: 502 })
     }
 
+    if (payoutExecution.mode === 'success' && payoutExecution.settled) {
+      const settledWallet = 'wallet' in payoutExecution.settled
+        ? payoutExecution.settled.wallet
+        : await getWalletByUserId(user.id)
+      return NextResponse.json({
+        data: {
+          transaction: payoutExecution.settled.transaction,
+          wallet: settledWallet,
+        },
+        success: true,
+      })
+    }
+
     await appendNotification(user.id, createNotification({
       userId: user.id,
       title: 'Withdrawal pending',
