@@ -16,7 +16,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!order) {
     return NextResponse.json({ error: 'Crypto order not found.', success: false }, { status: 404 })
   }
-  if (order.executionRail !== 'base_legacy' && order.executionRail !== 'base_treasury' && order.executionRail !== 'bsc_treasury' && order.executionRail !== 'routed_treasury' && order.executionRail !== 'sui_treasury' && order.executionRail !== 'near_intents') {
+  if (order.executionRail !== 'base_legacy' && order.executionRail !== 'base_treasury' && order.executionRail !== 'bsc_treasury' && order.executionRail !== 'routed_treasury' && order.executionRail !== 'sui_treasury' && order.executionRail !== 'near_intents' && order.executionRail !== 'ton_treasury') {
     return NextResponse.json({ error: 'Only supported treasury orders can be broadcast from this route.', success: false }, { status: 400 })
   }
   if (order.executionStatus === 'broadcasted' || order.executionStatus === 'settled') {

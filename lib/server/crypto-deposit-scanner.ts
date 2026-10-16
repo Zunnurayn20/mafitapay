@@ -1477,73 +1477,107 @@ async function scanNearDeposits(input: {
     if (!headHeight) return { detected: 0, settled: 0 }
 
     const SCAN_WINDOW = 180
-    const fromHeight = Math.max(0, headHeight - SCAN_WINDOW)
-    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} scanning NEAR heights ${fromHeight}-${headHeight}`)
+    const scanKey = `near:${input.asset.pairId}:native`
+    const previous = await getLastScannedBlock(scanKey)
+    const initialFrom = Math.max(0, headHeight - SCAN_WINDOW)
+    const fromHeight = previous === null || previous > BigInt(headHeight)
+      ? initialFrom
+      : Number(previous + BigInt(1))
+    // Work forward from the durable cursor. A bounded batch catches up after outages without
+    // jumping over deposits; later watchdog/job passes continue from the last complete block.
+    const toHeight = Math.min(headHeight, fromHeight + SCAN_WINDOW - 1)
+    let lastCompleteHeight = fromHeight - 1
+    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} scanning NEAR heights ${fromHeight}-${toHeight} (head=${headHeight})`)
 
     const BATCH = 12
-    for (let h = headHeight; h >= fromHeight; h -= BATCH) {
-      const heights: number[] = []
-      for (let i = 0; i < BATCH && h - i >= fromHeight; i++) heights.push(h - i)
-      const blockPromises = heights.map((ht) => nearBlock(provider, ht).catch(() => null))
-      const blocks = await Promise.all(blockPromises)
+    let stoppedOnError = false
+    const legacyTransactionChecks = new Map<string, number>()
+    for (let batchStart = fromHeight; batchStart <= toHeight && !stoppedOnError; batchStart += BATCH) {
+      const heights = Array.from({ length: Math.min(BATCH, toHeight - batchStart + 1) }, (_, i) => batchStart + i)
+      const blocks = await Promise.all(heights.map((height) => nearBlock(provider, height).catch(() => null)))
 
       for (let bi = 0; bi < blocks.length; bi++) {
         const block = blocks[bi]
         const blockHeight = heights[bi]
-        if (!block || !block.chunks) continue
+        try {
+          if (!block || !Array.isArray(block.chunks)) throw new Error(`NEAR block ${blockHeight} could not be read completely.`)
 
-        for (const ch of block.chunks) {
-          try {
+          for (const ch of block.chunks) {
             const chunk = await nearChunk(provider, ch.chunk_hash).catch(() => null)
-            if (!chunk) continue
+            if (!chunk || !Array.isArray(chunk.receipts)) throw new Error(`NEAR chunk ${ch.chunk_hash} could not be read completely.`)
 
-            const receipts = chunk.receipts || []
-            for (const rec of receipts) {
-              if (!rec || !rec.receiver_id) continue
+            for (let ri = 0; ri < chunk.receipts.length; ri++) {
+              const rec = chunk.receipts[ri]
+              if (!rec?.receiver_id) continue
               const receiver = String(rec.receiver_id)
               if (!targetSet.has(receiver.toLowerCase())) continue
 
               const actions = rec.receipt?.Action?.actions || []
-              for (const act of actions) {
-                if (act?.Transfer?.deposit) {
-                  const depositStr = String(act.Transfer.deposit)
-                  const value = BigInt(depositStr)
-                  if (value <= BigInt(0)) continue
+              for (let actionIndex = 0; actionIndex < actions.length; actionIndex++) {
+                const deposit = actions[actionIndex]?.Transfer?.deposit
+                if (!deposit) continue
+                const value = BigInt(String(deposit))
+                if (value <= BigInt(0)) continue
 
-                  const receiptId = rec.receipt_id || rec.receipt?.receipt_id || String(blockHeight)
-                  const txHash = rec.transaction_hash || receiptId
-                  const externalEventId = `near:${input.asset.pairId}:${txHash}:native`
-                  const addressRec = nearAddrs.find((a) => a.address.toLowerCase() === receiver.toLowerCase())
-                  if (!addressRec) continue
+                const receiptId = rec.receipt_id || rec.receipt?.receipt_id || `${blockHeight}:${ch.chunk_hash}:${ri}`
+                const txHash = rec.transaction_hash || receiptId
+                // One NEAR transaction can create multiple transfer receipts. Key deposits by
+                // receipt/action so those distinct credits are not collapsed by tx hash.
+                let externalEventId = `near:${input.asset.pairId}:${receiptId}:${actionIndex}:native`
+                const addressRec = nearAddrs.find((a) => a.address.toLowerCase() === receiver.toLowerCase())
+                if (!addressRec) continue
 
-                  if (VERBOSE_DEPOSIT_SCANNER) {
-                    console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${receiver} value=${value.toString()} tx=${txHash}`)
-                  }
-                  const result = await persistAndSettleDeposit({
-                    asset: input.asset,
-                    address: addressRec,
-                    externalEventId,
-                    amountUnits: value,
-                    txHash: String(txHash),
-                    blockNumber: BigInt(blockHeight),
-                    payload: {
-                      type: 'near_native_transfer',
-                      from: rec.predecessor_id,
-                      to: receiver,
-                      receipt_id: rec.receipt_id,
-                      block: blockHeight,
-                    },
-                  })
-                  if (!result.duplicate) detected += 1
-                  if (result.settled) settled += 1
+                // Existing scanner versions keyed a deposit only by transaction hash. During
+                // the initial cursor backfill, reuse that legacy event for the first receipt so
+                // replaying recent history cannot credit a previously settled transfer twice.
+                const txKey = String(txHash)
+                const legacyReceiptState = legacyTransactionChecks.get(txKey)
+                if (legacyReceiptState === undefined) {
+                  const legacyEventExists = Boolean(await getCryptoDepositEventByExternalId(`near:${input.asset.pairId}:${txHash}:native`))
+                  legacyTransactionChecks.set(txKey, legacyEventExists ? 1 : 2)
+                  if (legacyEventExists) externalEventId = `near:${input.asset.pairId}:${txHash}:native`
+                } else if (legacyReceiptState === 1) {
+                  // The legacy row represents one receipt for this transaction; additional
+                  // receipts now get their own stable event IDs and can be credited separately.
+                  legacyTransactionChecks.set(txKey, 2)
                 }
+
+                if (VERBOSE_DEPOSIT_SCANNER) {
+                  console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched native deposit: to=${receiver} value=${value.toString()} tx=${txHash}`)
+                }
+                const result = await persistAndSettleDeposit({
+                  asset: input.asset,
+                  address: addressRec,
+                  externalEventId,
+                  amountUnits: value,
+                  txHash: String(txHash),
+                  blockNumber: BigInt(blockHeight),
+                  payload: {
+                    type: 'near_native_transfer',
+                    from: rec.predecessor_id,
+                    to: receiver,
+                    receipt_id: receiptId,
+                    action_index: actionIndex,
+                    transaction_hash: txHash,
+                    block: blockHeight,
+                  },
+                })
+                if (!result.duplicate) detected += 1
+                if (result.settled) settled += 1
               }
             }
-          } catch (e) {
-            // per-chunk soft fail
           }
+          lastCompleteHeight = blockHeight
+        } catch (error) {
+          stoppedOnError = true
+          console.warn(`[crypto-deposit-scanner] NEAR scan stopped at block ${blockHeight}; cursor will remain at ${lastCompleteHeight}:`, sanitizeTextForLogs(error instanceof Error ? error.message : String(error)))
+          break
         }
       }
+    }
+
+    if (lastCompleteHeight >= fromHeight) {
+      await persistLastScannedBlock(scanKey, BigInt(lastCompleteHeight))
     }
   } catch (e) {
     console.warn(`[crypto-deposit-scanner] NEAR scan top-level error:`, sanitizeTextForLogs(e instanceof Error ? e.message : String(e)))
