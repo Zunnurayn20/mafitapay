@@ -37,6 +37,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const [confirmError, setConfirmError] = useState('')
   const [formError, setFormError] = useState('')
   const [reference, setReference] = useState('')
+  const [settlementStatus, setSettlementStatus] = useState<'pending' | 'success'>('pending')
 
   useEffect(() => {
     if (!open) return
@@ -71,6 +72,7 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
       setConfirmError('')
       setFormError('')
       setReference('')
+      setSettlementStatus('pending')
     }
   }
 
@@ -144,10 +146,11 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           ...input,
         }),
       })
-      const withdrawal = await readJsonResponse<{ transaction: { reference?: string } }>(response)
+      const withdrawal = await readJsonResponse<{ transaction: { reference?: string; status?: string } }>(response)
 
       await refreshSession()
       setReference(withdrawal.transaction.reference || generateRef())
+      setSettlementStatus(withdrawal.transaction.status === 'success' ? 'success' : 'pending')
       setConfirmStatus('success')
     } catch (error) {
       setConfirmError(toUserMessage(error, 'Withdrawal failed.'))
@@ -251,11 +254,17 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
           biometricBusy={biometricBusy}
           status={confirmStatus}
-          statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Withdrawal submitted!' : undefined}
+          statusTitle={confirmStatus === 'processing'
+            ? 'Processing payment'
+            : confirmStatus === 'success'
+              ? settlementStatus === 'success' ? 'Withdrawal complete!' : 'Withdrawal submitted!'
+              : undefined}
           statusMessage={confirmStatus === 'processing'
             ? 'Submitting your bank payout. Funds stay locked until it settles.'
             : confirmStatus === 'success'
-              ? `₦${(parseFloat(amount) || 0).toLocaleString()} bank withdrawal to ${accountName} is pending payout settlement.`
+              ? settlementStatus === 'success'
+                ? `₦${(parseFloat(amount) || 0).toLocaleString()} has been sent to ${accountName}.`
+                : `₦${(parseFloat(amount) || 0).toLocaleString()} bank withdrawal to ${accountName} is pending payout settlement.`
               : confirmError}
           statusReference={reference}
           onRetry={() => {
