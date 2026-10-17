@@ -9,7 +9,7 @@ import { createBiometricApproval } from '@/lib/client/biometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
 import { readClipboardText } from '@/lib/clipboard'
 import { useCryptoAssets } from '@/lib/client/catalogs'
-import { getCryptoNetworkFeeNgn, getMinimumBuyNgn } from '@/lib/crypto-rules'
+import { getCryptoNetworkFeeNgn, getMinimumBuyNgnForAsset } from '@/lib/crypto-rules'
 import { useAppStore } from '@/store'
 import { formatCrypto, formatNGN, formatUSD } from '@/lib/utils'
 import { CryptoAsset, CryptoPairId, CryptoQuote } from '@/types'
@@ -103,7 +103,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       ? getCryptoNetworkFeeNgn(asset, 'buy')
       : 0
   const totalDebit = orderNgn + fee
-  const minimumBuyNgn = asset ? getMinimumBuyNgn(asset.id) : 1000
+  const usdcBuyRateNgn = assets.find(item => item.id === 'USDC_BASE')?.buyRate
+  const minimumBuyNgn = asset ? getMinimumBuyNgnForAsset(asset, usdcBuyRateNgn) : 1000
   const belowMinimum = amt > 0 && amt < minimumBuyNgn
   const addressValidation = asset ? validateWalletAddressForPair(asset.id, address) : { valid: false, error: 'Destination wallet address is required.' }
   const addressError = address.trim().length > 0 && !addressValidation.valid ? addressValidation.error : null

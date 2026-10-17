@@ -61,8 +61,8 @@ const FALLBACK_NETWORK_FEE_NGN: NetworkFeePair = { buy: 150, sell: 200 }
 const MINIMUM_BUY_NGN_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   USDC_BASE: 500,
   ETH_BASE: 500,
-  // LI.FI returned no Base USDC → Sui USDC route at about $0.31, while live quotes
-  // succeeded at $1.25+. Keep the customer minimum above that observed route threshold.
+  // Fallback while the live Base USDC rate is unavailable. SUI normally uses a
+  // dynamic ₦1 USDC equivalent so its LI.FI input is at least $1.00.
   SUI_SUI: 2500,
   NEAR_NEAR: 500,
   TON_TON: 800,
@@ -87,7 +87,13 @@ export function getMinimumBuyNgn(pairId: CryptoPairId) {
   return MINIMUM_BUY_NGN_BY_PAIR[pairId] ?? 1000
 }
 
-export function getMinimumBuyNgnForAsset(asset: Pick<CryptoAsset, 'id' | 'network' | 'executionRail' | 'routedToChain' | 'routedToToken' | 'routedDecimals' | 'routedAddressFamily' | 'minimumBuyNgn' | 'maxQuoteDriftPercent'>) {
+export function getMinimumBuyNgnForAsset(
+  asset: Pick<CryptoAsset, 'id' | 'network' | 'executionRail' | 'routedToChain' | 'routedToToken' | 'routedDecimals' | 'routedAddressFamily' | 'minimumBuyNgn' | 'maxQuoteDriftPercent'>,
+  usdcBuyRateNgn?: number,
+) {
+  if (asset.id === 'SUI_SUI' && Number.isFinite(usdcBuyRateNgn) && Number(usdcBuyRateNgn) > 0) {
+    return Math.ceil(Number(usdcBuyRateNgn))
+  }
   if (asset.executionRail === 'routed_treasury') {
     return getRoutedTreasuryPairConfigForAsset(asset).minimumBuyNgn
   }
