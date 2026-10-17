@@ -9382,6 +9382,32 @@ export async function updateCryptoOrderProviderState(input: {
   return getCryptoOrderById(input.id)
 }
 
+/** Atomically claim a pending Sui order before sending payout from treasury inventory. */
+export async function claimCryptoOrderSuiInventoryPayout(input: {
+  id: string
+  expectedProviderStatus: string | null
+}) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres(`
+      UPDATE crypto_orders
+      SET provider_status = 'SUI_INVENTORY_PAYOUT_SUBMITTING', updated_at = ?
+      WHERE id = ? AND status = 'pending' AND execution_status = 'broadcasted'
+        AND execution_rail = 'sui_treasury' AND provider_status IS NOT DISTINCT FROM ?
+    `, [now, input.id, input.expectedProviderStatus])
+    return (result.rowCount ?? 0) === 1
+  }
+
+  const result = getDb().prepare(`
+    UPDATE crypto_orders
+    SET provider_status = 'SUI_INVENTORY_PAYOUT_SUBMITTING', updated_at = ?
+    WHERE id = ? AND status = 'pending' AND execution_status = 'broadcasted'
+      AND execution_rail = 'sui_treasury' AND provider_status IS ?
+  `).run(now, input.id, input.expectedProviderStatus)
+  return result.changes === 1
+}
+
 export async function consumeCryptoQuote(userId: string, quoteId: string, side: 'buy' | 'sell') {
   await ensureDbReady()
   if (isPostgresEnabled()) {

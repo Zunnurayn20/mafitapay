@@ -22,6 +22,20 @@ const MIN_SUI_PAYOUT_TX_BUFFER = BigInt(50_000_000)
 const UPSTREAM_FETCH_TIMEOUT_MS = 12_000
 const execFileAsync = promisify(execFile)
 
+export class SuiPayoutSubmissionUncertainError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SuiPayoutSubmissionUncertainError'
+  }
+}
+
+class SuiPayoutDefinitiveFailureError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SuiPayoutDefinitiveFailureError'
+  }
+}
+
 type LifiBridgeQuoteResponse = {
   transactionId?: string
   tool?: string
@@ -303,6 +317,24 @@ async function getSuiTreasuryNativeBalance() {
   }
 }
 
+export async function getSuiTreasuryUsdcBalance() {
+  const account = getSuiTreasuryAccount()
+  const config = getSuiTreasuryConfig()
+  try {
+    const balance = await withSuiReadFailover((client) => client.getBalance({
+      owner: account.address,
+      coinType: config.usdcCoinType,
+    }))
+    return BigInt(balance.balance.balance)
+  } catch (error) {
+    logSui('treasury.usdc-balance-error', {
+      ...getSuiTreasuryContext(),
+      message: formatUnknownError(error),
+    })
+    throw normalizeSuiRpcError(error, 'Unable to verify Sui USDC treasury inventory.')
+  }
+}
+
 function buildLifiHeaders() {
   const config = getLifiConfig()
   return {
@@ -518,6 +550,7 @@ export async function assertSuiTreasuryCanExecuteBuy(input: {
   const requiredUsdcAmount = await getTreasuryUsdcAmount(input.amountNgn)
   const requiredUsdcUnits = toSmallestUnit(requiredUsdcAmount, USDC_DECIMALS)
   const balance = await getSuiTreasuryNativeBalance()
+  const usdcBalance = await getSuiTreasuryUsdcBalance()
   const requiredNativeReserve = MIN_SUI_PAYOUT_GAS_RESERVE + MIN_SUI_PAYOUT_TX_BUFFER
 
   logSui('treasury.balances', {
@@ -527,10 +560,14 @@ export async function assertSuiTreasuryCanExecuteBuy(input: {
     txBufferMist: MIN_SUI_PAYOUT_TX_BUFFER.toString(),
     requiredNativeReserveMist: requiredNativeReserve.toString(),
     requiredUsdcUnits: requiredUsdcUnits.toString(),
+    currentUsdcUnits: usdcBalance.toString(),
   })
 
   if (balance.totalBalance < requiredNativeReserve) {
     throw new Error('SUI treasury gas is too low to complete this payout flow right now.')
+  }
+  if (usdcBalance < requiredUsdcUnits) {
+    throw new Error('SUI treasury USDC inventory is too low for instant SUI delivery right now.')
   }
 }
 
@@ -651,6 +688,11 @@ export async function swapAndPayoutSuiForOrder(input: {
   }
 
   const treasury = getSuiTreasuryAccount()
+  const availableUsdcUnits = await getSuiTreasuryUsdcBalance()
+  const requiredUsdcUnits = BigInt(bridgedUsdcUnits)
+  if (availableUsdcUnits < requiredUsdcUnits) {
+    throw new Error('Sui treasury USDC inventory is insufficient for this SUI payout.')
+  }
   const balance = await getSuiTreasuryNativeBalance()
   const requiredNativeReserve = MIN_SUI_PAYOUT_GAS_RESERVE + MIN_SUI_PAYOUT_TX_BUFFER
   logSui('payout.gas-check', {
@@ -690,7 +732,9 @@ export async function swapAndPayoutSuiForOrder(input: {
       include: { effects: true },
     })
     if (executionResult.$kind === 'FailedTransaction') {
-      throw new Error(executionResult.FailedTransaction.effects?.status?.error?.message || 'SUI payout transaction failed.')
+      throw new SuiPayoutDefinitiveFailureError(
+        executionResult.FailedTransaction.effects?.status?.error?.message || 'SUI payout transaction failed.',
+      )
     }
     const txHash = executionResult.Transaction.digest
     if (!txHash) {
@@ -702,6 +746,7 @@ export async function swapAndPayoutSuiForOrder(input: {
       address: treasury.address,
       receiver: finalRecipient,
       grpcUrl,
+      payoutSourceUsdcUnits: bridgedUsdcUnits,
       nativePayoutTxHash: txHash,
       payoutAmountMist: tradeRoute.coinOutAmount.toString(),
     })
@@ -720,6 +765,8 @@ export async function swapAndPayoutSuiForOrder(input: {
       receiver: finalRecipient,
       message: formatUnknownError(error),
     })
-    throw normalizeSuiRpcError(error, 'Unable to send native SUI payout. Check SUI treasury key and RPC configuration.')
+    const normalized = normalizeSuiRpcError(error, 'Unable to send native SUI payout. Check SUI treasury key and RPC configuration.')
+    if (error instanceof SuiPayoutDefinitiveFailureError) throw error
+    throw new SuiPayoutSubmissionUncertainError(normalized.message)
   }
 }

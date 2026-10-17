@@ -15,8 +15,9 @@ export async function settleCryptoOrderTerminalState(input: {
   actorUserId: string
   source: 'admin' | 'chain_receipt' | 'auto_execution'
   metadata?: Record<string, unknown>
+  providerStatus?: string
 }) {
-  const { order, outcome, actorUserId, source, metadata } = input
+  const { order, outcome, actorUserId, source, metadata, providerStatus } = input
 
   if (order.status !== 'pending') {
     throw new Error(`Crypto order is already ${order.status}.`)
@@ -44,7 +45,7 @@ export async function settleCryptoOrderTerminalState(input: {
   if (order.provider === 'lifi') {
     await updateCryptoOrderProviderState({
       id: order.id,
-      providerStatus: outcome === 'fulfilled' ? 'DONE:COMPLETED' : 'FAILED',
+      providerStatus: providerStatus ?? (outcome === 'fulfilled' ? 'DONE:COMPLETED' : 'FAILED'),
     })
   }
   if (order.provider === 'ston') {
