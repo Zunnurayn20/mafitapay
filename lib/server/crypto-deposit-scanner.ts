@@ -18,7 +18,8 @@ import { getRobinhoodRpcUrls, robinhoodChain } from '@/lib/server/robinhood-chai
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
+import { SuiGrpcClient, GrpcTypes } from '@mysten/sui/grpc'
+import { createSuiGrpcClient, getSuiGrpcUrls } from '@/lib/server/sui-grpc'
 import { FailoverRpcProvider, JsonRpcProvider } from 'near-api-js'
 import { sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
@@ -404,12 +405,8 @@ function createSolanaConnection() {
   return new Connection(rpcUrl, 'confirmed')
 }
 
-const DEFAULT_SUI_RPC_URL = 'https://fullnode.mainnet.sui.io:443'
-
 function createSuiScannerClient() {
-  const raw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC_URL)
-  const url = raw.split(',')[0].trim() || DEFAULT_SUI_RPC_URL
-  return new SuiJsonRpcClient({ network: 'mainnet', url })
+  return createSuiGrpcClient(getSuiGrpcUrls()[0])
 }
 
 const NEAR_RPC_SHORTHAND_MAP: Record<string, string> = {
@@ -1347,7 +1344,7 @@ async function scanSolanaDeposits(input: {
 
 async function scanSuiDeposits(input: {
   asset: SupportedDepositAsset
-  client: SuiJsonRpcClient
+  client: SuiGrpcClient
   lookup: Map<string, CryptoDepositAddress>
 }) {
   const suiAddrs = Array.from(input.lookup.values()).filter((a) => a.addressFamily === 'sui')
@@ -1360,26 +1357,36 @@ async function scanSuiDeposits(input: {
 
   for (const addr of suiAddrs) {
     try {
-      const page = await client.queryTransactionBlocks({
-        filter: { ToAddress: addr.address },
-        limit: 30,
-        order: 'descending',
-        options: { showBalanceChanges: true, showEffects: true },
+      const stream = client.ledgerService.listTransactions({
+        filter: {
+          terms: [{
+            literals: [{
+              negated: false,
+              predicate: {
+                oneofKind: 'affectedAddress',
+                affectedAddress: { address: addr.address },
+              },
+            }],
+          }],
+        },
+        options: { limit: 30, ordering: GrpcTypes.Ordering.DESCENDING },
+        readMask: { paths: ['digest', 'balanceChanges', 'checkpoint'] },
       })
-      const txs = (page as any).data || []
+      const txs: Array<{
+        digest?: string
+        checkpoint?: bigint
+        balanceChanges: Array<{ address?: string; coinType?: string; amount?: string }>
+      }> = []
+      for await (const frame of stream.responses) {
+        if (frame.transaction) txs.push(frame.transaction)
+      }
       for (const tx of txs) {
-        const digest: string | undefined = tx?.digest
+        const digest: string | undefined = tx.digest
         if (!digest) continue
-        const balanceChanges: any[] = (tx as any).balanceChanges || []
+        const balanceChanges = tx.balanceChanges || []
         let value = BigInt(0)
         for (const bc of balanceChanges) {
-          const ownerStr =
-            typeof bc?.owner === 'string'
-              ? bc.owner
-              : bc?.owner && typeof bc.owner === 'object'
-                ? bc.owner.AddressOwner || bc.owner.ObjectOwner || null
-                : null
-          if (ownerStr === addr.address && bc?.coinType === NATIVE_SUI_TYPE) {
+          if (bc.address === addr.address && bc.coinType === NATIVE_SUI_TYPE) {
             const amt = BigInt(bc.amount || '0')
             if (amt > 0) value += amt
           }
@@ -1396,7 +1403,7 @@ async function scanSuiDeposits(input: {
           externalEventId,
           amountUnits: value,
           txHash: digest,
-          blockNumber: tx?.checkpoint ? BigInt(tx.checkpoint) : undefined,
+          blockNumber: tx.checkpoint,
           payload: {
             type: 'sui_native_transfer',
             digest,
@@ -1628,10 +1635,10 @@ export async function syncCryptoDepositEventsOnce() {
     const baseCfg = getBaseExecutorConfig()
     const bscCfg = getBscExecutorConfig()
     const polyRpcRaw = (process.env.MAFITAPAY_POLYGON_RPC_URLS?.trim() || process.env.MAFITAPAY_POLYGON_RPC_URL?.trim() || DEFAULT_POLYGON_RPC_URL)
-    const suiRpcRaw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC_URL)
+    const suiGrpcUrls = getSuiGrpcUrls()
     const nearRpcRaw = (process.env.MAFITAPAY_NEAR_RPC_URLS?.trim() || process.env.MAFITAPAY_NEAR_RPC_URL?.trim() || DEFAULT_NEAR_RPC_URLS[0])
     const sanitizedPolygon = sanitizePolygonRpcUrls(polyRpcRaw)
-    console.log(`[crypto-deposit-scanner] RPCs base(${baseCfg.rpcUrls.length})=${baseCfg.rpcUrls.map(sanitizeUrlForLogs).join(' | ')} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(sanitizedPolygon[0] || polyRpcRaw.split(',')[0])} (raw had ${polyRpcRaw.split(',').length} entries) sui[0]=${sanitizeUrlForLogs(suiRpcRaw.split(',')[0])} near[0]=${sanitizeUrlForLogs(nearRpcRaw)}`)
+    console.log(`[crypto-deposit-scanner] RPCs base(${baseCfg.rpcUrls.length})=${baseCfg.rpcUrls.map(sanitizeUrlForLogs).join(' | ')} bsc[0]=${sanitizeUrlForLogs(bscCfg.rpcUrls[0])} polygon[0]=${sanitizeUrlForLogs(sanitizedPolygon[0] || polyRpcRaw.split(',')[0])} (raw had ${polyRpcRaw.split(',').length} entries) sui gRPC[0]=${sanitizeUrlForLogs(suiGrpcUrls[0])} near[0]=${sanitizeUrlForLogs(nearRpcRaw)}`)
     // Surface a dead primary before the scan, so throttling errors from a fallback endpoint are
     // read as the symptom they are rather than the cause.
     await Promise.all([

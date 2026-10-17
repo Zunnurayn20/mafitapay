@@ -19,7 +19,7 @@ import { createAssociatedTokenAccountInstruction, createTransferInstruction, get
 import { base58 } from '@scure/base'
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
 import { Transaction as SuiTransaction } from '@mysten/sui/transactions'
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
+import { createSuiGrpcClient, getSuiGrpcUrls } from '@/lib/server/sui-grpc'
 import { Account, FailoverRpcProvider, JsonRpcProvider, KeyPair } from 'near-api-js'
 import { NEAR } from 'near-api-js/tokens'
 import { getBaseBuilderDataSuffix, getBaseExecutorConfig, logBaseAttribution } from '@/lib/server/base-executor'
@@ -442,9 +442,7 @@ function parseNearKeypairSecret(secret: string): KeyPair {
 }
 
 function createSuiScannerClientForSweep() {
-  const raw = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || 'https://fullnode.mainnet.sui.io:443')
-  const url = raw.split(',')[0].trim() || 'https://fullnode.mainnet.sui.io:443'
-  return new SuiJsonRpcClient({ network: 'mainnet', url })
+  return createSuiGrpcClient(getSuiGrpcUrls()[0])
 }
 
 function createNearSweepProvider() {
@@ -1235,15 +1233,17 @@ async function sweepSuiNative(input: {
     const [sendCoin] = tx.splitCoins(tx.gas, [input.amountUnits - SUI_GAS_BUFFER_MIST])
     tx.transferObjects([sendCoin], input.treasuryAddress)
 
-    const dryRun = await client.dryRunTransactionBlock({
-      transactionBlock: tx,
-      sender: depositAddress,
-    } as any).catch(() => null)
+    const simulation = await client.simulateTransaction({ transaction: tx, include: { effects: true } }).catch(() => null)
+    const effects = simulation?.$kind === 'Transaction'
+      ? simulation.Transaction.effects
+      : simulation?.$kind === 'FailedTransaction'
+        ? simulation.FailedTransaction.effects
+        : undefined
 
-    if (dryRun?.effects?.gasUsed) {
-      const gasUsed = BigInt(dryRun.effects.gasUsed.computationCost || 0) +
-                      BigInt(dryRun.effects.gasUsed.storageCost || 0) -
-                      BigInt(dryRun.effects.gasUsed.storageRebate || 0)
+    if (effects?.gasUsed) {
+      const gasUsed = BigInt(effects.gasUsed.computationCost || 0) +
+                      BigInt(effects.gasUsed.storageCost || 0) -
+                      BigInt(effects.gasUsed.storageRebate || 0)
       const multiplier = BigInt(Math.floor(SUI_GAS_SAFETY_MULTIPLIER * 100))
       const withMargin = (gasUsed * multiplier) / BigInt(100)
       if (withMargin > gasReserve) gasReserve = withMargin
@@ -1267,11 +1267,11 @@ async function sweepSuiNative(input: {
   console.log(`[crypto-deposit-sweeper] Sui sweep gas-reserve pair=SUI_SUI received=${input.amountUnits} reserved=${gasReserve} sent=${toSend}`)
 
   // Fetch owned SUI coins...
-  const coinsResp = await client.getCoins({ owner: depositAddress, coinType: '0x2::sui::SUI', limit: 50 })
-  const coins = coinsResp.data || []
+  const coinsResp = await client.listCoins({ owner: depositAddress, coinType: '0x2::sui::SUI', limit: 50 })
+  const coins = coinsResp.objects || []
   if (coins.length === 0) {
     const balance = await client.getBalance({ owner: depositAddress })
-    if (BigInt(balance.totalBalance) < toSend + gasReserve) {
+    if (BigInt(balance.balance.balance) < toSend + gasReserve) {
       throw new Error('No SUI coins or insufficient balance to sweep on Sui deposit address.')
     }
   }
@@ -1281,7 +1281,7 @@ async function sweepSuiNative(input: {
   tx.setGasBudget(Number(gasReserve) + 10_000_000) // give a bit extra headroom
 
   if (coins.length > 0) {
-    const primary = coins[0].coinObjectId
+    const primary = coins[0].objectId
     const [sendCoin] = tx.splitCoins(primary, [toSend])
     tx.transferObjects([sendCoin], input.treasuryAddress)
   } else {
@@ -1292,9 +1292,12 @@ async function sweepSuiNative(input: {
   const result = await client.signAndExecuteTransaction({
     signer: depositKeypair,
     transaction: tx,
+    include: { effects: true },
   })
-  const hash = (result as any).digest || (result as any).txDigest || 'sui-sweep-digest-missing'
-  return String(hash)
+  if (result.$kind === 'FailedTransaction') {
+    throw new Error(result.FailedTransaction.effects?.status?.error?.message || 'Sui deposit sweep transaction failed.')
+  }
+  return result.Transaction.digest
 }
 
 async function sweepNearNative(input: {

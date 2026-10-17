@@ -1,18 +1,18 @@
 import { execFile } from 'node:child_process'
 import * as https from 'node:https'
 import { promisify } from 'node:util'
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc'
+import { SuiGrpcClient } from '@mysten/sui/grpc'
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions'
 import { broadcastBaseTransaction, getBaseExecutorConfig, getBaseBuilderDataSuffix } from '@/lib/server/base-executor'
 import { getCryptoAssetById } from '@/lib/server/data'
 import { assertLifiTreasuryCanExecuteBuy, getLifiConfig, prepareLifiBaseApproval } from '@/lib/server/lifi'
+import { createSuiGrpcClient, getSuiGrpcUrls } from '@/lib/server/sui-grpc'
 import type { CryptoOrder } from '@/types'
 
 const SUI_CHAIN_ID = '9270000000000000'
 const SUI_COIN_DECIMALS = 9
 const USDC_DECIMALS = 6
-const DEFAULT_SUI_RPC_URL = 'https://fullnode.mainnet.sui.io:443'
 const DEFAULT_SUI_ROUTER_BASE_URL = 'https://aftermath.finance/api/router'
 const DEFAULT_SUI_USDC_COIN_TYPE = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC'
 const DEFAULT_SUI_NATIVE_COIN_TYPE = '0x2::sui::SUI'
@@ -193,13 +193,10 @@ function buildJsonHeaders(extra?: Record<string, string>) {
 }
 
 function getSuiTreasuryConfig() {
-  const configuredRpcUrls = (process.env.MAFITAPAY_SUI_RPC_URLS?.trim() || process.env.MAFITAPAY_SUI_RPC_URL?.trim() || DEFAULT_SUI_RPC_URL)
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
+  const grpcUrls = getSuiGrpcUrls()
 
   return {
-    rpcUrls: configuredRpcUrls.length > 0 ? configuredRpcUrls : [DEFAULT_SUI_RPC_URL],
+    grpcUrls,
     privateKey: process.env.MAFITAPAY_SUI_TREASURY_PRIVATE_KEY?.trim() || '',
     configuredAddress: process.env.MAFITAPAY_SUI_TREASURY_ADDRESS?.trim() || '',
     routerBaseUrl: (process.env.MAFITAPAY_SUI_ROUTER_BASE_URL?.trim() || DEFAULT_SUI_ROUTER_BASE_URL).replace(/\/+$/, ''),
@@ -213,8 +210,8 @@ function getSuiTreasuryContext() {
   const config = getSuiTreasuryConfig()
   return {
     address: config.configuredAddress || null,
-    rpcUrls: config.rpcUrls,
-    rpcUrlCount: config.rpcUrls.length,
+    grpcUrls: config.grpcUrls,
+    grpcUrlCount: config.grpcUrls.length,
     privateKeyConfigured: Boolean(config.privateKey),
   }
 }
@@ -238,34 +235,27 @@ function getSuiTreasuryAccount() {
   }
 }
 
-function createSuiClient(url: string) {
-  return new SuiJsonRpcClient({
-    network: 'mainnet',
-    url,
-  })
-}
-
-async function withSuiReadFailover<T>(action: (client: SuiJsonRpcClient, rpcUrl: string) => Promise<T>) {
+async function withSuiReadFailover<T>(action: (client: SuiGrpcClient, grpcUrl: string) => Promise<T>) {
   const config = getSuiTreasuryConfig()
   let lastError: unknown = null
 
-  for (const rpcUrl of config.rpcUrls) {
+  for (const grpcUrl of config.grpcUrls) {
     try {
-      return await action(createSuiClient(rpcUrl), rpcUrl)
+      return await action(createSuiGrpcClient(grpcUrl), grpcUrl)
     } catch (error) {
       lastError = error
     }
   }
 
   if (lastError instanceof Error) throw lastError
-  throw new Error(`Exceeded ${config.rpcUrls.length} Sui RPC providers to execute request`)
+  throw new Error(`Exceeded ${config.grpcUrls.length} Sui gRPC providers to execute request`)
 }
 
 function getSuiWriteClient() {
   const config = getSuiTreasuryConfig()
   return {
-    client: createSuiClient(config.rpcUrls[0]),
-    rpcUrl: config.rpcUrls[0],
+    client: createSuiGrpcClient(config.grpcUrls[0]),
+    grpcUrl: config.grpcUrls[0],
   }
 }
 
@@ -274,7 +264,7 @@ function normalizeSuiRpcError(error: unknown, fallback: string) {
   const message = error.message || fallback
 
   if (/fetch failed|Request timed out|ECONNRESET|EAI_AGAIN|socket hang up/i.test(message)) {
-    return new Error('Sui RPC is unavailable right now. Update MAFITAPAY_SUI_RPC_URL or MAFITAPAY_SUI_RPC_URLS and try again.')
+    return new Error('Sui gRPC is unavailable right now. Check MAFITAPAY_SUI_GRPC_URL or MAFITAPAY_SUI_GRPC_URLS and try again.')
   }
   if (/private key/i.test(message) || /does not match the loaded private key/i.test(message)) {
     return error
@@ -302,7 +292,7 @@ async function getSuiTreasuryNativeBalance() {
     const balance = await withSuiReadFailover((client) => client.getBalance({ owner: account.address }))
     return {
       address: account.address,
-      totalBalance: BigInt(balance.totalBalance),
+      totalBalance: BigInt(balance.balance.balance),
     }
   } catch (error) {
     logSui('treasury.balances-error', {
@@ -693,12 +683,16 @@ export async function swapAndPayoutSuiForOrder(input: {
   built.tx.transferObjects([built.coinOutId], finalRecipient)
 
   try {
-    const { client, rpcUrl } = getSuiWriteClient()
+    const { client, grpcUrl } = getSuiWriteClient()
     const executionResult = await client.signAndExecuteTransaction({
       signer: treasury.keypair,
       transaction: built.tx,
+      include: { effects: true },
     })
-    const txHash = typeof executionResult.digest === 'string' ? executionResult.digest : null
+    if (executionResult.$kind === 'FailedTransaction') {
+      throw new Error(executionResult.FailedTransaction.effects?.status?.error?.message || 'SUI payout transaction failed.')
+    }
+    const txHash = executionResult.Transaction.digest
     if (!txHash) {
       throw new Error('SUI payout did not return a transaction digest.')
     }
@@ -707,7 +701,7 @@ export async function swapAndPayoutSuiForOrder(input: {
       orderId: order.id,
       address: treasury.address,
       receiver: finalRecipient,
-      rpcUrl,
+      grpcUrl,
       nativePayoutTxHash: txHash,
       payoutAmountMist: tradeRoute.coinOutAmount.toString(),
     })

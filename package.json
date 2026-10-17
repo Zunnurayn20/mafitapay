@@ -37,7 +37,7 @@
     "@capacitor/splash-screen": "^8.0.1",
     "@capacitor/status-bar": "^8.0.2",
     "@capgo/capacitor-native-biometric": "^8.7.0",
-    "@mysten/sui": "^2.16.0",
+    "@mysten/sui": "^2.36.0",
     "@noble/curves": "^2.2.0",
     "@privy-io/node": "^0.35.0",
     "@privy-io/react-auth": "^3.47.0",
