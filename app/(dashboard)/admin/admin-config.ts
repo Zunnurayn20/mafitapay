@@ -143,7 +143,8 @@ export const CRYPTO_LOGO_SUGGESTIONS: Record<string, string> = {
   SOL: '/crypto-assets/sol.png',
   SUI: '/crypto-assets/sui.svg',
   BNB: '/crypto-assets/bnb.png',
-  TON: '/crypto-assets/ton.svg',
+  GRAM: '/crypto-assets/gram.svg',
+  TON: '/crypto-assets/ton.svg', // Keep the legacy suggestion available for existing records.
   NEAR: '/crypto-assets/near.svg',
 }
 export const BILL_ICON_SUGGESTIONS: Record<BillProvider['type'], string> = {

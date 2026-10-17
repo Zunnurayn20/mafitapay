@@ -7,7 +7,8 @@ export const DEFAULT_CRYPTO_MARKET_SOURCE_IDS: Record<KnownCryptoSymbol, string>
   POL: 'polygon-ecosystem-token',
   SOL: 'solana',
   BNB: 'binancecoin',
-  TON: 'the-open-network',
+  GRAM: 'the-open-network',
+  TON: 'the-open-network', // Legacy ticker alias for older transactions and configs.
   SUI: 'sui',
   NEAR: 'near',
   CNGN: 'compliant-naira',

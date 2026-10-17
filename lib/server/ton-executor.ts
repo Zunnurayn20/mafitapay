@@ -368,7 +368,10 @@ async function getTonClients() {
 async function getTonNativeAssetAddress(stonApiClient: StonApiClient) {
   if (!tonNativeAssetAddressPromise) {
     tonNativeAssetAddressPromise = stonApiClient.getAssets().then(assets => {
-      const tonAsset = assets.find(asset => asset.kind === 'Ton' && asset.symbol === 'TON')
+      // STON.fi currently labels the native TON asset as GRAM in its asset
+      // catalog. The kind identifies the native coin; its display symbol can
+      // change independently, so do not require the symbol to be `TON`.
+      const tonAsset = assets.find(asset => asset.kind === 'Ton' && asset.contractAddress)
       if (!tonAsset?.contractAddress) {
         throw new Error('STON.fi TON asset metadata is unavailable.')
       }

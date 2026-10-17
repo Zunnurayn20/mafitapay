@@ -220,7 +220,7 @@ export type KnownCryptoPairId =
   | 'SUI_SUI'
   | 'NEAR_NEAR'
 export type CryptoPairId = KnownCryptoPairId | (string & {})
-export type KnownCryptoSymbol = 'USDT' | 'USDC' | 'ETH' | 'SOL' | 'BNB' | 'TON' | 'SUI' | 'NEAR' | 'POL' | 'CNGN'
+export type KnownCryptoSymbol = 'USDT' | 'USDC' | 'ETH' | 'SOL' | 'BNB' | 'GRAM' | 'TON' | 'SUI' | 'NEAR' | 'POL' | 'CNGN'
 export type CryptoSymbol = KnownCryptoSymbol | (string & {})
 export type KnownCryptoNetwork = 'BSC' | 'Base' | 'Ethereum' | 'Arbitrum' | 'Optimism' | 'Polygon' | 'Linea' | 'Robinhood' | 'Solana' | 'TON' | 'Sui' | 'NEAR'
 export type CryptoNetwork = KnownCryptoNetwork | (string & {})

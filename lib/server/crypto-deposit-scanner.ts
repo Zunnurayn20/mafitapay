@@ -534,7 +534,7 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       chain: 'ton',
       pairId: 'TON_TON',
       network: 'TON',
-      symbol: 'TON',
+      symbol: 'GRAM',
       decimals: 9,
       kind: 'native',
     },
