@@ -60,6 +60,12 @@ export async function settleCryptoOrderTerminalState(input: {
       providerStatus: outcome === 'fulfilled' ? 'SUCCESS' : 'FAILED',
     })
   }
+  if (order.provider === 'sui') {
+    await updateCryptoOrderProviderState({
+      id: order.id,
+      providerStatus: outcome === 'fulfilled' ? 'SUI_SETTLED' : 'SUI_FAILED',
+    })
+  }
 
   await insertAuditLog({
     userId: order.userId,

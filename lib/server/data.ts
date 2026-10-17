@@ -1168,6 +1168,8 @@ function mapCryptoOrderRow(row: CryptoOrderRow): CryptoOrder {
               ? 'ston'
               : row.provider === 'near_intents'
                 ? 'near_intents'
+                : row.provider === 'sui'
+                  ? 'sui'
                 : undefined,
     providerOrderId: row.provider_order_id ?? undefined,
     providerStatus: row.provider_status ?? undefined,
@@ -9403,6 +9405,32 @@ export async function claimCryptoOrderSuiInventoryPayout(input: {
     UPDATE crypto_orders
     SET provider_status = 'SUI_INVENTORY_PAYOUT_SUBMITTING', updated_at = ?
     WHERE id = ? AND status = 'pending' AND execution_status = 'broadcasted'
+      AND execution_rail = 'sui_treasury' AND provider_status IS ?
+  `).run(now, input.id, input.expectedProviderStatus)
+  return result.changes === 1
+}
+
+/** Prevent concurrent execution attempts from spending the SUI inventory for one order twice. */
+export async function claimCryptoOrderSuiDirectPayout(input: {
+  id: string
+  expectedProviderStatus: string | null
+}) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres(`
+      UPDATE crypto_orders
+      SET provider_status = 'SUI_PAYOUT_SUBMITTING', updated_at = ?
+      WHERE id = ? AND status = 'pending' AND execution_status = 'awaiting_swap'
+        AND execution_rail = 'sui_treasury' AND provider_status IS NOT DISTINCT FROM ?
+    `, [now, input.id, input.expectedProviderStatus])
+    return (result.rowCount ?? 0) === 1
+  }
+
+  const result = getDb().prepare(`
+    UPDATE crypto_orders
+    SET provider_status = 'SUI_PAYOUT_SUBMITTING', updated_at = ?
+    WHERE id = ? AND status = 'pending' AND execution_status = 'awaiting_swap'
       AND execution_rail = 'sui_treasury' AND provider_status IS ?
   `).run(now, input.id, input.expectedProviderStatus)
   return result.changes === 1

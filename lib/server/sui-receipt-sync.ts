@@ -1,7 +1,7 @@
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { claimCryptoOrderSuiInventoryPayout, getCryptoOrderById, listCryptoOrders, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
 import { getLifiTransferStatus } from '@/lib/server/lifi'
-import { getSuiTreasuryUsdcBalance, SuiPayoutSubmissionUncertainError, swapAndPayoutSuiForOrder } from '@/lib/server/sui-treasury'
+import { getSuiTransactionOutcome, getSuiTreasuryUsdcBalance, SuiPayoutSubmissionUncertainError, swapAndPayoutSuiForOrder } from '@/lib/server/sui-treasury'
 import type { CryptoOrder } from '@/types'
 
 const AUTO_SYNC_DELAYS_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 120_000]
@@ -43,7 +43,11 @@ function getSuiReceiptWatchdogState() {
 }
 
 function isSuiAutoSyncEligible(order: CryptoOrder) {
-  if (order.executionRail !== 'sui_treasury' || typeof order.providerPayload?.sendingTxHash !== 'string') return false
+  if (order.executionRail !== 'sui_treasury') return false
+  if (order.providerPayload?.suiDirectInventory === true && typeof order.providerPayload?.nativePayoutTxHash === 'string') {
+    return order.status === 'pending'
+  }
+  if (typeof order.providerPayload?.sendingTxHash !== 'string') return false
   if (order.status === 'pending') {
     return order.executionStatus === 'broadcasted' && order.providerStatus !== 'DONE:AWAITING_SUI_PAYOUT'
   }
@@ -129,10 +133,30 @@ export async function syncSuiReceiptForCryptoOrder(
   if (order.executionRail !== 'sui_treasury') throw new Error('Only SUI treasury orders are eligible for receipt sync.')
   const inventoryPayoutAlreadySent = order.providerPayload?.suiInventoryPayout === true
     && typeof order.providerPayload?.nativePayoutTxHash === 'string'
-  const bridgeFollowUp = order.status === 'fulfilled' && inventoryPayoutAlreadySent
+  const directInventoryOrder = order.providerPayload?.suiDirectInventory === true
+  const bridgeFollowUp = !directInventoryOrder && order.status === 'fulfilled' && inventoryPayoutAlreadySent
     && order.providerPayload?.suiInventoryBridgeSettled !== true
     && order.providerPayload?.suiInventoryBridgeFailed !== true
   if (order.status !== 'pending' && !bridgeFollowUp) throw new Error(`Crypto order is already ${order.status}.`)
+  if (directInventoryOrder) {
+    const destinationTxHash = typeof order.providerPayload?.nativePayoutTxHash === 'string'
+      ? order.providerPayload.nativePayoutTxHash
+      : ''
+    if (!destinationTxHash) throw new Error('SUI inventory order is missing its Sui transaction digest.')
+    const outcome = await getSuiTransactionOutcome(destinationTxHash)
+    if (!outcome) return { settled: false, status: 'PENDING', order }
+    const terminal = await settleCryptoOrderTerminalState({
+      order,
+      outcome: outcome === 'success' ? 'fulfilled' : 'failed',
+      actorUserId,
+      source: 'chain_receipt',
+      providerStatus: outcome === 'success' ? 'SUI_SETTLED' : 'SUI_FAILED',
+      metadata: { destinationTxHash, settlementMode: 'sui_usdc_inventory' },
+    })
+    logSui('inventory-payout.settled', { orderId, destinationTxHash, outcome })
+    clearScheduledSuiReceiptAutoSync(orderId)
+    return { settled: true, status: outcome === 'success' ? 'DONE' : 'FAILED', ...terminal }
+  }
   if (order.providerStatus === 'DONE:AWAITING_SUI_PAYOUT' && !options?.forcePayoutRetry) {
     return {
       settled: false,

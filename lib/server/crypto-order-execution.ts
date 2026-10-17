@@ -1,4 +1,4 @@
-import { getCryptoAssetById, insertAuditLog, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
+import { claimCryptoOrderSuiDirectPayout, getCryptoAssetById, insertAuditLog, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
 import { getRoutedTreasuryPairConfigForAsset } from '@/lib/routed-assets'
 import { broadcastBaseDeliveryForOrder, broadcastBaseTransaction, ensureBaseTokenAllowance, getBaseExecutorConfig } from '@/lib/server/base-executor'
 import { kickBaseReceiptAutoSync, scheduleBaseReceiptAutoSync } from '@/lib/server/base-receipt-sync'
@@ -9,18 +9,18 @@ import { submitNearIntentsDepositForOrder } from '@/lib/server/near-intents'
 import { kickNearReceiptAutoSync, scheduleNearReceiptAutoSync } from '@/lib/server/near-receipt-sync'
 import { kickRoutedReceiptAutoSync, scheduleRoutedReceiptAutoSync } from '@/lib/server/routed-receipt-sync'
 import { kickSuiReceiptAutoSync, scheduleSuiReceiptAutoSync } from '@/lib/server/sui-receipt-sync'
-import { submitSuiTreasuryBridgeForOrder } from '@/lib/server/sui-treasury'
+import { SuiPayoutSubmissionUncertainError, submitSuiTreasuryInventoryPayoutForOrder } from '@/lib/server/sui-treasury'
 import { buildTonSwapExecutionForOrder } from '@/lib/server/ton-executor'
 import { kickTonReceiptAutoSync, scheduleTonReceiptAutoSync } from '@/lib/server/ton-receipt-sync'
 import { getZeroExBaseQuoteForOrder } from '@/lib/server/zerox'
 import type { CryptoOrder } from '@/types'
 
 type ExecutionSource = 'admin' | 'auto'
-type ExecutionMode = 'delivery' | 'zerox_swap' | 'lifi_route' | 'sui_swap' | 'ton_swap' | 'near_swap'
+type ExecutionMode = 'delivery' | 'zerox_swap' | 'lifi_route' | 'sui_inventory' | 'ton_swap' | 'near_swap'
 
 function resolveExecutionMode(order: CryptoOrder): ExecutionMode {
   if (order.executionRail === 'routed_treasury') return 'lifi_route'
-  if (order.executionRail === 'sui_treasury') return 'sui_swap'
+  if (order.executionRail === 'sui_treasury') return 'sui_inventory'
   if (order.executionRail === 'near_intents') return 'near_swap'
   if (order.executionRail === 'ton_treasury') return 'ton_swap'
   if (order.pairId === 'ETH_BASE') return 'zerox_swap'
@@ -200,20 +200,49 @@ export async function triggerCryptoOrderExecution(input: {
         ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
       },
     })
-  } else if (mode === 'sui_swap') {
-    const suiExecution = await submitSuiTreasuryBridgeForOrder(order)
+  } else if (mode === 'sui_inventory') {
+    const claimed = await claimCryptoOrderSuiDirectPayout({
+      id: order.id,
+      expectedProviderStatus: order.providerStatus ?? null,
+    })
+    if (!claimed) throw new Error('SUI payout is already being submitted or needs review.')
+    let suiExecution
+    try {
+      suiExecution = await submitSuiTreasuryInventoryPayoutForOrder(order)
+    } catch (error) {
+      if (error instanceof SuiPayoutSubmissionUncertainError) {
+        await updateCryptoOrderProviderState({
+          id: order.id,
+          provider: 'sui',
+          providerStatus: 'SUI_PAYOUT_REVIEW',
+          providerPayload: {
+            ...(order.providerPayload ?? {}),
+            suiDirectInventory: true,
+            suiPayoutSubmissionUncertain: true,
+            suiPayoutError: error.message,
+          },
+        })
+      } else {
+        await updateCryptoOrderProviderState({
+          id: order.id,
+          providerStatus: 'QUOTE_LOCKED',
+        })
+      }
+      throw error
+    }
     execution = {
       hash: suiExecution.hash,
     }
 
     await updateCryptoOrderProviderState({
       id: order.id,
-      provider: 'lifi',
-      providerOrderId: typeof suiExecution.providerPayload.quotedBridgeTransactionId === 'string' ? suiExecution.providerPayload.quotedBridgeTransactionId : null,
-      providerReference: typeof suiExecution.providerPayload.bridge === 'string' ? suiExecution.providerPayload.bridge : null,
-      providerStatus: 'ROUTE_BROADCASTED',
+      provider: 'sui',
+      providerOrderId: null,
+      providerReference: suiExecution.hash,
+      providerStatus: 'SUI_PAYOUT_SUBMITTED',
       providerPayload: {
         ...suiExecution.providerPayload,
+        suiDirectInventory: true,
         ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
       },
     })
@@ -263,7 +292,7 @@ export async function triggerCryptoOrderExecution(input: {
     executionRail: order.executionRail ?? 'base_treasury',
     executionStatus: 'broadcasted',
     executionReference: order.executionReference ?? `base_exec_${order.id}`,
-    destinationTxHash: mode === 'zerox_swap' || mode === 'lifi_route' || mode === 'sui_swap' || mode === 'ton_swap' || mode === 'near_swap' ? null : execution.hash,
+    destinationTxHash: mode === 'zerox_swap' || mode === 'lifi_route' || mode === 'ton_swap' || mode === 'near_swap' ? null : execution.hash,
   })
 
   await insertAuditLog({

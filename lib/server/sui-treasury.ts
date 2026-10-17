@@ -4,13 +4,10 @@ import { promisify } from 'node:util'
 import { SuiGrpcClient } from '@mysten/sui/grpc'
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519'
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions'
-import { broadcastBaseTransaction, getBaseExecutorConfig, getBaseBuilderDataSuffix } from '@/lib/server/base-executor'
 import { getCryptoAssetById } from '@/lib/server/data'
-import { assertLifiTreasuryCanExecuteBuy, getLifiConfig, prepareLifiBaseApproval } from '@/lib/server/lifi'
 import { createSuiGrpcClient, getSuiGrpcUrls } from '@/lib/server/sui-grpc'
 import type { CryptoOrder } from '@/types'
 
-const SUI_CHAIN_ID = '9270000000000000'
 const SUI_COIN_DECIMALS = 9
 const USDC_DECIMALS = 6
 const DEFAULT_SUI_ROUTER_BASE_URL = 'https://aftermath.finance/api/router'
@@ -34,29 +31,6 @@ class SuiPayoutDefinitiveFailureError extends Error {
     super(message)
     this.name = 'SuiPayoutDefinitiveFailureError'
   }
-}
-
-type LifiBridgeQuoteResponse = {
-  transactionId?: string
-  tool?: string
-  message?: string
-  estimate?: {
-    approvalAddress?: string
-    toAmount?: string
-    toAmountMin?: string
-    feeCosts?: Array<{ type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } }>
-    gasCosts?: Array<{ type?: string; amount?: string; amountUSD?: string; token?: { symbol?: string } }>
-  }
-  transactionRequest?: {
-    to?: string
-    data?: string
-    value?: string
-  }
-  includedSteps?: Array<{
-    id?: string
-    type?: string
-    tool?: string
-  }>
 }
 
 type AftermathTradeRoute = {
@@ -335,98 +309,22 @@ export async function getSuiTreasuryUsdcBalance() {
   }
 }
 
-function buildLifiHeaders() {
-  const config = getLifiConfig()
-  return {
-    accept: 'application/json',
-    ...(config.apiKeyConfigured ? { 'x-lifi-api-key': config.apiKey } : {}),
-  }
-}
-
-async function fetchSuiBridgeQuote(input: {
-  amountNgn: number
-  treasuryAddress: string
-}) {
-  const config = getSuiTreasuryConfig()
-  const baseConfig = getBaseExecutorConfig()
-  const treasuryUsdcAmount = await getTreasuryUsdcAmount(input.amountNgn)
-  const treasuryUsdcUnits = toSmallestUnit(treasuryUsdcAmount, USDC_DECIMALS).toString()
-
-  const params = new URLSearchParams({
-    fromChain: '8453',
-    toChain: SUI_CHAIN_ID,
-    fromToken: baseConfig.usdcAddress,
-    toToken: config.usdcCoinType,
-    fromAmount: treasuryUsdcUnits,
-    fromAddress: baseConfig.configuredAddress,
-    toAddress: input.treasuryAddress,
-    slippage: '0.005',
-    order: 'FASTEST',
-  })
-  const dataSuffix = getBaseBuilderDataSuffix()
-  if (dataSuffix) {
-    params.set('dataSuffix', dataSuffix)
-  }
-
-  const requestUrl = `${getLifiConfig().baseUrl}/quote?${params.toString()}`
-  logSui('quote.request', {
-    pairId: 'SUI_SUI',
-    amountNgn: input.amountNgn,
-    toChain: SUI_CHAIN_ID,
-    bridgeCoinType: config.usdcCoinType,
-    recipient: input.treasuryAddress,
-    hasDataSuffix: !!dataSuffix,
-  })
-
-  const headers = buildLifiHeaders()
-  let payload: LifiBridgeQuoteResponse | null = null
+export async function getSuiTransactionOutcome(digest: string): Promise<'success' | 'failure' | null> {
   try {
-    payload = await fetchJsonOverHttps<LifiBridgeQuoteResponse>({ url: requestUrl, headers })
+    const result = await withSuiReadFailover(client => client.getTransaction({
+      digest,
+      include: { effects: true },
+    }))
+    if (result.$kind === 'FailedTransaction') return 'failure'
+    const status = result.Transaction.effects?.status
+    if (!status) return null
+    return status.success ? 'success' : 'failure'
   } catch (error) {
-    logSui('quote.bridge-fetch-error', {
-      amountNgn: input.amountNgn,
+    logSui('transaction.lookup-pending', {
+      digest,
       message: formatUnknownError(error),
     })
-    try {
-      payload = await fetchJsonViaCurl<LifiBridgeQuoteResponse>({ url: requestUrl, headers })
-      logSui('quote.bridge-success', {
-        amountNgn: input.amountNgn,
-        transport: 'curl',
-        bridge: payload.tool,
-        transactionId: payload.transactionId,
-        bridgedUsdcUnits: payload.estimate?.toAmount,
-        bridgedUsdcUnitsMin: payload.estimate?.toAmountMin,
-      })
-    } catch (curlError) {
-      logSui('quote.bridge-curl-error', {
-        amountNgn: input.amountNgn,
-        message: formatUnknownError(curlError),
-      })
-      throw new Error('SUI bridge quote provider is temporarily unavailable. Please try again.')
-    }
-  }
-
-  if (!payload?.transactionRequest?.to || !payload.transactionRequest.data || !payload.transactionId || !payload.estimate?.toAmountMin) {
-    logSui('quote.bridge-invalid', {
-      amountNgn: input.amountNgn,
-      payload,
-    })
-    throw new Error(payload?.message || 'No SUI treasury bridge quote is available right now.')
-  }
-
-  logSui('quote.bridge-success', {
-    amountNgn: input.amountNgn,
-    bridge: payload.tool,
-    transactionId: payload.transactionId,
-    bridgedUsdcUnits: payload.estimate?.toAmount,
-    bridgedUsdcUnitsMin: payload.estimate?.toAmountMin,
-  })
-
-  return {
-    quote: payload,
-    treasuryUsdcAmount,
-    treasuryUsdcUnits,
-    bridgedUsdcUnitsMin: payload.estimate.toAmountMin,
+    return null
   }
 }
 
@@ -545,8 +443,6 @@ function getQuotedSuiPayoutAmountRaw(payload: Record<string, unknown>) {
 export async function assertSuiTreasuryCanExecuteBuy(input: {
   amountNgn: number
 }) {
-  await assertLifiTreasuryCanExecuteBuy({ amountNgn: input.amountNgn })
-
   const requiredUsdcAmount = await getTreasuryUsdcAmount(input.amountNgn)
   const requiredUsdcUnits = toSmallestUnit(requiredUsdcAmount, USDC_DECIMALS)
   const balance = await getSuiTreasuryNativeBalance()
@@ -577,12 +473,10 @@ export async function getSuiQuotedReceiveForBuy(input: {
 }) {
   const treasury = getSuiTreasuryAccount()
   const config = getSuiTreasuryConfig()
-  const bridgeQuote = await fetchSuiBridgeQuote({
-    amountNgn: input.amountNgn,
-    treasuryAddress: treasury.address,
-  })
+  const treasuryUsdcAmount = await getTreasuryUsdcAmount(input.amountNgn)
+  const treasuryUsdcUnits = toSmallestUnit(treasuryUsdcAmount, USDC_DECIMALS).toString()
   const tradeRoute = await fetchAftermathTradeRoute({
-    coinInAmount: bridgeQuote.bridgedUsdcUnitsMin,
+    coinInAmount: treasuryUsdcUnits,
   })
 
   const quotedPayoutAmountRaw = applyBpsFloor(tradeRoute.coinOutAmount, 10_000 - config.swapSlippageBps)
@@ -601,76 +495,46 @@ export async function getSuiQuotedReceiveForBuy(input: {
     providerPayload: {
       rail: 'sui_treasury',
       pairId: 'SUI_SUI',
-      bridge: bridgeQuote.quote.tool,
-      bridgeChainId: SUI_CHAIN_ID,
-      bridgeToken: config.usdcCoinType,
       treasuryAddress: treasury.address,
       finalRecipient: input.toAddress,
-      treasuryUsdcAmount: bridgeQuote.treasuryUsdcAmount,
-      treasuryUsdcUnits: bridgeQuote.treasuryUsdcUnits,
-      bridgedUsdcUnits: bridgeQuote.quote.estimate?.toAmount,
-      bridgedUsdcUnitsMin: bridgeQuote.bridgedUsdcUnitsMin,
-      quotedBridgeTransactionId: bridgeQuote.quote.transactionId,
-      quotedBridgeExplorerLink: bridgeQuote.quote.transactionId ? `https://explorer.li.fi/tx/${bridgeQuote.quote.transactionId}` : null,
+      treasuryUsdcAmount,
+      treasuryUsdcUnits,
       quotedNativeSuiAmountRaw: tradeRoute.coinOutAmount.toString(),
       quotedPayoutAmountRaw: quotedPayoutAmountRaw.toString(),
       swapSlippageBps: config.swapSlippageBps,
-      transactionRequest: bridgeQuote.quote.transactionRequest,
-      approvalAddress: bridgeQuote.quote.estimate?.approvalAddress,
-      includedSteps: bridgeQuote.quote.includedSteps,
-      providerFeeCosts: bridgeQuote.quote.estimate?.feeCosts ?? [],
+      settlementMode: 'sui_usdc_inventory',
     },
   }
 }
 
-export async function submitSuiTreasuryBridgeForOrder(order: CryptoOrder) {
+export async function submitSuiTreasuryInventoryPayoutForOrder(order: CryptoOrder) {
   if (order.executionRail !== 'sui_treasury' || order.pairId !== 'SUI_SUI') {
     throw new Error('Only SUI treasury orders can be executed through this flow.')
   }
 
-  const providerPayload = { ...(order.providerPayload ?? {}) }
-  const transactionRequest =
-    providerPayload.transactionRequest && typeof providerPayload.transactionRequest === 'object'
-      ? providerPayload.transactionRequest as { to?: string; data?: string; value?: string }
-      : null
+  const providerPayload = order.providerPayload ?? {}
+  const usdcUnits = typeof providerPayload.treasuryUsdcUnits === 'string' ? providerPayload.treasuryUsdcUnits : ''
+  const finalRecipient = typeof providerPayload.finalRecipient === 'string' ? providerPayload.finalRecipient : order.walletAddress ?? ''
+  if (!usdcUnits || !finalRecipient) throw new Error('SUI inventory quote is missing its amount or destination.')
 
-  if (!transactionRequest?.to || !transactionRequest.data) {
-    throw new Error('SUI treasury quote is missing executable LI.FI transaction data.')
-  }
+  const payout = await swapAndPayoutSuiForOrder({ order, bridgedUsdcUnits: usdcUnits, finalRecipient })
+  const txHash = typeof payout.nativePayoutTxHash === 'string' ? payout.nativePayoutTxHash : ''
+  if (!txHash) throw new SuiPayoutSubmissionUncertainError('SUI transaction was submitted without a returned digest.')
 
-  if (typeof providerPayload.approvalAddress === 'string' && providerPayload.approvalAddress) {
-    await prepareLifiBaseApproval({
-      quote: {
-        estimate: {
-          approvalAddress: providerPayload.approvalAddress,
-        },
-      },
-      minimumAmount: typeof providerPayload.treasuryUsdcUnits === 'string' ? BigInt(providerPayload.treasuryUsdcUnits) : undefined,
-    })
-  }
-
-  const execution = await broadcastBaseTransaction({
-    to: transactionRequest.to,
-    data: transactionRequest.data,
-    value: transactionRequest.value,
-    attribution: {
-      pairId: 'SUI_SUI',
-      amount: order.amountNgn,
-      action: 'buy_sui_bridge_leg',
-    },
-  })
-
-  providerPayload.sendingTxHash = execution.hash
-
-  logSui('deposit.submit', {
+  logSui('inventory-payout.submit', {
     orderId: order.id,
-    sendingTxHash: execution.hash,
-    quotedBridgeTransactionId: typeof providerPayload.quotedBridgeTransactionId === 'string' ? providerPayload.quotedBridgeTransactionId : null,
+    destinationTxHash: txHash,
+    usdcUnits,
   })
 
   return {
-    hash: execution.hash,
-    providerPayload,
+    hash: txHash,
+    providerPayload: {
+      ...payout,
+      suiInventoryPayout: true,
+      suiDirectInventory: true,
+      suiInventoryPayoutUsdcUnits: usdcUnits,
+    },
   }
 }
 

@@ -308,7 +308,7 @@ export interface CryptoOrder {
   destinationLabel?: string
   walletAddress?: string
   exchange?: string
-  provider?: '0x' | 'lifi' | 'ston' | 'near_intents'
+  provider?: '0x' | 'lifi' | 'ston' | 'near_intents' | 'sui'
   providerOrderId?: string
   providerStatus?: string
   providerReference?: string

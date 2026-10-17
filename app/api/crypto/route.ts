@@ -737,7 +737,7 @@ export async function POST(req: Request) {
       ? getExecutionRailForAsset(liveAsset) === 'routed_treasury'
         ? 'lifi'
         : getExecutionRailForAsset(liveAsset) === 'sui_treasury'
-          ? 'lifi'
+          ? 'sui'
         : getExecutionRailForAsset(liveAsset) === 'near_intents'
           ? 'near_intents'
         : getExecutionRailForAsset(liveAsset) === 'ton_treasury'
@@ -803,7 +803,10 @@ export async function POST(req: Request) {
         error: error instanceof Error ? error.message : 'Automatic crypto execution failed.',
       })
       const latestOrder = await getCryptoOrderById(cryptoOrder.id)
-      const safeToFail = latestOrder?.status === 'pending' && latestOrder.executionStatus !== 'broadcasted'
+      const safeToFail = latestOrder?.status === 'pending'
+        && latestOrder.executionStatus !== 'broadcasted'
+        && latestOrder.providerStatus !== 'SUI_PAYOUT_REVIEW'
+        && latestOrder.providerStatus !== 'SUI_PAYOUT_SUBMITTING'
 
       if (latestOrder && safeToFail) {
         const failed = await settleCryptoOrderTerminalState({
