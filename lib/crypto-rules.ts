@@ -63,7 +63,7 @@ const MINIMUM_BUY_NGN_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   ETH_BASE: 500,
   // Fallback while the live Base USDC rate is unavailable. SUI normally uses a
   // dynamic ₦1 USDC equivalent so its LI.FI input is at least $1.00.
-  SUI_SUI: 2500,
+  SUI_SUI: 1000,
   NEAR_NEAR: 500,
   TON_TON: 800,
 }
@@ -89,11 +89,7 @@ export function getMinimumBuyNgn(pairId: CryptoPairId) {
 
 export function getMinimumBuyNgnForAsset(
   asset: Pick<CryptoAsset, 'id' | 'network' | 'executionRail' | 'routedToChain' | 'routedToToken' | 'routedDecimals' | 'routedAddressFamily' | 'minimumBuyNgn' | 'maxQuoteDriftPercent'>,
-  usdcBuyRateNgn?: number,
 ) {
-  if (asset.id === 'SUI_SUI' && Number.isFinite(usdcBuyRateNgn) && Number(usdcBuyRateNgn) > 0) {
-    return Math.ceil(Number(usdcBuyRateNgn))
-  }
   if (asset.executionRail === 'routed_treasury') {
     return getRoutedTreasuryPairConfigForAsset(asset).minimumBuyNgn
   }

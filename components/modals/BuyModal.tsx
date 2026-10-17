@@ -103,8 +103,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       ? getCryptoNetworkFeeNgn(asset, 'buy')
       : 0
   const totalDebit = orderNgn + fee
-  const usdcBuyRateNgn = assets.find(item => item.id === 'USDC_BASE')?.buyRate
-  const minimumBuyNgn = asset ? getMinimumBuyNgnForAsset(asset, usdcBuyRateNgn) : 1000
+  const minimumBuyNgn = asset ? getMinimumBuyNgnForAsset(asset) : 1000
   const belowMinimum = amt > 0 && amt < minimumBuyNgn
   const addressValidation = asset ? validateWalletAddressForPair(asset.id, address) : { valid: false, error: 'Destination wallet address is required.' }
   const addressError = address.trim().length > 0 && !addressValidation.valid ? addressValidation.error : null

@@ -33,8 +33,8 @@ function logCrypto(event: string, details?: Record<string, unknown>) {
   console.log(`[crypto] ${event}${payload}`)
 }
 
-function assertMinimumBuyAmount(asset: CryptoAsset, amountNgn: number, usdcBuyRateNgn?: number) {
-  const minimumBuyNgn = getMinimumBuyNgnForAsset(asset, usdcBuyRateNgn)
+function assertMinimumBuyAmount(asset: CryptoAsset, amountNgn: number) {
+  const minimumBuyNgn = getMinimumBuyNgnForAsset(asset)
   if (amountNgn < minimumBuyNgn) {
     throw new Error(`Minimum buy amount for ${asset.id} is ₦${minimumBuyNgn.toLocaleString('en-NG')}.`)
   }
@@ -166,7 +166,6 @@ export async function POST(req: Request) {
 
   const assets = await getCryptoAssets()
   const requestedAsset = assets.find(item => item.id === pairId)
-  const usdcBuyRateNgn = assets.find(item => item.id === 'USDC_BASE')?.buyRate
   if (!requestedAsset) {
     return NextResponse.json({ error: 'Crypto pair not found.', success: false }, { status: 404 })
   }
@@ -211,13 +210,13 @@ export async function POST(req: Request) {
         }
 
         let amountNgn = desiredCryptoAmount * requestedAsset.buyRate
-        assertMinimumBuyAmount(requestedAsset, amountNgn, usdcBuyRateNgn)
+        assertMinimumBuyAmount(requestedAsset, amountNgn)
         let buyQuote = await quoteAtNgn(amountNgn)
         // Routed providers quote an amount-in. Scale the NGN amount until the
         // provider's minimum receive meets the amount the customer requested.
         for (let attempt = 0; buyQuote.cryptoAmount + 1e-12 < desiredCryptoAmount && attempt < 4; attempt += 1) {
           amountNgn = Math.ceil(amountNgn * desiredCryptoAmount / buyQuote.cryptoAmount * 1.002 * 100) / 100
-          assertMinimumBuyAmount(requestedAsset, amountNgn, usdcBuyRateNgn)
+          assertMinimumBuyAmount(requestedAsset, amountNgn)
           buyQuote = await quoteAtNgn(amountNgn)
         }
         if (buyQuote.cryptoAmount + 1e-12 < desiredCryptoAmount) {
@@ -246,7 +245,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ data, success: true })
       }
       if (action === 'buy' && executionRail === 'routed_treasury') {
-        assertMinimumBuyAmount(requestedAsset, amount, usdcBuyRateNgn)
+        assertMinimumBuyAmount(requestedAsset, amount)
         const routedQuote = await getLifiQuotedReceiveForBuy({
           pairId: requestedAsset.id,
           asset: requestedAsset,
@@ -273,7 +272,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ data, success: true })
       }
       if (action === 'buy' && executionRail === 'sui_treasury') {
-        assertMinimumBuyAmount(requestedAsset, amount, usdcBuyRateNgn)
+        assertMinimumBuyAmount(requestedAsset, amount)
         const suiQuote = await getSuiQuotedReceiveForBuy({
           amountNgn: amount,
           toAddress: walletAddress,
@@ -298,7 +297,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ data, success: true })
       }
       if (action === 'buy' && executionRail === 'ton_treasury') {
-        assertMinimumBuyAmount(requestedAsset, amount, usdcBuyRateNgn)
+        assertMinimumBuyAmount(requestedAsset, amount)
         const tonQuote = await getTonQuotedReceiveForBuy({
           amountNgn: amount,
           toAddress: walletAddress,
@@ -323,7 +322,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ data, success: true })
       }
       if (action === 'buy' && executionRail === 'near_intents') {
-        assertMinimumBuyAmount(requestedAsset, amount, usdcBuyRateNgn)
+        assertMinimumBuyAmount(requestedAsset, amount)
         const nearQuote = await getNearQuotedReceiveForBuy({
           amountNgn: amount,
           toAddress: walletAddress,
@@ -400,7 +399,7 @@ export async function POST(req: Request) {
     }
 
     try {
-      assertMinimumBuyAmount(asset, amount, usdcBuyRateNgn)
+      assertMinimumBuyAmount(asset, amount)
     } catch (error) {
       return NextResponse.json({
         error: error instanceof Error ? error.message : 'Amount is below the minimum buy size.',
@@ -524,7 +523,7 @@ export async function POST(req: Request) {
     }
 
     try {
-      assertMinimumBuyAmount(asset, quotedAmount, usdcBuyRateNgn)
+      assertMinimumBuyAmount(asset, quotedAmount)
     } catch (error) {
       return NextResponse.json({
         error: error instanceof Error ? error.message : 'Amount is below the minimum buy size.',
