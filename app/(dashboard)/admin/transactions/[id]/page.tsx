@@ -18,6 +18,7 @@ import {
   getUserById,
 } from '@/lib/server/data'
 import { getActualNativeFee, getPlatformCryptoCost, getProviderFeeEstimate } from '@/lib/server/crypto-platform-cost'
+import { getCryptoDisplaySymbolFromPairId } from '@/lib/crypto-symbols'
 
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -145,7 +146,7 @@ export default async function AdminTransactionDetailPage({
                 <Detail label="Estimated spread after tracked delivery costs">{cryptoSpreadEstimateNgn === null ? 'Available after successful delivery and cost sync' : formatNaira(cryptoSpreadEstimateNgn)}</Detail>
               </div>
               <p className="text-xs text-[var(--muted)]">
-                Based on {cryptoOrder.cryptoAmount.toLocaleString('en-NG', { maximumFractionDigits: 10 })} {cryptoOrder.pairId.split('_')[0]} at ₦{platformCost.assetMarketRateNgn.toLocaleString('en-NG', { maximumFractionDigits: 4 })} per unit ({platformCost.assetMarketRateSource} market snapshot).
+                Based on {cryptoOrder.cryptoAmount.toLocaleString('en-NG', { maximumFractionDigits: 10 })} {getCryptoDisplaySymbolFromPairId(cryptoOrder.pairId)} at ₦{platformCost.assetMarketRateNgn.toLocaleString('en-NG', { maximumFractionDigits: 4 })} per unit ({platformCost.assetMarketRateSource} market snapshot).
               </p>
               {providerFees.length > 0 || actualNativeFees.length > 0 ? (
                 <div className="rounded-lg border border-[var(--border)]">

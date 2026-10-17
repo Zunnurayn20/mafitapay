@@ -1,4 +1,5 @@
 import type { Transaction } from '@/types'
+import { getCryptoDisplaySymbol } from '@/lib/crypto-symbols'
 
 /** Crypto quantities: 4dp from one unit up, 5dp below it, trailing zeros trimmed. */
 export function formatCryptoQuantity(value: number) {
@@ -60,9 +61,10 @@ export function formatTransactionTitle(tx: Transaction, cryptoAsset?: { symbol?:
     typeof tx.metadata?.cryptoAmount === 'number' && Number.isFinite(tx.metadata.cryptoAmount)
       ? formatCryptoQuantity(tx.metadata.cryptoAmount)
       : null
-  const symbol =
+  const rawSymbol =
     cryptoAsset?.symbol
     || (typeof tx.metadata?.symbol === 'string' ? tx.metadata.symbol : '')
+  const symbol = getCryptoDisplaySymbol(rawSymbol)
   const amountLabel = amount && symbol ? `${amount} ${symbol}` : ''
 
   return `${side}${amountLabel ? ` ${amountLabel}` : ''}`

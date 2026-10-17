@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card'
 import { useAppStore } from '@/store'
 import { fmtDate, formatNGN } from '@/lib/utils'
 import { formatCryptoQuantity } from '@/lib/transaction-title'
+import { getCryptoDisplaySymbolFromPairId } from '@/lib/crypto-symbols'
 import type { CryptoOrder } from '@/types'
 
 const STATUS_FILTERS = ['all', 'pending', 'fulfilled', 'failed', 'expired'] as const
@@ -21,7 +22,7 @@ function compactHash(value: string, head = 10, tail = 8) {
 }
 
 function getOrderAssetSymbol(order: CryptoOrder) {
-  return String(order.pairId).split('_')[0] || 'Asset'
+  return getCryptoDisplaySymbolFromPairId(order.pairId)
 }
 
 function formatOrderTitle(order: CryptoOrder) {

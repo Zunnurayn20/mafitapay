@@ -6732,7 +6732,7 @@ export async function recordBinanceInternalDeposit(input: {
     addressFamily: null,
     pairId: input.pairId,
     network: null,
-    assetSymbol: input.pairId.split('_')[0] || 'CRYPTO',
+    assetSymbol: input.pairId === 'TON_TON' ? 'GRAM' : input.pairId.split('_')[0] || 'CRYPTO',
     amountCrypto: input.amountCrypto,
     amountUnits: input.amountUnits,
     txHash: input.cexTxId,

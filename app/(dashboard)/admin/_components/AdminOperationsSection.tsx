@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
+import { getCryptoDisplaySymbol, getCryptoDisplaySymbolFromPairId } from '@/lib/crypto-symbols'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
 
@@ -756,7 +757,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
                   </div>
                   <div>
                     <div className="text-[10px] text-[var(--muted)]">Crypto amount</div>
-                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(item.cryptoAmount)} <span className="text-[var(--muted)]">{String(item.pairId || '').split('_')[0]}</span></div>
+                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(item.cryptoAmount)} <span className="text-[var(--muted)]">{getCryptoDisplaySymbolFromPairId(item.pairId)}</span></div>
                   </div>
                   <div>
                     <div className="text-[10px] text-[var(--muted)]">Created</div>
@@ -793,7 +794,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
               </div>
               <div className="grid gap-3 rounded-md border border-[var(--border)] bg-[var(--clay2)] p-3 sm:grid-cols-3">
                 <div><div className="text-[10px] text-[var(--muted)]">NGN amount</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">₦{Number(selectedCryptoOrder.amountNgn || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div></div>
-                <div><div className="text-[10px] text-[var(--muted)]">Crypto amount</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(selectedCryptoOrder.cryptoAmount)} {String(selectedCryptoOrder.pairId || '').split('_')[0]}</div></div>
+                <div><div className="text-[10px] text-[var(--muted)]">Crypto amount</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">{formatCryptoAmount(selectedCryptoOrder.cryptoAmount)} {getCryptoDisplaySymbolFromPairId(selectedCryptoOrder.pairId)}</div></div>
                 <div><div className="text-[10px] text-[var(--muted)]">Rate</div><div className="mt-1 text-sm font-semibold tabular-nums text-[var(--text)]">₦{Number(selectedCryptoOrder.unitRate || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}</div></div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -1525,7 +1526,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
             const eventId = event.externalEventId || event.external_event_id
             const userId = event.userId || event.user_id
             const pairId = event.pairId || event.pair_id
-            const symbol = event.assetSymbol || event.asset_symbol || String(pairId || '').split('_')[0]
+            const symbol = getCryptoDisplaySymbol(String(event.assetSymbol || event.asset_symbol || getCryptoDisplaySymbolFromPairId(String(pairId || ''))))
             const txHash = event.txHash || event.tx_hash
             const sweepTxHash = event.sweepTxHash || event.sweep_tx_hash
             const sweepError = event.sweepError || event.sweep_error

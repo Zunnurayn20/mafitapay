@@ -11,6 +11,7 @@ import { useAppStore } from '@/store'
 import { formatNGN, formatPercentChange, formatUSDAdaptive, fmtDate } from '@/lib/utils'
 import { formatCryptoQuantity, formatTransactionTitle } from '@/lib/transaction-title'
 import { getNetworkFallbackLabel, getNetworkIconUrl } from '@/lib/crypto-networks'
+import { getCryptoDisplaySymbolFromPairId } from '@/lib/crypto-symbols'
 import type { CryptoAsset, CryptoOrder, DepositIntent, PayoutRequest, Transaction } from '@/types'
 
 function isStablecoin(symbol: string) {
@@ -342,7 +343,7 @@ export default function CryptoPage() {
               details={[
                 { label: 'Wallet address', value: detail.cryptoOrder?.walletAddress || 'Not available', mono: true },
                 ...(detail.cryptoOrder ? [
-                  { label: 'Asset', value: `${formatCryptoQuantity(detail.cryptoOrder.cryptoAmount)} ${String(detail.cryptoOrder.pairId).split('_')[0]}` },
+                  { label: 'Asset', value: `${formatCryptoQuantity(detail.cryptoOrder.cryptoAmount)} ${getCryptoDisplaySymbolFromPairId(detail.cryptoOrder.pairId)}` },
                   { label: 'Rate', value: formatNGN(detail.cryptoOrder.unitRate) },
                   { label: 'Network', value: getDetailNetwork() },
                   { label: 'Execution', value: detail.cryptoOrder.executionStatus || 'Pending' },
