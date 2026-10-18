@@ -185,6 +185,15 @@ export async function syncNearReceiptForCryptoOrder(
       const nextProviderPayload = await unwrapAndPayoutNearForOrder({
         order,
         amountYocto: payoutAmountYocto,
+        onUnwrapped: async unwrappedProviderPayload => {
+          Object.assign(providerPayload, unwrappedProviderPayload)
+          providerPayload.status = status
+          await updateCryptoOrderProviderState({
+            id: order.id,
+            providerStatus: 'SUCCESS:AWAITING_NATIVE_PAYOUT',
+            providerPayload,
+          })
+        },
       })
       nextProviderPayload.status = status
       await updateCryptoOrderProviderState({

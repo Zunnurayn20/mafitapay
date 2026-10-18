@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
 import * as https from 'node:https'
 import { promisify } from 'node:util'
-import { Account, FailoverRpcProvider, JsonRpcProvider, type KeyPairString } from 'near-api-js'
+import { Account, FailoverRpcProvider, JsonRpcProvider, KeyPair, type KeyPairString } from 'near-api-js'
 import { NEAR } from 'near-api-js/tokens'
+import { wNEAR } from 'near-api-js/tokens/mainnet'
 import { broadcastBaseUsdcTransfer, getBaseExecutorConfig, getBaseExecutorHealth, getBaseTreasuryBalances } from '@/lib/server/base-executor'
 import { getCryptoAssetById, listCryptoOrders } from '@/lib/server/data'
 import type { CryptoOrder } from '@/types'
@@ -369,13 +370,32 @@ export async function assertNearIntentsTreasuryCanExecuteBuy(input: {
 
   const nearAccount = getNearTreasuryAccount()
   let nearBalance: bigint
+  let wrappedNearBalance: bigint
   try {
-    nearBalance = await nearAccount.getBalance()
+    const privateKey = getNearPayoutConfig().privateKey
+    if (!privateKey) {
+      throw new Error('MAFITAPAY_NEAR_TREASURY_PRIVATE_KEY is not configured.')
+    }
+    const publicKey = KeyPair.fromString(privateKey).getPublicKey()
+    const accessKey = await nearAccount.provider.viewAccessKey({
+      accountId: nearAccount.accountId,
+      publicKey,
+    })
+    if (accessKey.permission !== 'FullAccess') {
+      throw new Error('NEAR treasury signing key must have full access to unwrap wNEAR and send native NEAR payouts.')
+    }
+    ;[nearBalance, wrappedNearBalance] = await Promise.all([
+      nearAccount.getBalance(),
+      wNEAR.getBalance({ accountId: nearAccount.accountId, provider: nearAccount.provider }),
+    ])
   } catch (error) {
     logNear('treasury.balances-error', {
       ...getNearPayoutContext(),
       message: formatUnknownError(error),
     })
+    if (error instanceof Error && /account is not registered/i.test(error.message)) {
+      throw new Error('NEAR treasury account is not registered for wNEAR. Register it on wrap.near before accepting NEAR purchases.')
+    }
     throw new Error(getNearConfigErrorMessage(
       error,
       'Unable to verify NEAR treasury balance. Check NEAR treasury key and RPC configuration.',
@@ -386,6 +406,7 @@ export async function assertNearIntentsTreasuryCanExecuteBuy(input: {
   logNear('treasury.balances', {
     accountId: nearAccount.accountId,
     nearYocto: nearBalance.toString(),
+    wrappedNearUnits: wrappedNearBalance.toString(),
     outstandingNativePayoutYocto: outstandingNativePayoutYocto.toString(),
     availableAfterOutstandingYocto: availableAfterOutstandingYocto.toString(),
     requiredUsdcUnits: requiredUsdcUnits.toString(),
@@ -628,6 +649,7 @@ function getNearTransactionHash(result: unknown) {
 export async function unwrapAndPayoutNearForOrder(input: {
   order: CryptoOrder
   amountYocto: string
+  onUnwrapped?: (providerPayload: Record<string, unknown>) => Promise<void>
 }) {
   const { order, amountYocto } = input
   if (!/^\d+$/.test(amountYocto) || BigInt(amountYocto) <= BigInt(0)) {
@@ -655,28 +677,59 @@ export async function unwrapAndPayoutNearForOrder(input: {
       'Unable to verify NEAR treasury payout balance. Check NEAR treasury key and RPC configuration.',
     ))
   }
+  const minimumGasReserve = MIN_NEAR_PAYOUT_GAS_RESERVE + MIN_NEAR_PAYOUT_TX_BUFFER
   logNear('payout.gas-check', {
     orderId: order.id,
     accountId: account.accountId,
     currentNearYocto: currentNearBalance.toString(),
     reserveYocto: MIN_NEAR_PAYOUT_GAS_RESERVE.toString(),
     txBufferYocto: MIN_NEAR_PAYOUT_TX_BUFFER.toString(),
-    requiredPayoutBalanceYocto: (BigInt(amountYocto) + MIN_NEAR_PAYOUT_GAS_RESERVE + MIN_NEAR_PAYOUT_TX_BUFFER).toString(),
+    requiredGasReserveYocto: minimumGasReserve.toString(),
     payoutAmountYocto: amountYocto,
   })
 
-  if (currentNearBalance < BigInt(amountYocto) + MIN_NEAR_PAYOUT_GAS_RESERVE + MIN_NEAR_PAYOUT_TX_BUFFER) {
-    throw new Error('NEAR treasury native balance is too low to complete this payout right now.')
+  if (currentNearBalance < minimumGasReserve) {
+    throw new Error('NEAR treasury gas is too low to unwrap and pay out this order right now.')
   }
 
-  if (typeof providerPayload.unwrapTxHash !== 'string') {
-    providerPayload.unwrapTxHash = 'handled-by-near-intents'
-    logNear('payout.unwrap-skipped', {
+  const hasCompletedUnwrap = typeof providerPayload.unwrapTxHash === 'string'
+    && providerPayload.unwrapTxHash !== 'handled-by-near-intents'
+  if (!hasCompletedUnwrap) {
+    const wrappedNearBalance = await wNEAR.getBalance({
+      accountId: account.accountId,
+      provider: account.provider,
+    })
+    logNear('payout.wnear-balance', {
       orderId: order.id,
       accountId: account.accountId,
-      reason: 'near_intents already settled into native NEAR at treasury',
+      wrappedNearBalance: wrappedNearBalance.toString(),
+      payoutAmountYocto: amountYocto,
+    })
+
+    if (wrappedNearBalance < BigInt(amountYocto)) {
+      throw new Error('NEAR treasury wNEAR balance is too low to unwrap this payout right now.')
+    }
+
+    const unwrapResult = await account.callFunctionRaw({
+      contractId: wNEAR.accountId,
+      methodName: 'near_withdraw',
+      args: { amount: amountYocto },
+      deposit: BigInt(1),
+      gas: BigInt(30_000_000_000_000),
+    })
+    const unwrapTxHash = getNearTransactionHash(unwrapResult)
+    if (!unwrapTxHash) {
+      throw new Error('NEAR unwrap completed without a transaction reference.')
+    }
+    providerPayload.unwrapTxHash = unwrapTxHash
+    providerPayload.unwrappedNearAmountYocto = amountYocto
+    logNear('payout.unwrap', {
+      orderId: order.id,
+      accountId: account.accountId,
+      unwrapTxHash,
       amountYocto,
     })
+    await input.onUnwrapped?.(providerPayload)
   }
 
   if (typeof providerPayload.nativePayoutTxHash !== 'string') {
