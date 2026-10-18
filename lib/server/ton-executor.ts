@@ -1,14 +1,13 @@
-import { execFile } from 'node:child_process'
-import https from 'node:https'
-import { promisify } from 'node:util'
 import { StonApiClient } from '@ston-fi/api'
 import { dexFactory } from '@ston-fi/sdk'
-import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { Address, internal, toNano } from '@ton/ton'
 import { mnemonicToPrivateKey } from '@ton/crypto'
 import { TonClient, WalletContractV4 } from '@ton/ton'
 import { getCryptoAssetById } from '@/lib/server/data'
+import { createTonHttpAdapter, TON_NETWORK_BUSY_MESSAGE, tonFailureStatus } from '@/lib/server/ton-rpc'
 import type { CryptoOrder } from '@/types'
+
+export { createTonHttpAdapter } from '@/lib/server/ton-rpc'
 
 const DEFAULT_TON_RPC_URL = 'https://toncenter.com/api/v2/jsonRPC'
 const DEFAULT_TON_USDT_MASTER_ADDRESS = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs'
@@ -16,8 +15,7 @@ const TON_MAINNET_WORKCHAIN = 0
 const TON_QUOTE_SLIPPAGE_TOLERANCE = '0.01'
 const MIN_TON_PREFLIGHT_GAS_BUFFER = toNano('0.2')
 const MIN_TON_POST_SUBMIT_RESERVE = toNano('0.02')
-const TON_RPC_TIMEOUT_MS = 12_000
-const execFileAsync = promisify(execFile)
+const TON_TREASURY_BALANCE_CACHE_MS = 15_000
 
 type TonQuotePayload = {
   rail: 'ton_treasury'
@@ -49,6 +47,15 @@ type TonSwapExecution = {
 }
 
 let tonNativeAssetAddressPromise: Promise<string> | null = null
+let tonTreasuryBalanceCache: { expiresAt: number; value: TonTreasuryBalances } | null = null
+let tonTreasuryBalanceRequest: Promise<TonTreasuryBalances> | null = null
+
+type TonTreasuryBalances = {
+  walletAddress: string
+  tonNano: string
+  usdtUnits: string
+  usdtWalletAddress: string
+}
 
 function logTon(event: string, details?: Record<string, unknown>) {
   const payload = details ? ` ${JSON.stringify(details)}` : ''
@@ -75,7 +82,7 @@ function describeTonUpstreamError(error: unknown) {
     return {
       message: error.message,
       code: enriched.code,
-      status: enriched.response?.status,
+      status: tonFailureStatus(error.message, enriched.response?.status, enriched.response?.data),
       statusText: enriched.response?.statusText,
       data: enriched.response?.data,
       url: enriched.config?.url,
@@ -101,6 +108,10 @@ function createTonUpstreamFailureMessage(
     return 'TON RPC authentication failed. Check MAFITAPAY_TON_API_KEY or MAFITAPAY_TON_RPC_URL.'
   }
 
+  if (details.status === 429) {
+    return TON_NETWORK_BUSY_MESSAGE
+  }
+
   if (operation === 'treasury_balances') {
     return 'TON treasury balance check failed. Please verify the TON RPC configuration.'
   }
@@ -118,135 +129,6 @@ function amountToUnits(amount: number, decimals: number) {
   }
 
   return BigInt(Math.round(amount * 10 ** decimals))
-}
-
-function shouldRetryTonRpcViaCurl(error: unknown) {
-  if (!(error instanceof Error)) return false
-  const enriched = error as Error & { code?: string }
-  return enriched.code === 'EAI_AGAIN'
-    || enriched.code === 'ETIMEDOUT'
-    || enriched.code === 'ECONNRESET'
-    || enriched.code === 'ENOTFOUND'
-}
-
-async function postJsonOverHttps<T>(input: string, body: string, headers?: Record<string, string>) {
-  const url = new URL(input)
-
-  return await new Promise<{ status: number; statusText: string; data: T; headers: Record<string, string | string[] | undefined> }>((resolve, reject) => {
-    const request = https.request({
-      protocol: url.protocol,
-      hostname: url.hostname,
-      port: url.port || undefined,
-      path: `${url.pathname}${url.search}`,
-      method: 'POST',
-      headers: {
-        'user-agent': 'mafitapay/0.1.0',
-        ...headers,
-      },
-    }, response => {
-      const status = response.statusCode ?? 0
-      const statusText = response.statusMessage ?? ''
-      let raw = ''
-
-      response.setEncoding('utf8')
-      response.on('data', chunk => {
-        raw += chunk
-      })
-      response.on('end', () => {
-        try {
-          const parsed = raw ? JSON.parse(raw) as T : null
-          resolve({
-            status,
-            statusText,
-            data: parsed as T,
-            headers: response.headers,
-          })
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error('Invalid JSON response.'))
-        }
-      })
-    })
-
-    request.setTimeout(TON_RPC_TIMEOUT_MS, () => {
-      request.destroy(Object.assign(new Error('Request timed out.'), { code: 'ETIMEDOUT' }))
-    })
-    request.on('error', reject)
-    request.write(body)
-    request.end()
-  })
-}
-
-async function postJsonViaCurl<T>(input: string, body: string, headers?: Record<string, string>) {
-  const args = [
-    '-sS',
-    '--max-time',
-    String(Math.ceil(TON_RPC_TIMEOUT_MS / 1000)),
-    '-X',
-    'POST',
-    input,
-    '--data-binary',
-    body,
-    '-w',
-    '\n%{http_code}',
-  ]
-
-  for (const [key, value] of Object.entries({
-    'user-agent': 'mafitapay/0.1.0',
-    ...headers,
-  })) {
-    args.push('-H', `${key}: ${value}`)
-  }
-
-  const { stdout } = await execFileAsync('curl', args)
-  const markerIndex = stdout.lastIndexOf('\n')
-  if (markerIndex < 0) {
-    throw new Error('Missing HTTP status from curl response.')
-  }
-  const raw = stdout.slice(0, markerIndex)
-  const status = Number(stdout.slice(markerIndex + 1).trim())
-  return {
-    status,
-    statusText: '',
-    data: raw ? JSON.parse(raw) as T : null as T,
-    headers: {},
-  }
-}
-
-export function createTonHttpAdapter(): AxiosAdapter {
-  return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
-    const headers = Object.fromEntries(
-      Object.entries(config.headers?.toJSON ? config.headers.toJSON() as Record<string, unknown> : (config.headers as Record<string, unknown> | undefined) ?? {})
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => [key, String(value)]),
-    )
-    const body = typeof config.data === 'string' ? config.data : JSON.stringify(config.data ?? {})
-
-    try {
-      const response = await postJsonOverHttps<unknown>(config.url ?? '', body, headers)
-      return {
-        data: response.data,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        config,
-        request: { transport: 'https' },
-      }
-    } catch (error) {
-      if (!shouldRetryTonRpcViaCurl(error)) {
-        throw error
-      }
-
-      const response = await postJsonViaCurl<unknown>(config.url ?? '', body, headers)
-      return {
-        data: response.data,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        config,
-        request: { transport: 'curl' },
-      }
-    }
-  }
 }
 
 function unitsToAmount(units: string | bigint, decimals: number) {
@@ -381,7 +263,7 @@ async function getTonNativeAssetAddress(stonApiClient: StonApiClient) {
   return tonNativeAssetAddressPromise
 }
 
-export async function getTonTreasuryBalances() {
+async function loadTonTreasuryBalances(): Promise<TonTreasuryBalances> {
   try {
     const { tonClient, wallet, stonApiClient, config } = await getTonClients()
     const [tonBalance, usdtAsset, usdtWalletAddress] = await Promise.all([
@@ -422,6 +304,26 @@ export async function getTonTreasuryBalances() {
     })
     throw new Error(createTonUpstreamFailureMessage('treasury_balances', details))
   }
+}
+
+export async function getTonTreasuryBalances() {
+  if (tonTreasuryBalanceCache && tonTreasuryBalanceCache.expiresAt > Date.now()) {
+    return tonTreasuryBalanceCache.value
+  }
+  if (!tonTreasuryBalanceRequest) {
+    tonTreasuryBalanceRequest = loadTonTreasuryBalances()
+      .then(value => {
+        tonTreasuryBalanceCache = {
+          expiresAt: Date.now() + TON_TREASURY_BALANCE_CACHE_MS,
+          value,
+        }
+        return value
+      })
+      .finally(() => {
+        tonTreasuryBalanceRequest = null
+      })
+  }
+  return tonTreasuryBalanceRequest
 }
 
 export async function assertTonTreasuryCanExecuteBuy(input: {
@@ -539,6 +441,21 @@ function createOrderQueryId(order: CryptoOrder) {
 }
 
 export async function buildTonSwapExecutionForOrder(order: CryptoOrder): Promise<TonSwapExecution> {
+  try {
+    return await executeTonSwapForOrder(order)
+  } catch (error) {
+    const details = describeTonUpstreamError(error)
+    if (details.status !== 429) throw error
+    logTon('swap.rate-limited', {
+      pairId: order.pairId,
+      orderId: order.id,
+      ...details,
+    })
+    throw new Error(TON_NETWORK_BUSY_MESSAGE)
+  }
+}
+
+async function executeTonSwapForOrder(order: CryptoOrder): Promise<TonSwapExecution> {
   if (order.executionRail !== 'ton_treasury' || order.pairId !== 'TON_TON') {
     throw new Error('Only TON_TON treasury orders can be executed through this rail.')
   }
