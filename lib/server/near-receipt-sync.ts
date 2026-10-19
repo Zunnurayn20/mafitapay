@@ -1,6 +1,6 @@
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { getCryptoOrderById, listCryptoOrders, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
-import { getNearIntentsSwapStatus, unwrapAndPayoutNearForOrder } from '@/lib/server/near-intents'
+import { getNearIntentsSwapStatus, payoutNearForOrder } from '@/lib/server/near-intents'
 import type { CryptoOrder } from '@/types'
 
 const AUTO_SYNC_DELAYS_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 120_000]
@@ -182,18 +182,9 @@ export async function syncNearReceiptForCryptoOrder(
     }
 
     try {
-      const nextProviderPayload = await unwrapAndPayoutNearForOrder({
+      const nextProviderPayload = await payoutNearForOrder({
         order,
         amountYocto: payoutAmountYocto,
-        onUnwrapped: async unwrappedProviderPayload => {
-          Object.assign(providerPayload, unwrappedProviderPayload)
-          providerPayload.status = status
-          await updateCryptoOrderProviderState({
-            id: order.id,
-            providerStatus: 'SUCCESS:AWAITING_NATIVE_PAYOUT',
-            providerPayload,
-          })
-        },
       })
       nextProviderPayload.status = status
       await updateCryptoOrderProviderState({
@@ -232,7 +223,7 @@ export async function syncNearReceiptForCryptoOrder(
     logNear('sync.fulfilled', {
       orderId,
       destinationTxHash,
-      unwrapTxHash: providerPayload.unwrapTxHash,
+      nearIntentsTxHashes: status.swapDetails?.nearTxHashes,
     })
 
     const fulfilled = await settleCryptoOrderTerminalState({
@@ -245,7 +236,6 @@ export async function syncNearReceiptForCryptoOrder(
         depositMemo: depositMemo || undefined,
         txHash: destinationTxHash,
         nearTxHashes: status.swapDetails?.nearTxHashes,
-        unwrapTxHash: providerPayload.unwrapTxHash,
       },
     })
 
