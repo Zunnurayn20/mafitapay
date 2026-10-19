@@ -48,6 +48,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     && tx.metadata?.settlementKind === 'provider_bill'
     && tx.metadata?.providerName === 'flutterwave'
   ))
+  const hasPendingCryptoBuy = useAppStore(state => state.transactions.some(tx =>
+    (tx.status === 'pending' || tx.status === 'processing')
+    && tx.type === 'crypto_buy'
+  ))
   const router = useRouter()
   const pathname = usePathname()
   const [biometricSupported, setBiometricSupported] = useState(false)
@@ -57,8 +61,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const cryptoDepositProvisionKeyRef = useRef('')
   const pendingPayoutSyncRef = useRef(false)
   const pendingBillSyncRef = useRef(false)
+  const pendingCryptoSyncRef = useRef(false)
   pendingPayoutSyncRef.current = hasPendingBankPayout
   pendingBillSyncRef.current = hasPendingFlutterwaveBill
+  pendingCryptoSyncRef.current = hasPendingCryptoBuy
   const isAdminRoute = pathname.startsWith('/admin')
   const isAnalyticsRoute = pathname.startsWith('/analytics')
   /** Admin/analytics chrome comes from their server layouts — only pass children through the fixed viewport. */
@@ -127,6 +133,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
     const refreshNow = () => {
       void (async () => {
+        if (pendingCryptoSyncRef.current) {
+          try {
+            await fetch('/api/crypto/orders/routed-sync-pending', { method: 'POST', credentials: 'include' })
+          } catch {
+            // Keep showing the last known order status if the provider lookup is temporarily unavailable.
+          }
+        }
         if (pendingPayoutSyncRef.current) {
           try {
             await fetch('/api/wallet/payouts/sync', { method: 'POST', credentials: 'include' })
@@ -145,7 +158,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       })()
     }
 
-    if (hasPendingBankPayout || hasPendingFlutterwaveBill) refreshNow()
+    if (hasPendingCryptoBuy || hasPendingBankPayout || hasPendingFlutterwaveBill) refreshNow()
 
     const interval = setInterval(refreshNow, 20_000)
     const handleVisibility = () => {
@@ -163,7 +176,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleFocus)
     }
-  }, [authResolved, hasPendingBankPayout, hasPendingFlutterwaveBill, isAuthenticated, refreshSession])
+  }, [authResolved, hasPendingBankPayout, hasPendingCryptoBuy, hasPendingFlutterwaveBill, isAuthenticated, refreshSession])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return
