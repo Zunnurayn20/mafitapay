@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { AdminButton, AdminError, AdminInput, AdminSelect, AdminTable, AdminThead, formatNaira } from '@/components/admin/AdminUi'
+import { AdminError, AdminInput, AdminSelect, AdminTable, AdminThead, formatNaira } from '@/components/admin/AdminUi'
 
 type DisabledPlan = { vendor: 'amigo' | 'asbdata' | 'bardetech'; networkId: number; planId: string; reason?: string; disabledAt: string; disabledBy?: string }
 type CatalogPlan = { vendor: DisabledPlan['vendor']; networkId: number; network: string; planId: string; category: string; label: string; validity: string; retailNgn: number }
@@ -27,6 +27,9 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
       && (!search || `${plan.network} ${plan.category} ${plan.label} ${plan.validity}`.toLowerCase().includes(search))
     ))
   }, [vendorPlans, networkId, category, query])
+  const disabledCount = filteredPlans.filter(plan => plans.some(item => item.vendor === plan.vendor && item.networkId === plan.networkId && item.planId === plan.planId)).length
+  const allPlansEnabled = filteredPlans.length > 0 && disabledCount === 0
+  const mixedPlanSettings = disabledCount > 0 && disabledCount < filteredPlans.length
 
   async function update(payload: Record<string, unknown>) {
     setBusyPlan(`${payload.vendor}:${payload.networkId}:${payload.planId}`); setError('')
@@ -37,6 +40,25 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
       setPlans(result.data)
       return true
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to save the plan setting.'); return false } finally { setBusyPlan('') }
+  }
+
+  async function updateAllPlans(disabled: boolean) {
+    setBusyPlan('__bulk__')
+    setError('')
+    try {
+      const response = await fetch('/api/admin/disabled-data-plans', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plans: filteredPlans.map(({ vendor, networkId, planId }) => ({ vendor, networkId, planId })), disabled, reason }),
+      })
+      const result = await response.json()
+      if (!response.ok || !result.success || !Array.isArray(result.data)) throw new Error(result.error || 'Unable to save the data plan settings.')
+      setPlans(result.data)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to save the data plan settings.')
+    } finally {
+      setBusyPlan('')
+    }
   }
 
   function PlanSwitch({ plan, disabled }: { plan: Pick<DisabledPlan, 'vendor' | 'networkId' | 'planId'>; disabled: boolean }) {
@@ -70,13 +92,25 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
     <AdminInput placeholder="Reason applied when you disable a plan (optional)" value={reason} onChange={event => setReason(event.target.value)} className="w-full" />
     <p className="text-sm text-slate-500">Showing {filteredPlans.length} available plan{filteredPlans.length === 1 ? '' : 's'}. Use each switch to enable or disable that plan.</p>
     <AdminError message={error} />
-    <AdminTable><AdminThead columns={['Network', 'Category', 'Plan', 'Validity', 'Retail price', '']} /><tbody>
+    <AdminTable><thead className="bg-[var(--clay)] text-xs uppercase tracking-wide text-[var(--muted)]"><tr>
+      {['Network', 'Category', 'Plan', 'Validity', 'Retail price'].map(column => <th key={column} className="px-4 py-3 font-bold">{column}</th>)}
+      <th className="px-4 py-3 font-bold"><div className="flex items-center justify-end gap-3"><span>All</span>
+        <button type="button" role="switch" aria-checked={allPlansEnabled}
+          aria-label={`${allPlansEnabled ? 'Disable' : 'Enable'} all ${filteredPlans.length} filtered data plans${mixedPlanSettings ? '; some settings are mixed' : ''}`}
+          disabled={Boolean(busyPlan) || filteredPlans.length === 0}
+          onClick={() => void updateAllPlans(allPlansEnabled)}
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${allPlansEnabled ? 'border-emerald-600 bg-emerald-600' : mixedPlanSettings ? 'border-amber-500 bg-amber-400' : 'border-slate-300 bg-slate-300'}`}>
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${allPlansEnabled ? 'translate-x-5' : 'translate-x-1'}`} />
+          <span className="sr-only">{busyPlan === '__bulk__' ? 'Saving all plans' : allPlansEnabled ? 'All enabled' : mixedPlanSettings ? 'Mixed settings' : 'All disabled'}</span>
+        </button>
+      </div></th>
+    </tr></thead><tbody>
       {filteredPlans.map(plan => {
         const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`
         const disabled = plans.some(item => item.vendor === plan.vendor && item.networkId === plan.networkId && item.planId === plan.planId)
         return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3 font-semibold text-slate-800">{plan.network}</td><td className="px-4 py-3 text-slate-600">{plan.category || '—'}</td><td className="px-4 py-3 text-slate-800">{plan.label}</td><td className="px-4 py-3 text-slate-600">{plan.validity}</td><td className="px-4 py-3 font-semibold text-slate-800">{formatNaira(plan.retailNgn)}</td><td className="px-4 py-3"><PlanSwitch plan={plan} disabled={disabled} /></td></tr>
       })}
-      {!filteredPlans.length && <tr><td colSpan={6} className="py-8 text-center text-slate-500">No available plans match these filters.</td></tr>}
+      {!filteredPlans.length && <tr><td colSpan={6} className="py-8 text-center text-slate-500">No plans match these filters.</td></tr>}
     </tbody></AdminTable>
     <div className="border-t border-slate-200 pt-5">
       <h3 className="text-sm font-bold text-slate-900">Disabled plans</h3>

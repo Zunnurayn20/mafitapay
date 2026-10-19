@@ -8255,6 +8255,61 @@ export async function setDataPlanDisabled(input: {
   return getDisabledDataPlans()
 }
 
+export async function setDataPlansDisabled(input: {
+  plans: Array<Pick<DisabledDataPlanRecord, 'vendor' | 'networkId' | 'planId'>>
+  disabled: boolean
+  reason?: string
+  disabledBy?: string
+}) {
+  await ensureDbReady()
+  await ensureDisabledDataPlansReady()
+  const uniquePlans = Array.from(new Map(input.plans.map(plan => [`${plan.vendor}:${plan.networkId}:${plan.planId}`, plan])).values())
+  const now = new Date().toISOString()
+
+  if (isPostgresEnabled()) {
+    if (input.disabled) {
+      const values = uniquePlans.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')
+      const params = uniquePlans.flatMap(plan => [plan.vendor, plan.networkId, plan.planId, input.reason?.trim() || null, now, input.disabledBy ?? null])
+      await queryPostgres(`
+        INSERT INTO disabled_data_plans (vendor, network_id, plan_id, reason, disabled_at, disabled_by)
+        VALUES ${values}
+        ON CONFLICT(vendor, network_id, plan_id) DO UPDATE
+          SET reason = excluded.reason, disabled_at = excluded.disabled_at, disabled_by = excluded.disabled_by
+      `, params)
+    } else {
+      const values = uniquePlans.map(() => '(?, ?, ?)').join(', ')
+      const params = uniquePlans.flatMap(plan => [plan.vendor, plan.networkId, plan.planId])
+      await queryPostgres(`
+        DELETE FROM disabled_data_plans
+        WHERE (vendor, network_id, plan_id) IN (${values})
+      `, params)
+    }
+  } else {
+    const db = getDb()
+    db.exec('BEGIN')
+    try {
+      const statement = input.disabled
+        ? db.prepare(`
+            INSERT INTO disabled_data_plans (vendor, network_id, plan_id, reason, disabled_at, disabled_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(vendor, network_id, plan_id) DO UPDATE
+              SET reason = excluded.reason, disabled_at = excluded.disabled_at, disabled_by = excluded.disabled_by
+          `)
+        : db.prepare('DELETE FROM disabled_data_plans WHERE vendor = ? AND network_id = ? AND plan_id = ?')
+      for (const plan of uniquePlans) {
+        if (input.disabled) statement.run(plan.vendor, plan.networkId, plan.planId, input.reason?.trim() || null, now, input.disabledBy ?? null)
+        else statement.run(plan.vendor, plan.networkId, plan.planId)
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  return getDisabledDataPlans()
+}
+
 export async function isDataPlanDisabled(vendor: DisabledDataPlanRecord['vendor'], networkId: number, planId: string) {
   await ensureDbReady()
   await ensureDisabledDataPlansReady()
