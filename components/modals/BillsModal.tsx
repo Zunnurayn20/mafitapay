@@ -38,11 +38,10 @@ const DATA_BUNDLE_GROUPS: Array<{ key: DataBundleGroupKey; label: string }> = [
 const NETWORK_PROVIDER_DISPLAY_ORDER = ['mtn', 'airtel', 'glo', '9mobile'] as const
 
 /**
- * Tab selected when the list first opens. Monthly is where most of the catalog sits, and empty
- * groups are dropped before render, so this falls through to the first surviving tab if a network
- * happens to sell no monthly plan.
+ * Tab selected when the list first opens. Empty groups are dropped before render, so this falls
+ * through to the first surviving tab if a network happens to sell no weekly plan.
  */
-const DEFAULT_DATA_BUNDLE_GROUP: DataBundleGroupKey = 'monthly'
+const DEFAULT_DATA_BUNDLE_GROUP: DataBundleGroupKey = 'weekly'
 
 function getBillerLogo(name: string) {
   const normalized = name.trim().toLowerCase()
