@@ -139,7 +139,12 @@ export async function syncTonReceiptForCryptoOrder(orderId: string, actorUserId:
   providerPayload.balanceDeltas = status.balanceDeltas
   providerPayload.logicalTime = status.logicalTime
 
-  if (status.exitCode !== '0') {
+  // STON.fi reports a successful router execution as `swap_ok` (not the
+  // numeric TVM exit code `0`). Treat both successful forms as fulfillment.
+  const normalizedExitCode = status.exitCode.trim().toLowerCase()
+  const swapSucceeded = normalizedExitCode === '0' || normalizedExitCode === 'swap_ok'
+
+  if (!swapSucceeded) {
     await updateCryptoOrderProviderState({
       id: order.id,
       providerStatus: `SWAP_FAILED:${status.exitCode}`,
