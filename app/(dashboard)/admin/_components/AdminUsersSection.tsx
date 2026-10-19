@@ -77,6 +77,7 @@ export function AdminUsersSection({ workspace, submodule }: { workspace: AdminWo
                 <div>
                   <div className="text-[12px] font-bold text-[var(--text)]">{item.documentType.toUpperCase()} · {item.documentNumber}</div>
                   <div className="mt-1 text-[10px] text-[var(--muted)]">User: {item.userId}</div>
+                  <div className="mt-1 text-[10px] text-[var(--muted)]">{users.find(user => user.id === item.userId)?.email || 'Email unavailable'}</div>
                   <div className="mt-1 text-[10px] text-[var(--muted)]">{new Date(item.createdAt).toLocaleString('en-NG')}</div>
                 </div>
                 <div className={`border px-2.5 py-1 text-[8px] font-bold ${
@@ -110,6 +111,7 @@ export function AdminUsersSection({ workspace, submodule }: { workspace: AdminWo
                   <div className="text-[12px] font-bold text-[var(--text)]">{selectedKycItem.documentType.toUpperCase()} · {selectedKycItem.documentNumber}</div>
                   <div className="mt-1 text-[10px] text-[var(--muted)]">User: {selectedKycItem.userId} · Submitted: {new Date(selectedKycItem.createdAt).toLocaleString('en-NG')}</div>
                   <div className="mt-2 text-[10px] text-[var(--text2)]">Full Name: {workspace.users.find(user => user.id === selectedKycItem.userId)?.name || 'Unavailable'}</div>
+                  <div className="mt-1 text-[10px] text-[var(--text2)]">Email: {workspace.users.find(user => user.id === selectedKycItem.userId)?.email || 'Unavailable'}</div>
                   <a href={selectedKycItem.documentUrl} target="_blank" rel="noreferrer" className="mt-2 block text-[10px] text-[var(--gold2)] break-all underline">
                     {selectedKycItem.documentName || selectedKycItem.documentUrl}
                   </a>
