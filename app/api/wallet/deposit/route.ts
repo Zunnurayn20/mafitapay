@@ -4,7 +4,7 @@ import { applyWalletMutation, createDepositIntent, getWalletByUserId, updateWall
 import { createFlutterwaveVirtualAccount, isFlutterwaveCollectionsEnabled } from '@/lib/server/flutterwave-collections'
 import { generateRef } from '@/lib/utils'
 
-const MAX_DEPOSIT_FEE = 100
+const MAX_DEPOSIT_FEE = 50
 
 export const runtime = 'nodejs'
 

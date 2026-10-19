@@ -273,7 +273,14 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
         </div>
 
         {selectedAccount ? (
-          renderAccountCard(selectedAccount)
+          <>
+            {renderAccountCard(selectedAccount)}
+            {selectedProvider === 'flutterwave' && (
+              <div className="rounded-xl border border-[rgba(202,165,96,0.18)] bg-[rgba(202,165,96,0.06)] px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--text2)]">
+                Flutterwave deposit fees are capped at ₦50. MafitaPay covers any provider fee above that amount.
+              </div>
+            )}
+          </>
         ) : selectedProvider === 'palmpay' ? (
           renderGeneratePanel({
             title: 'PalmPay funding account',

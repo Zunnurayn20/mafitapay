@@ -17,6 +17,7 @@ import {
 import { processSettlementEvent } from '@/lib/server/settlements'
 
 const FLUTTERWAVE_WEBHOOK_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_FLUTTERWAVE === '1'
+const MAX_FLUTTERWAVE_DEPOSIT_FEE_NGN = 50
 
 function readString(value: unknown) {
   if (typeof value === 'string') return value.trim()
@@ -343,10 +344,13 @@ export async function handleFlutterwaveWebhook(input: {
           return { body: { data: { ignored: true, status }, success: true }, status: 200 as const }
         }
 
-        const netAmount = amountSettled && amountSettled > 0
+        const providerNetAmount = amountSettled && amountSettled > 0
           ? amountSettled
           : amount
-        const fee = grossAmount - (netAmount ?? 0)
+        const providerFee = Math.max(0, grossAmount - (providerNetAmount ?? 0))
+        const fee = Math.min(providerFee, MAX_FLUTTERWAVE_DEPOSIT_FEE_NGN)
+        const creditedAmount = grossAmount - fee
+        const platformFeeSubsidy = Math.max(0, creditedAmount - (providerNetAmount ?? 0))
         const deposit = await createSettledDepositFromProvider({
           userId: user.id,
           reference: uniqueReference,
@@ -364,6 +368,12 @@ export async function handleFlutterwaveWebhook(input: {
             paymentType: readString(data.payment_type),
             webhookSource: input.source ?? 'public_webhook',
             walletAsset: 'NGN',
+            flutterwaveProviderNetAmount: providerNetAmount,
+            flutterwaveProviderFee: providerFee,
+            flutterwaveCustomerFee: fee,
+            flutterwavePlatformFeeSubsidy: platformFeeSubsidy,
+            flutterwaveAppFee: appFee,
+            flutterwaveMerchantFee: merchantFee,
           },
         })
 
@@ -394,8 +404,11 @@ export async function handleFlutterwaveWebhook(input: {
           appFee,
           merchantFee,
           grossAmount,
-          fee,
-          netAmount: deposit.transaction.amount,
+          providerFee,
+          customerFee: fee,
+          platformFeeSubsidy,
+          providerNetAmount,
+          creditedAmount: deposit.transaction.amount,
           transactionId: deposit.transaction.id,
         })
 
