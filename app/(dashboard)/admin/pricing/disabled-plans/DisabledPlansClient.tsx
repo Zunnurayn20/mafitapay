@@ -39,6 +39,19 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to save the plan setting.'); return false } finally { setBusyPlan('') }
   }
 
+  function PlanSwitch({ plan, disabled }: { plan: Pick<DisabledPlan, 'vendor' | 'networkId' | 'planId'>; disabled: boolean }) {
+    const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`
+    return <div className="flex items-center justify-end gap-3">
+      <span className={`text-xs font-semibold ${disabled ? 'text-amber-700' : 'text-emerald-700'}`}>{disabled ? 'Disabled' : 'Enabled'}</span>
+      <button type="button" role="switch" aria-label={`${disabled ? 'Enable' : 'Disable'} this data plan`} aria-checked={!disabled}
+        disabled={Boolean(busyPlan)} onClick={() => void update({ ...plan, reason, disabled: !disabled })}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors disabled:cursor-wait disabled:opacity-50 ${disabled ? 'border-slate-300 bg-slate-300' : 'border-emerald-600 bg-emerald-600'}`}>
+        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${disabled ? 'translate-x-1' : 'translate-x-5'}`} />
+        <span className="sr-only">{busyPlan === key ? 'Saving' : disabled ? 'Disabled' : 'Enabled'}</span>
+      </button>
+    </div>
+  }
+
   return <div className="space-y-5 p-4">
     <div className="grid gap-3 md:grid-cols-4">
       <AdminSelect value={vendor} onChange={event => { setVendor(event.target.value as DisabledPlan['vendor']); setNetworkId(''); setCategory(''); setQuery('') }}>
@@ -55,19 +68,20 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
       <AdminInput placeholder="Search: 1GB, SME, 30 days…" value={query} onChange={event => setQuery(event.target.value)} />
     </div>
     <AdminInput placeholder="Reason applied when you disable a plan (optional)" value={reason} onChange={event => setReason(event.target.value)} className="w-full" />
-    <p className="text-sm text-slate-500">Showing {filteredPlans.length} available plan{filteredPlans.length === 1 ? '' : 's'}. Choose the exact row to disable it.</p>
+    <p className="text-sm text-slate-500">Showing {filteredPlans.length} available plan{filteredPlans.length === 1 ? '' : 's'}. Use each switch to enable or disable that plan.</p>
     <AdminError message={error} />
     <AdminTable><AdminThead columns={['Network', 'Category', 'Plan', 'Validity', 'Retail price', '']} /><tbody>
       {filteredPlans.map(plan => {
         const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`
-        return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3 font-semibold text-slate-800">{plan.network}</td><td className="px-4 py-3 text-slate-600">{plan.category || '—'}</td><td className="px-4 py-3 text-slate-800">{plan.label}</td><td className="px-4 py-3 text-slate-600">{plan.validity}</td><td className="px-4 py-3 font-semibold text-slate-800">{formatNaira(plan.retailNgn)}</td><td className="px-4 py-3 text-right"><AdminButton disabled={Boolean(busyPlan)} onClick={() => void update({ vendor: plan.vendor, networkId: plan.networkId, planId: plan.planId, reason, disabled: true })}>{busyPlan === key ? 'Disabling…' : 'Disable'}</AdminButton></td></tr>
+        const disabled = plans.some(item => item.vendor === plan.vendor && item.networkId === plan.networkId && item.planId === plan.planId)
+        return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3 font-semibold text-slate-800">{plan.network}</td><td className="px-4 py-3 text-slate-600">{plan.category || '—'}</td><td className="px-4 py-3 text-slate-800">{plan.label}</td><td className="px-4 py-3 text-slate-600">{plan.validity}</td><td className="px-4 py-3 font-semibold text-slate-800">{formatNaira(plan.retailNgn)}</td><td className="px-4 py-3"><PlanSwitch plan={plan} disabled={disabled} /></td></tr>
       })}
       {!filteredPlans.length && <tr><td colSpan={6} className="py-8 text-center text-slate-500">No available plans match these filters.</td></tr>}
     </tbody></AdminTable>
     <div className="border-t border-slate-200 pt-5">
       <h3 className="text-sm font-bold text-slate-900">Disabled plans</h3>
       <AdminTable><AdminThead columns={['Provider', 'Network ID', 'Plan ID', 'Reason', '']} /><tbody>
-        {plans.map(plan => { const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`; return <tr key={key}><td>{plan.vendor}</td><td>{plan.networkId}</td><td>{plan.planId}</td><td>{plan.reason || '—'}</td><td><AdminButton disabled={Boolean(busyPlan)} onClick={() => void update({ ...plan, disabled: false })}>{busyPlan === key ? 'Enabling…' : 'Enable'}</AdminButton></td></tr> })}
+        {plans.map(plan => { const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`; return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3">{VENDOR_LABELS[plan.vendor]}</td><td className="px-4 py-3">{plan.networkId}</td><td className="px-4 py-3">{plan.planId}</td><td className="px-4 py-3">{plan.reason || '—'}</td><td className="px-4 py-3"><PlanSwitch plan={plan} disabled /></td></tr> })}
         {!plans.length && <tr><td colSpan={5} className="py-6 text-center text-slate-500">No plans are disabled.</td></tr>}
       </tbody></AdminTable>
     </div>
