@@ -273,6 +273,13 @@ export default function CryptoPage() {
                   <span className="block truncate text-[11px] font-bold text-[var(--text)]">{asset.symbol}</span>
                   <span className="mt-0.5 block truncate text-[9px] text-[var(--muted)]">{asset.network}</span>
                 </span>
+                <span
+                  aria-label={`24-hour price ${asset.change24h >= 0 ? 'up' : 'down'} ${formatPercentChange(asset.change24h)}`}
+                  className={`ml-auto flex flex-shrink-0 items-center gap-1 text-[9px] font-semibold ${asset.change24h >= 0 ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}
+                >
+                  <span aria-hidden="true">{asset.change24h >= 0 ? '↗' : '↘'}</span>
+                  {formatPercentChange(asset.change24h)}
+                </span>
               </button>
             ))}
           </div>
