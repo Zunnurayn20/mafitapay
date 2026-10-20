@@ -260,6 +260,15 @@ body::before {
   background: var(--border2);
 }
 
+.crypto-recent-assets {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.crypto-recent-assets::-webkit-scrollbar {
+  display: none;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
