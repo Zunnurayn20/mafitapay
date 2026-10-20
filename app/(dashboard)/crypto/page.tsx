@@ -189,7 +189,7 @@ export default function CryptoPage() {
       >
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center gap-2">
-            <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[#8d7b66]">Stablecoin market price (USD) · customer buy rate (NGN)</div>
+            <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[#8d7b66]">Stablecoin rates</div>
             {refreshingAssets && (
               <div className="border border-[rgba(46,170,92,.2)] bg-[rgba(46,170,92,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[.8px] text-[#48cc78]">
                 Refreshing Market…
