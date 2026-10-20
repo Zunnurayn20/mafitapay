@@ -248,18 +248,18 @@ export default function CryptoPage() {
       </div>
 
       {recentlyPurchasedAssets.length > 0 && (
-        <Card>
-          <CardHeader>
+        <section className="space-y-2">
+          <div className="flex items-center justify-between gap-3 px-1">
             <CardTitle>Recently purchased</CardTitle>
-            <div className="text-[8px] font-medium text-[var(--muted)]">Tap an asset to buy it again</div>
-          </CardHeader>
-          <div className="flex gap-2 overflow-x-auto px-3 pb-3 sm:px-5">
+            <div className="text-[8px] font-medium text-[var(--muted)]">Tap to buy again</div>
+          </div>
+          <div className="flex gap-2 overflow-x-auto">
             {recentlyPurchasedAssets.map(asset => (
               <button
                 key={asset.id}
                 type="button"
                 onClick={() => openTradeForAsset(asset, 'buy')}
-                className="flex min-w-[150px] items-center gap-2.5 border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-colors hover:border-[var(--gold2)]"
+                className="flex min-w-[150px] items-center gap-2.5 border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 text-left transition-colors hover:border-[var(--gold2)]"
               >
                 <AssetLogo
                   src={asset.icon}
@@ -276,7 +276,7 @@ export default function CryptoPage() {
               </button>
             ))}
           </div>
-        </Card>
+        </section>
       )}
 
       <div className="grid gap-6 xl:grid-cols-2">
