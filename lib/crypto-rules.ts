@@ -65,7 +65,7 @@ const MINIMUM_BUY_NGN_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   // dynamic ₦1 USDC equivalent so its LI.FI input is at least $1.00.
   SUI_SUI: 1000,
   NEAR_NEAR: 500,
-  TON_TON: 800,
+  TON_TON: 500,
 }
 
 const MAX_QUOTE_TTL_SECONDS = 30
