@@ -265,8 +265,8 @@ export default function CryptoPage() {
                   src={asset.icon}
                   alt={`${asset.symbol} logo`}
                   fallback={asset.symbol.slice(0, 1)}
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--coal)]"
-                  imgClassName="h-6 w-6 object-contain"
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden"
+                  imgClassName="h-8 w-8 object-contain"
                   textClassName="font-display text-sm font-bold text-[var(--gold2)]"
                 />
                 <span className="min-w-0">
