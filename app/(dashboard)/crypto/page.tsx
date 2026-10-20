@@ -101,6 +101,27 @@ export default function CryptoPage() {
     [assetGroups],
   )
 
+  const recentlyPurchasedAssets = useMemo(() => {
+    const buyableById = new Map(assets
+      .filter(asset => asset.buyEnabled !== false)
+      .map(asset => [asset.id, asset]))
+    const seen = new Set<string>()
+    const recent: CryptoAsset[] = []
+
+    for (const transaction of cryptoTxs) {
+      if (transaction.type !== 'crypto_buy' || transaction.status === 'failed') continue
+      const pairId = transaction.metadata?.pairId
+      if (typeof pairId !== 'string' || seen.has(pairId)) continue
+      const asset = buyableById.get(pairId)
+      if (!asset) continue
+      seen.add(pairId)
+      recent.push(asset)
+      if (recent.length === 6) break
+    }
+
+    return recent
+  }, [assets, cryptoTxs])
+
   const networkPickerGroup = assetGroups.find(group => group.symbol === networkPickerSymbol) ?? null
 
   function openTradeForAsset(asset: CryptoAsset, mode: 'buy' | 'sell') {
@@ -225,6 +246,38 @@ export default function CryptoPage() {
           <Button variant="secondary" onClick={() => openModal('sell')} size="sm">⬆ Crypto Deposit</Button>
         </div>
       </div>
+
+      {recentlyPurchasedAssets.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Recently purchased</CardTitle>
+            <div className="text-[8px] font-medium text-[var(--muted)]">Tap an asset to buy it again</div>
+          </CardHeader>
+          <div className="flex gap-2 overflow-x-auto px-3 pb-3 sm:px-5">
+            {recentlyPurchasedAssets.map(asset => (
+              <button
+                key={asset.id}
+                type="button"
+                onClick={() => openTradeForAsset(asset, 'buy')}
+                className="flex min-w-[150px] items-center gap-2.5 border border-[var(--border)] bg-[var(--clay)] px-3 py-2.5 text-left transition-colors hover:border-[var(--gold2)]"
+              >
+                <AssetLogo
+                  src={asset.icon}
+                  alt={`${asset.symbol} logo`}
+                  fallback={asset.symbol.slice(0, 1)}
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-[var(--coal)]"
+                  imgClassName="h-6 w-6 object-contain"
+                  textClassName="font-display text-sm font-bold text-[var(--gold2)]"
+                />
+                <span className="min-w-0">
+                  <span className="block truncate text-[11px] font-bold text-[var(--text)]">{asset.symbol}</span>
+                  <span className="mt-0.5 block truncate text-[9px] text-[var(--muted)]">{asset.network}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card>
