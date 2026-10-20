@@ -168,7 +168,7 @@ export default function CryptoPage() {
       >
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center gap-2">
-            <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[#8d7b66]">Market Prices (USD)</div>
+            <div className="text-[8px] font-bold uppercase tracking-[1.2px] text-[#8d7b66]">Stablecoin market price (USD) · customer buy rate (NGN)</div>
             {refreshingAssets && (
               <div className="border border-[rgba(46,170,92,.2)] bg-[rgba(46,170,92,.08)] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[.8px] text-[#48cc78]">
                 Refreshing Market…
@@ -198,9 +198,18 @@ export default function CryptoPage() {
                 <div className="mt-1 truncate font-mono text-[12px] font-bold text-[#f0e8dd]">
                   {formatMarketUsd(a.symbol, a.marketPriceUsd, a.pricingSource)}
                   {' = '}
-                  <span className="text-[#48cc78]">{formatNGN(a.marketRate || a.buyRate)}</span>
+                  <span className="text-[#48cc78]">
+                    {shouldMaskStaleSnapshot && a.pricingSource !== 'live'
+                      ? 'Refreshing…'
+                      : a.pricingSource === 'safe' || !a.buyRate || a.buyRate <= 0
+                        ? 'Rate unavailable'
+                        : formatNGN(a.buyRate)}
+                  </span>
                 </div>
                 <div className="mt-1 flex items-center gap-1">
+                  <div className={`text-[7px] font-bold uppercase ${a.pricingSource === 'live' ? 'text-[#48cc78]' : a.pricingSource === 'backup' ? 'text-[#d9a441]' : 'text-[#e05030]'}`}>
+                    {a.pricingSource === 'live' ? 'Live buy rate' : a.pricingSource === 'backup' ? 'Cached buy rate' : 'Unavailable'}
+                  </div>
                   <div className={`truncate text-[8px] ${a.change24h >= 0 ? 'text-[#48cc78]' : 'text-[#e05030]'}`}>
                     {a.change24h >= 0 ? '▲' : '▼'} {formatPercentChange(a.change24h)}
                   </div>
