@@ -1321,13 +1321,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                       <Button
                         variant="secondary"
                         onClick={() => void reviewRewardRequest(request, 'reject')}
-                        disabled={reviewingRewardRequestId === request.id || request.status === 'approved'}
+                        disabled={reviewingRewardRequestId === request.id || request.status !== 'pending'}
                       >
                         {reviewingRewardRequestId === request.id ? 'Working…' : 'Reject'}
                       </Button>
                       <Button
                         onClick={() => void reviewRewardRequest(request, 'approve')}
-                        disabled={reviewingRewardRequestId === request.id || request.status === 'approved'}
+                        disabled={reviewingRewardRequestId === request.id || request.status !== 'pending'}
                       >
                         {reviewingRewardRequestId === request.id ? 'Working…' : 'Approve'}
                       </Button>

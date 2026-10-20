@@ -424,6 +424,26 @@ type RewardAwardRequestRow = {
   updated_at: string
 }
 
+type RewardAwardClaimRow = {
+  id: string
+  reward_rule_id: string
+  source_user_id: string
+  beneficiary_user_id: string
+  trigger_event: RewardRule['triggerEvent']
+  trigger_transaction_id: string | null
+  reward_type: RewardAwardRecord['rewardType']
+  amount_ngn: number
+  status: 'pending' | 'paid' | 'rejected' | 'capped'
+  reward_request_id: string | null
+  reward_transaction_id: string | null
+  status_reason: string | null
+  paid_at: string | null
+  reviewed_at: string | null
+  reviewed_by_user_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 type SecuritySettingsRow = {
   user_id: string
   transaction_pin_enabled: number
@@ -1917,6 +1937,30 @@ function initSchema(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS idx_reward_award_requests_rule_source
       ON reward_award_requests(reward_rule_id, source_user_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS reward_award_claims (
+      id TEXT PRIMARY KEY,
+      reward_rule_id TEXT NOT NULL,
+      source_user_id TEXT NOT NULL,
+      beneficiary_user_id TEXT NOT NULL,
+      trigger_event TEXT NOT NULL,
+      trigger_transaction_id TEXT,
+      reward_type TEXT NOT NULL,
+      amount_ngn REAL NOT NULL CHECK (amount_ngn > 0),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'rejected', 'capped')),
+      reward_request_id TEXT,
+      reward_transaction_id TEXT UNIQUE,
+      status_reason TEXT,
+      paid_at TEXT,
+      reviewed_at TEXT,
+      reviewed_by_user_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (reward_rule_id, source_user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reward_award_claims_status_paid_at
+      ON reward_award_claims(status, paid_at DESC);
+
     CREATE TABLE IF NOT EXISTS security_settings (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       transaction_pin_enabled INTEGER NOT NULL DEFAULT 0,
@@ -2726,6 +2770,75 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'security_settings', 'transaction_pin_locked_until', 'TEXT')
   ensureColumn(db, 'reward_rules', 'daily_payout_cap_ngn', 'REAL')
   ensureColumn(db, 'reward_rules', 'manual_approval_required', 'INTEGER NOT NULL DEFAULT 0')
+  const rewardClaimsNow = new Date().toISOString()
+  db.prepare(`
+    UPDATE reward_award_requests AS request
+    SET status = 'pending', status_reason = 'Recovered for review: approval was recorded without a reward credit.',
+        reviewed_at = NULL, reviewed_by_user_id = NULL, updated_at = ?
+    WHERE request.status = 'approved'
+      AND NOT EXISTS (
+        SELECT 1 FROM transactions AS transaction
+        WHERE transaction.user_id = request.beneficiary_user_id
+          AND transaction.type = request.reward_type
+          AND transaction.status = 'success'
+          AND json_valid(transaction.metadata)
+          AND json_extract(transaction.metadata, '$.rewardRuleId') = request.reward_rule_id
+          AND json_extract(transaction.metadata, '$.sourceUserId') = request.source_user_id
+      )
+  `).run(rewardClaimsNow)
+  db.prepare(`
+    UPDATE reward_award_requests AS request
+    SET status = 'approved', status_reason = COALESCE(request.status_reason, 'Credit was already recorded.'),
+        reviewed_at = COALESCE(request.reviewed_at, request.updated_at), updated_at = ?
+    WHERE request.status = 'pending'
+      AND EXISTS (
+        SELECT 1 FROM transactions AS transaction
+        WHERE transaction.user_id = request.beneficiary_user_id
+          AND transaction.type = request.reward_type
+          AND transaction.status = 'success'
+          AND json_valid(transaction.metadata)
+          AND json_extract(transaction.metadata, '$.rewardRuleId') = request.reward_rule_id
+          AND json_extract(transaction.metadata, '$.sourceUserId') = request.source_user_id
+      )
+  `).run(rewardClaimsNow)
+  db.prepare(`
+    INSERT OR IGNORE INTO reward_award_claims (
+      id, reward_rule_id, source_user_id, beneficiary_user_id, trigger_event,
+      trigger_transaction_id, reward_type, amount_ngn, status,
+      reward_transaction_id, paid_at, created_at, updated_at
+    )
+    SELECT 'reward_claim_legacy_' || transaction.rowid,
+      json_extract(transaction.metadata, '$.rewardRuleId'),
+      json_extract(transaction.metadata, '$.sourceUserId'), transaction.user_id,
+      COALESCE(json_extract(transaction.metadata, '$.rewardEvent'), 'first_successful_transaction'),
+      json_extract(transaction.metadata, '$.triggerTransactionId'), transaction.type,
+      transaction.amount, 'paid', transaction.id, transaction.created_at, transaction.created_at, ?
+    FROM transactions AS transaction
+    WHERE transaction.type IN ('referral_bonus', 'reward_bonus')
+      AND transaction.status = 'success'
+      AND json_valid(transaction.metadata)
+      AND COALESCE(json_extract(transaction.metadata, '$.rewardRuleId'), '') <> ''
+      AND COALESCE(json_extract(transaction.metadata, '$.sourceUserId'), '') <> ''
+    ORDER BY transaction.created_at ASC, transaction.rowid ASC
+  `).run(rewardClaimsNow)
+  db.prepare(`
+    INSERT OR IGNORE INTO reward_award_claims (
+      id, reward_rule_id, source_user_id, beneficiary_user_id, trigger_event,
+      trigger_transaction_id, reward_type, amount_ngn, status,
+      reward_request_id, status_reason, reviewed_at, reviewed_by_user_id,
+      paid_at, created_at, updated_at
+    )
+    SELECT 'reward_claim_request_' || request.id, request.reward_rule_id,
+      request.source_user_id, request.beneficiary_user_id, request.trigger_event,
+      request.trigger_transaction_id, request.reward_type, request.amount_ngn,
+      CASE WHEN request.status = 'rejected' AND request.status_reason LIKE '%cap reached%' THEN 'capped'
+           WHEN request.status = 'approved' THEN 'paid' ELSE request.status END,
+      request.id, request.status_reason, request.reviewed_at, request.reviewed_by_user_id,
+      CASE WHEN request.status = 'approved' THEN COALESCE(request.reviewed_at, request.updated_at) ELSE NULL END,
+      request.created_at, request.updated_at
+    FROM reward_award_requests AS request
+    ORDER BY request.created_at ASC, request.rowid ASC
+  `).run()
   ensureColumn(db, 'crypto_pairs', 'base_execution_enabled', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'crypto_pairs', 'execution_rail', 'TEXT')
   ensureColumn(db, 'crypto_pairs', 'routed_to_chain', 'TEXT')
@@ -4736,228 +4849,44 @@ async function maybeApplyRewardRulesForEvent(input: {
   transaction?: Transaction
 }) {
   await ensureDbReady()
-  if (isPostgresEnabled()) {
-    const sourceResult = await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [input.sourceUserId])
-    const sourceUser = sourceResult.rows[0]
-    if (!sourceUser) return
-    const rules = (await queryPostgres<RewardRuleRow>('SELECT * FROM reward_rules WHERE is_active = ? AND trigger_event = ? ORDER BY created_at ASC, id ASC', [true, input.event])).rows.map(mapRewardRuleRow)
-    for (const rule of rules) {
-      if (rule.requiresReferral && !sourceUser.referredByUserId) continue
-      if (input.event === 'first_successful_transaction') {
-        if (!input.transaction || !isReferralRewardEligibleTransaction(input.transaction)) continue
-        if (rule.allowedTransactionTypes?.length && !rule.allowedTransactionTypes.includes(input.transaction.type)) continue
-        if (rule.excludedTransactionTypes?.length && rule.excludedTransactionTypes.includes(input.transaction.type)) continue
-      }
-      const beneficiaryUserId = rule.audience === 'inviter' ? sourceUser.referredByUserId : sourceUser.id
-      if (!beneficiaryUserId) continue
-      const beneficiary = (await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [beneficiaryUserId])).rows[0]
-      if (!beneficiary) continue
-      const rewardType: Transaction['type'] = rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus'
-      const duplicate = await queryPostgres<{ id: string }>(`SELECT id FROM transactions WHERE user_id = ? AND type = ? AND status = ? AND metadata LIKE ? LIMIT 1`, [beneficiary.id, rewardType, 'success', `%"rewardRuleId":"${rule.id}"%`])
-      const existingRequest = await queryPostgres<{ id: string }>('SELECT id FROM reward_award_requests WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1', [rule.id, sourceUser.id])
-      if (duplicate.rows[0] || existingRequest.rows[0]) continue
-      const now = new Date().toISOString()
-      if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
-        const dailyCap = rule.dailyPayoutCapNgn ?? 0
-        const date = new Date()
-        const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString()
-        const dayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1)).toISOString()
-        const paid = await queryPostgres<{ total: string }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE type = ? AND status = ? AND metadata LIKE ? AND created_at >= ? AND created_at < ?`, [rewardType, 'success', `%"rewardRuleId":"${rule.id}"%`, dayStart, dayEnd])
-        const paidToday = Number(paid.rows[0]?.total ?? 0)
-        if (paidToday + rule.amountNgn > dailyCap) {
-          const requestId = `reward_req_${randomBytes(6).toString('hex')}`
-          await queryPostgres(`INSERT INTO reward_award_requests (id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience, beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [requestId, rule.id, rule.name, rule.kind, rewardType, rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null, rule.amountNgn, 'rejected', `Daily payout cap reached at â‚¦${dailyCap.toLocaleString('en-NG')}.`, now, null, now, now])
-          await insertAuditLog({ userId: beneficiary.id, actorUserId: sourceUser.id, action: 'reward.rule_rejected_cap', entityType: 'reward_award_request', entityId: requestId, metadata: { rewardRuleId: rule.id, sourceUserId: sourceUser.id, amount: rule.amountNgn, dailyPayoutCapNgn: dailyCap, paidTodayNgn: paidToday } })
-          continue
-        }
-      }
-      if (rule.manualApprovalRequired) {
-        const requestId = `reward_req_${randomBytes(6).toString('hex')}`
-        await queryPostgres(`INSERT INTO reward_award_requests (id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience, beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [requestId, rule.id, rule.name, rule.kind, rewardType, rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null, rule.amountNgn, 'pending', 'Waiting for admin approval.', null, null, now, now])
-        await insertAuditLog({ userId: beneficiary.id, actorUserId: sourceUser.id, action: 'reward.rule_pending_manual', entityType: 'reward_award_request', entityId: requestId, metadata: { rewardRuleId: rule.id, sourceUserId: sourceUser.id, amount: rule.amountNgn } })
-        continue
-      }
-      const rewardTransaction: Transaction = { id: `tx_${randomBytes(6).toString('hex')}`, type: rewardType, status: 'success', amount: rule.amountNgn, fee: 0, description: rule.kind === 'referral' ? `${rule.name} â€” ${sourceUser.name}` : rule.name, reference: generateRef(), createdAt: now, icon: rule.kind === 'referral' ? 'â‚¦' : 'ðŸŽ', metadata: { rewardRuleId: rule.id, rewardRuleName: rule.name, rewardEvent: rule.triggerEvent, sourceUserId: sourceUser.id, sourceReferralCode: sourceUser.referredByReferralCode ?? '', triggerTransactionId: input.transaction?.id, role: rule.audience, referredUserId: rule.audience === 'inviter' ? sourceUser.id : undefined } }
-      await applyWalletMutation({ userId: beneficiary.id, asset: 'NGN', balanceDelta: rule.amountNgn, transaction: rewardTransaction })
-      await insertNotification(createNotification({ userId: beneficiary.id, title: `${rule.name} paid`, message: `You earned â‚¦${rule.amountNgn.toLocaleString('en-NG')} from the "${rule.name}" reward rule.`, type: 'success' }))
-      await insertAuditLog({ userId: beneficiary.id, actorUserId: sourceUser.id, action: 'reward.rule_applied', entityType: 'transaction', entityId: rewardTransaction.id, metadata: { rewardRuleId: rule.id, sourceUserId: sourceUser.id, amount: rule.amountNgn } })
-    }
-    return
-  }
-  const db = getDb()
-  const sourceUser = db
-    .prepare('SELECT * FROM users WHERE id = ? LIMIT 1')
-    .get(input.sourceUserId) as UserRow | undefined
-
+  const sourceUser = isPostgresEnabled()
+    ? (await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [input.sourceUserId])).rows[0]
+    : getDb().prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(input.sourceUserId) as UserRow | undefined
   if (!sourceUser) return
 
-  const ruleRows = db
-    .prepare('SELECT * FROM reward_rules WHERE is_active = 1 AND trigger_event = ? ORDER BY created_at ASC, id ASC')
-    .all(input.event) as RewardRuleRow[]
+  const ruleRows = isPostgresEnabled()
+    ? (await queryPostgres<RewardRuleRow>('SELECT * FROM reward_rules WHERE is_active = ? AND trigger_event = ? ORDER BY created_at ASC, id ASC', [true, input.event])).rows
+    : getDb().prepare('SELECT * FROM reward_rules WHERE is_active = 1 AND trigger_event = ? ORDER BY created_at ASC, id ASC').all(input.event) as RewardRuleRow[]
 
-  for (const row of ruleRows) {
-    const rule = mapRewardRuleRow(row)
-    if (rule.requiresReferral && !sourceUser.referredByUserId) continue
-
+  for (const initialRow of ruleRows) {
+    const initialRule = mapRewardRuleRow(initialRow)
+    if (initialRule.requiresReferral && !sourceUser.referredByUserId) continue
     if (input.event === 'first_successful_transaction') {
       if (!input.transaction || !isReferralRewardEligibleTransaction(input.transaction)) continue
-      if (rule.allowedTransactionTypes?.length && !rule.allowedTransactionTypes.includes(input.transaction.type)) continue
-      if (rule.excludedTransactionTypes?.length && rule.excludedTransactionTypes.includes(input.transaction.type)) continue
+      if (initialRule.allowedTransactionTypes?.length && !initialRule.allowedTransactionTypes.includes(input.transaction.type)) continue
+      if (initialRule.excludedTransactionTypes?.length && initialRule.excludedTransactionTypes.includes(input.transaction.type)) continue
     }
 
-    let beneficiaryUserId = sourceUser.id
-    if (rule.audience === 'inviter') {
-      if (!sourceUser.referredByUserId) continue
-      beneficiaryUserId = sourceUser.referredByUserId
-    }
-
-    const beneficiary = db
-      .prepare('SELECT * FROM users WHERE id = ? LIMIT 1')
-      .get(beneficiaryUserId) as UserRow | undefined
+    const beneficiaryUserId = initialRule.audience === 'inviter' ? sourceUser.referredByUserId : sourceUser.id
+    if (!beneficiaryUserId) continue
+    const beneficiary = isPostgresEnabled()
+      ? (await queryPostgres<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1', [beneficiaryUserId])).rows[0]
+      : getDb().prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(beneficiaryUserId) as UserRow | undefined
     if (!beneficiary) continue
 
-    const rewardTransactionType: Transaction['type'] = rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus'
-    const existingRewardRows = db
-      .prepare('SELECT metadata FROM transactions WHERE user_id = ? AND type = ? AND status = ?')
-      .all(beneficiary.id, rewardTransactionType, 'success') as Array<Pick<TransactionRow, 'metadata'>>
+    const claimId = `reward_claim_${randomBytes(8).toString('hex')}`
+    const now = new Date().toISOString()
+    const { start: dayStart, end: dayEnd } = getNigeriaRewardDayRange(new Date(now))
 
-    const alreadyAwarded = existingRewardRows.some(existingRow => {
-      const metadata = parseJson(existingRow.metadata, undefined as Record<string, unknown> | undefined)
-      return metadata?.rewardRuleId === rule.id && metadata?.sourceUserId === sourceUser.id
-    })
-    if (alreadyAwarded) continue
-
-    const existingRequest = db
-      .prepare(`
-        SELECT *
-        FROM reward_award_requests
-        WHERE reward_rule_id = ?
-          AND source_user_id = ?
-        ORDER BY datetime(created_at) DESC, id DESC
-        LIMIT 1
-      `)
-      .get(rule.id, sourceUser.id) as RewardAwardRequestRow | undefined
-    if (existingRequest) continue
-
-    const now = new Date()
-    if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
-      const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString()
-      const dayEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString()
-      const paidTodayRow = db.prepare(`
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM transactions
-        WHERE type = ?
-          AND status = 'success'
-          AND metadata LIKE ?
-          AND created_at >= ?
-          AND created_at < ?
-      `).get(
-        rewardTransactionType,
-        `%"rewardRuleId":"${rule.id}"%`,
-        dayStart,
-        dayEnd
-      ) as { total?: number } | undefined
-      const paidToday = Number(paidTodayRow?.total ?? 0)
-      if (paidToday + rule.amountNgn > (rule.dailyPayoutCapNgn ?? 0)) {
-        const requestId = `reward_req_${randomBytes(6).toString('hex')}`
-        db.prepare(`
-          INSERT INTO reward_award_requests (
-            id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience,
-            beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason,
-            reviewed_at, reviewed_by_user_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          requestId,
-          rule.id,
-          rule.name,
-          rule.kind,
-          rewardTransactionType,
-          rule.triggerEvent,
-          rule.audience,
-          beneficiary.id,
-          sourceUser.id,
-          input.transaction?.id ?? null,
-          rule.amountNgn,
-          'rejected',
-          `Daily payout cap reached at ₦${(rule.dailyPayoutCapNgn ?? 0).toLocaleString('en-NG')}.`,
-          now.toISOString(),
-          null,
-          now.toISOString(),
-          now.toISOString()
-        )
-        await insertAuditLog({
-          userId: beneficiary.id,
-          actorUserId: sourceUser.id,
-          action: 'reward.rule_rejected_cap',
-          entityType: 'reward_award_request',
-          entityId: requestId,
-          metadata: {
-            rewardRuleId: rule.id,
-            rewardRuleName: rule.name,
-            sourceUserId: sourceUser.id,
-            triggerTransactionId: input.transaction?.id,
-            amount: rule.amountNgn,
-            dailyPayoutCapNgn: rule.dailyPayoutCapNgn,
-            paidTodayNgn: paidToday,
-          },
-        })
-        continue
-      }
-    }
-
-    if (rule.manualApprovalRequired) {
-      const requestId = `reward_req_${randomBytes(6).toString('hex')}`
-      db.prepare(`
-        INSERT INTO reward_award_requests (
-          id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience,
-          beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status, status_reason,
-          reviewed_at, reviewed_by_user_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        requestId,
-        rule.id,
-        rule.name,
-        rule.kind,
-        rewardTransactionType,
-        rule.triggerEvent,
-        rule.audience,
-        beneficiary.id,
-        sourceUser.id,
-        input.transaction?.id ?? null,
-        rule.amountNgn,
-        'pending',
-        'Waiting for admin approval.',
-        null,
-        null,
-        now.toISOString(),
-        now.toISOString()
-      )
-      await insertAuditLog({
-        userId: beneficiary.id,
-        actorUserId: sourceUser.id,
-        action: 'reward.rule_pending_manual',
-        entityType: 'reward_award_request',
-        entityId: requestId,
-        metadata: {
-          rewardRuleId: rule.id,
-          rewardRuleName: rule.name,
-          sourceUserId: sourceUser.id,
-          triggerTransactionId: input.transaction?.id,
-          amount: rule.amountNgn,
-        },
-      })
-      continue
-    }
-
-    const rewardTransaction: Transaction = {
+    const createRewardTransaction = (rule: RewardRule): Transaction => ({
       id: `tx_${randomBytes(6).toString('hex')}`,
-      type: rewardTransactionType,
+      type: rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus',
       status: 'success',
       amount: rule.amountNgn,
       fee: 0,
       description: rule.kind === 'referral' ? `${rule.name} — ${sourceUser.name}` : rule.name,
       reference: generateRef(),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       icon: rule.kind === 'referral' ? '₦' : '🎁',
       metadata: {
         rewardRuleId: rule.id,
@@ -4969,49 +4898,201 @@ async function maybeApplyRewardRulesForEvent(input: {
         role: rule.audience,
         referredUserId: rule.audience === 'inviter' ? sourceUser.id : undefined,
       },
-    }
-
-    await applyWalletMutation({
-      userId: beneficiary.id,
-      asset: 'NGN',
-      balanceDelta: rule.amountNgn,
-      transaction: rewardTransaction,
     })
 
-    await insertNotification(createNotification({
-      userId: beneficiary.id,
-      title: `${rule.name} paid`,
-      message: `You earned ₦${rule.amountNgn.toLocaleString('en-NG')} from the "${rule.name}" reward rule.`,
-      type: 'success',
-    }))
+    let outcome: { status: 'duplicate' | 'inactive' | 'pending' | 'capped' | 'paid'; rule?: RewardRule; transaction?: Transaction; requestId?: string; reason?: string }
+    if (isPostgresEnabled()) {
+      outcome = await withPostgresTransaction(async client => {
+        // Serializing by rule also makes the payout-cap check and credit one atomic decision.
+        const lockedRuleResult = await queryPostgresClient<RewardRuleRow>(client, 'SELECT * FROM reward_rules WHERE id = ? LIMIT 1 FOR UPDATE', [initialRule.id])
+        const lockedRuleRow = lockedRuleResult.rows[0]
+        if (!lockedRuleRow) return { status: 'inactive' as const }
+        const rule = mapRewardRuleRow(lockedRuleRow)
+        if (!rule.isActive || rule.triggerEvent !== input.event) return { status: 'inactive' as const }
+        if (rule.requiresReferral && !sourceUser.referredByUserId) return { status: 'inactive' as const }
+        if (input.event === 'first_successful_transaction' && input.transaction) {
+          if (rule.allowedTransactionTypes?.length && !rule.allowedTransactionTypes.includes(input.transaction.type)) return { status: 'inactive' as const }
+          if (rule.excludedTransactionTypes?.length && rule.excludedTransactionTypes.includes(input.transaction.type)) return { status: 'inactive' as const }
+        }
 
-    if (rule.audience === 'inviter') {
-      await insertNotification(createNotification({
-        userId: sourceUser.id,
-        title: 'Referral tracked',
-        message: 'Your qualifying activity triggered your inviter’s referral reward.',
-        type: 'info',
-      }))
+        const insertedClaim = await queryPostgresClient<{ id: string }>(client, `
+          INSERT INTO reward_award_claims (
+            id, reward_rule_id, source_user_id, beneficiary_user_id, trigger_event,
+            trigger_transaction_id, reward_type, amount_ngn, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+          ON CONFLICT (reward_rule_id, source_user_id) DO NOTHING
+          RETURNING id
+        `, [claimId, rule.id, sourceUser.id, beneficiary.id, input.event, input.transaction?.id ?? null,
+          rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus', rule.amountNgn, now, now])
+        if (!insertedClaim.rows[0]) return { status: 'duplicate' as const }
+
+        if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
+          const paidResult = await queryPostgresClient<{ total: string }>(client, `
+            SELECT COALESCE(SUM(amount_ngn), 0) AS total
+            FROM reward_award_claims
+            WHERE reward_rule_id = ? AND status = 'paid' AND paid_at >= ? AND paid_at < ?
+          `, [rule.id, dayStart, dayEnd])
+          const paidToday = Number(paidResult.rows[0]?.total ?? 0)
+          if (paidToday + rule.amountNgn > (rule.dailyPayoutCapNgn ?? 0)) {
+            const requestId = `reward_req_${randomBytes(6).toString('hex')}`
+            const reason = `Daily payout cap reached at ₦${(rule.dailyPayoutCapNgn ?? 0).toLocaleString('en-NG')}.`
+            await queryPostgresClient(client, `
+              INSERT INTO reward_award_requests (
+                id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience,
+                beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status,
+                status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rejected', ?, ?, NULL, ?, ?)
+            `, [requestId, rule.id, rule.name, rule.kind, rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus',
+              rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null,
+              rule.amountNgn, reason, now, now, now])
+            await queryPostgresClient(client, `
+              UPDATE reward_award_claims SET status = 'capped', reward_request_id = ?, status_reason = ?, updated_at = ? WHERE id = ?
+            `, [requestId, reason, now, claimId])
+            return { status: 'capped' as const, rule, requestId, reason }
+          }
+        }
+
+        if (rule.manualApprovalRequired) {
+          const requestId = `reward_req_${randomBytes(6).toString('hex')}`
+          await queryPostgresClient(client, `
+            INSERT INTO reward_award_requests (
+              id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience,
+              beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status,
+              status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'Waiting for admin approval.', NULL, NULL, ?, ?)
+          `, [requestId, rule.id, rule.name, rule.kind, rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus',
+            rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null,
+            rule.amountNgn, now, now])
+          await queryPostgresClient(client, 'UPDATE reward_award_claims SET status = \'pending\', reward_request_id = ?, status_reason = ?, updated_at = ? WHERE id = ?', [requestId, 'Waiting for admin approval.', now, claimId])
+          return { status: 'pending' as const, rule, requestId }
+        }
+
+        const rewardTransaction = createRewardTransaction(rule)
+        await applyRewardCreditPostgresClient(client, beneficiary.id, rule.amountNgn, rewardTransaction)
+        await queryPostgresClient(client, `
+          UPDATE reward_award_claims
+          SET status = 'paid', reward_transaction_id = ?, paid_at = ?, updated_at = ?
+          WHERE id = ?
+        `, [rewardTransaction.id, now, now, claimId])
+        return { status: 'paid' as const, rule, transaction: rewardTransaction }
+      })
+    } else {
+      const db = getDb()
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const lockedRuleRow = db.prepare('SELECT * FROM reward_rules WHERE id = ? LIMIT 1').get(initialRule.id) as RewardRuleRow | undefined
+        if (!lockedRuleRow) {
+          db.exec('COMMIT')
+          outcome = { status: 'inactive' }
+        } else {
+          const rule = mapRewardRuleRow(lockedRuleRow)
+          if (!rule.isActive || rule.triggerEvent !== input.event) {
+            db.exec('COMMIT')
+            outcome = { status: 'inactive' }
+          } else {
+            const claimResult = db.prepare(`
+              INSERT OR IGNORE INTO reward_award_claims (
+                id, reward_rule_id, source_user_id, beneficiary_user_id, trigger_event,
+                trigger_transaction_id, reward_type, amount_ngn, status, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            `).run(claimId, rule.id, sourceUser.id, beneficiary.id, input.event, input.transaction?.id ?? null,
+              rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus', rule.amountNgn, now, now)
+            if (!claimResult.changes) {
+              db.exec('COMMIT')
+              outcome = { status: 'duplicate' }
+            } else if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
+              const paidRow = db.prepare(`
+                SELECT COALESCE(SUM(amount_ngn), 0) AS total
+                FROM reward_award_claims
+                WHERE reward_rule_id = ? AND status = 'paid' AND paid_at >= ? AND paid_at < ?
+              `).get(rule.id, dayStart, dayEnd) as { total?: number } | undefined
+              const paidToday = Number(paidRow?.total ?? 0)
+              if (paidToday + rule.amountNgn > (rule.dailyPayoutCapNgn ?? 0)) {
+                const requestId = `reward_req_${randomBytes(6).toString('hex')}`
+                const reason = `Daily payout cap reached at ₦${(rule.dailyPayoutCapNgn ?? 0).toLocaleString('en-NG')}.`
+                db.prepare(`
+                  INSERT INTO reward_award_requests (
+                    id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience,
+                    beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status,
+                    status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rejected', ?, ?, NULL, ?, ?)
+                `).run(requestId, rule.id, rule.name, rule.kind, rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus',
+                  rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null,
+                  rule.amountNgn, reason, now, now, now)
+                db.prepare("UPDATE reward_award_claims SET status = 'capped', reward_request_id = ?, status_reason = ?, updated_at = ? WHERE id = ?")
+                  .run(requestId, reason, now, claimId)
+                db.exec('COMMIT')
+                outcome = { status: 'capped', rule, requestId, reason }
+              } else {
+                outcome = await processNonCappedSqliteReward(db, rule, claimId, sourceUser, beneficiary, input, now, createRewardTransaction)
+              }
+            } else {
+              outcome = await processNonCappedSqliteReward(db, rule, claimId, sourceUser, beneficiary, input, now, createRewardTransaction)
+            }
+          }
+        }
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
     }
 
-    await insertAuditLog({
-      userId: beneficiary.id,
-      actorUserId: sourceUser.id,
-      action: 'reward.rule_applied',
-      entityType: 'transaction',
-      entityId: rewardTransaction.id,
-      metadata: {
-        rewardRuleId: rule.id,
-        rewardRuleName: rule.name,
-        rewardEvent: rule.triggerEvent,
-        sourceUserId: sourceUser.id,
-        triggerTransactionId: input.transaction?.id,
-        amount: rule.amountNgn,
-      },
-    })
+    if (outcome.status === 'paid' && outcome.rule && outcome.transaction) {
+      await recordRewardPayoutSideEffects({ beneficiaryUserId: beneficiary.id, sourceUserId: sourceUser.id, rule: outcome.rule, transaction: outcome.transaction })
+    } else if (outcome.status === 'pending' || outcome.status === 'capped') {
+      try {
+        await insertAuditLog({
+          userId: beneficiary.id,
+          actorUserId: sourceUser.id,
+          action: outcome.status === 'pending' ? 'reward.rule_pending_manual' : 'reward.rule_rejected_cap',
+          entityType: 'reward_award_request',
+          entityId: outcome.requestId ?? claimId,
+          metadata: { rewardRuleId: outcome.rule?.id ?? initialRule.id, sourceUserId: sourceUser.id, amount: outcome.rule?.amountNgn ?? initialRule.amountNgn, reason: outcome.reason },
+        })
+      } catch (error) {
+        console.error('[rewards] request audit write failed', error)
+      }
+    }
   }
 }
 
+async function processNonCappedSqliteReward(
+  db: DatabaseSync,
+  rule: RewardRule,
+  claimId: string,
+  sourceUser: UserRow,
+  beneficiary: UserRow,
+  input: { event: RewardRule['triggerEvent']; sourceUserId: string; transaction?: Transaction },
+  now: string,
+  createRewardTransaction: (rule: RewardRule) => Transaction,
+): Promise<{ status: 'pending' | 'paid'; rule: RewardRule; transaction?: Transaction; requestId?: string }> {
+  if (rule.manualApprovalRequired) {
+    const requestId = `reward_req_${randomBytes(6).toString('hex')}`
+    db.prepare(`
+      INSERT INTO reward_award_requests (
+        id, reward_rule_id, reward_rule_name, reward_kind, reward_type, trigger_event, audience,
+        beneficiary_user_id, source_user_id, trigger_transaction_id, amount_ngn, status,
+        status_reason, reviewed_at, reviewed_by_user_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'Waiting for admin approval.', NULL, NULL, ?, ?)
+    `).run(requestId, rule.id, rule.name, rule.kind, rule.kind === 'referral' ? 'referral_bonus' : 'reward_bonus',
+      rule.triggerEvent, rule.audience, beneficiary.id, sourceUser.id, input.transaction?.id ?? null,
+      rule.amountNgn, now, now)
+    db.prepare("UPDATE reward_award_claims SET status = 'pending', reward_request_id = ?, status_reason = ?, updated_at = ? WHERE id = ?")
+      .run(requestId, 'Waiting for admin approval.', now, claimId)
+    db.exec('COMMIT')
+    return { status: 'pending', rule, requestId }
+  }
+
+  const rewardTransaction = createRewardTransaction(rule)
+  applyRewardCreditSqliteTransaction(db, beneficiary.id, rule.amountNgn, rewardTransaction)
+  db.prepare(`
+    UPDATE reward_award_claims
+    SET status = 'paid', reward_transaction_id = ?, paid_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(rewardTransaction.id, now, now, claimId)
+  db.exec('COMMIT')
+  return { status: 'paid', rule, transaction: rewardTransaction }
+}
 async function maybeApplySignupRewardsForUser(userId: string) {
   await maybeApplyRewardRulesForEvent({
     event: 'user_signup',
@@ -5052,6 +5133,128 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
     sourceUserId: userId,
     transaction,
   })
+}
+
+function getNigeriaRewardDayRange(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Lagos',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const value = (type: string) => Number(parts.find(part => part.type === type)?.value)
+  const start = new Date(Date.UTC(value('year'), value('month') - 1, value('day')) - 60 * 60 * 1000)
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+  return { start: start.toISOString(), end: end.toISOString() }
+}
+
+async function applyRewardCreditPostgresClient(
+  client: PoolClient,
+  userId: string,
+  amountNgn: number,
+  transaction: Transaction,
+) {
+  const walletResult = await queryPostgresClient<WalletRow>(client, 'SELECT * FROM wallets WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
+  const walletRow = walletResult.rows[0]
+  if (!walletRow) throw new Error('Reward beneficiary wallet not found.')
+
+  const balanceResult = await queryPostgresClient<{ asset: string; account: 'available' | 'locked'; balance: number }>(client, `
+    SELECT COALESCE(asset, 'NGN') AS asset, account,
+      COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS balance
+    FROM ledger_entries WHERE user_id = ? GROUP BY asset, account
+  `, [userId])
+  const balances = emptyAssetBalances()
+  for (const row of balanceResult.rows) {
+    const asset: AssetBalanceKey = row.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
+    if (row.account === 'available') balances[asset].available = Number(row.balance)
+    if (row.account === 'locked') balances[asset].locked = Number(row.balance)
+  }
+  balances.NGN.available += amountNgn
+
+  await queryPostgresClient(client, `
+    INSERT INTO transactions (id, user_id, type, status, amount, fee, description, reference, recipient, narration, created_at, icon, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    transaction.id, userId, transaction.type, transaction.status, transaction.amount, transaction.fee,
+    transaction.description, transaction.reference, transaction.recipient ?? null, transaction.narration ?? null,
+    transaction.createdAt, transaction.icon ?? null, transaction.metadata ? JSON.stringify(transaction.metadata) : null,
+  ])
+  await queryPostgresClient(client, `
+    INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at)
+    VALUES (?, ?, ?, 'NGN', 'available', 'credit', ?, ?, ?)
+  `, [`ledger_${randomBytes(6).toString('hex')}`, userId, transaction.id, amountNgn, transaction.description, transaction.createdAt])
+  await queryPostgresClient(client, 'UPDATE wallets SET balance = ? WHERE user_id = ?', [balances.NGN.available, userId])
+  return { wallet: buildWalletFromRow(walletRow, balances), transaction }
+}
+
+function applyRewardCreditSqliteTransaction(
+  db: DatabaseSync,
+  userId: string,
+  amountNgn: number,
+  transaction: Transaction,
+) {
+  const walletRow = db.prepare('SELECT * FROM wallets WHERE user_id = ? LIMIT 1').get(userId) as WalletRow | undefined
+  if (!walletRow) throw new Error('Reward beneficiary wallet not found.')
+  const balances = calculateWalletBalances(db, userId)
+  balances.NGN.available += amountNgn
+  db.prepare(`
+    INSERT INTO transactions (
+      id, user_id, type, status, amount, fee, description, reference, recipient, narration, created_at, icon, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    transaction.id, userId, transaction.type, transaction.status, transaction.amount, transaction.fee,
+    transaction.description, transaction.reference, transaction.recipient ?? null, transaction.narration ?? null,
+    transaction.createdAt, transaction.icon ?? null, transaction.metadata ? JSON.stringify(transaction.metadata) : null,
+  )
+  db.prepare(`
+    INSERT INTO ledger_entries (id, user_id, transaction_id, asset, account, direction, amount, description, created_at)
+    VALUES (?, ?, ?, 'NGN', 'available', 'credit', ?, ?, ?)
+  `).run(`ledger_${randomBytes(6).toString('hex')}`, userId, transaction.id, amountNgn, transaction.description, transaction.createdAt)
+  syncWalletSnapshot(db, userId, balances)
+  return { wallet: buildWalletFromRow(walletRow, balances), transaction }
+}
+
+async function recordRewardPayoutSideEffects(input: {
+  beneficiaryUserId: string
+  sourceUserId: string
+  rule: RewardRule
+  transaction: Transaction
+}) {
+  const effects = [
+    insertNotification(createNotification({
+      userId: input.beneficiaryUserId,
+      title: `${input.rule.name} paid`,
+      message: `You earned ₦${input.rule.amountNgn.toLocaleString('en-NG')} from the "${input.rule.name}" reward rule.`,
+      type: 'success',
+    })),
+    insertAuditLog({
+      userId: input.beneficiaryUserId,
+      actorUserId: input.sourceUserId,
+      action: 'reward.rule_applied',
+      entityType: 'transaction',
+      entityId: input.transaction.id,
+      metadata: {
+        rewardRuleId: input.rule.id,
+        rewardRuleName: input.rule.name,
+        rewardEvent: input.rule.triggerEvent,
+        sourceUserId: input.sourceUserId,
+        triggerTransactionId: input.transaction.metadata?.triggerTransactionId,
+        amount: input.rule.amountNgn,
+      },
+    }),
+  ]
+  if (input.rule.audience === 'inviter') {
+    effects.push(insertNotification(createNotification({
+      userId: input.sourceUserId,
+      title: 'Referral reward paid',
+      message: `Your qualifying activity earned your inviter ₦${input.rule.amountNgn.toLocaleString('en-NG')}.`,
+      type: 'info',
+    })) as never)
+  }
+  const results = await Promise.allSettled(effects)
+  for (const result of results) {
+    if (result.status === 'rejected') console.error('[rewards] post-payout notification or audit write failed', result.reason)
+  }
 }
 
 export async function applyWalletMutation(input: WalletMutationInput): Promise<{ wallet: Wallet; transaction: Transaction }> {
@@ -8053,7 +8256,9 @@ export async function activateUserAccount(userId: string) {
   if (isPostgresEnabled()) {
     await queryPostgres('UPDATE users SET "accountStatus" = ? WHERE id = ?', ['active', userId])
     await insertAuditLog({ userId, action: 'auth.email_verified', entityType: 'user', entityId: userId })
-    return getUserById(userId)
+    const user = await getUserById(userId)
+    if (user) await maybeApplySignupRewardsForUser(userId)
+    return user
   }
   getDb().prepare('UPDATE users SET accountStatus = ? WHERE id = ?').run('active', userId)
   await insertAuditLog({
@@ -8062,7 +8267,9 @@ export async function activateUserAccount(userId: string) {
     entityType: 'user',
     entityId: userId,
   })
-  return getUserById(userId)
+  const user = await getUserById(userId)
+  if (user) await maybeApplySignupRewardsForUser(userId)
+  return user
 }
 
 export async function consumeAuthRateLimitAttempt(input: {
@@ -9673,6 +9880,27 @@ export async function getRewardRules(): Promise<RewardRule[]> {
 }
 
 export async function upsertRewardRules(rules: RewardRule[]) {
+  const validKinds = new Set(['referral', 'bonus'])
+  const validEvents = new Set(['user_signup', 'first_successful_transaction'])
+  const validAudiences = new Set(['actor', 'inviter'])
+  const validTransactionTypes = new Set<Transaction['type']>([
+    'deposit', 'withdrawal', 'transfer_in', 'transfer_out', 'airtime', 'data', 'electric', 'cable',
+    'education', 'gas', 'insurance', 'water', 'crypto_buy', 'crypto_sell', 'referral_bonus',
+    'reward_bonus', 'admin_credit', 'admin_debit', 'p2p_deposit', 'p2p_withdrawal',
+  ])
+  for (const [index, rule] of rules.entries()) {
+    if (!rule || typeof rule !== 'object') throw new Error(`Reward rule ${index + 1} must be an object.`)
+    if (typeof rule.id !== 'string' || !rule.id.trim()) throw new Error(`Reward rule ${index + 1}: id is required.`)
+    if (typeof rule.name !== 'string' || !rule.name.trim()) throw new Error(`${rule.id}: reward rule name is required.`)
+    if (!validKinds.has(rule.kind)) throw new Error(`${rule.id}: unsupported reward kind.`)
+    if (!validEvents.has(rule.triggerEvent)) throw new Error(`${rule.id}: unsupported reward trigger.`)
+    if (!validAudiences.has(rule.audience)) throw new Error(`${rule.id}: unsupported reward audience.`)
+    if (!Number.isFinite(rule.amountNgn) || rule.amountNgn <= 0) throw new Error(`${rule.id}: reward amount must be greater than zero.`)
+    if (rule.dailyPayoutCapNgn != null && (!Number.isFinite(rule.dailyPayoutCapNgn) || rule.dailyPayoutCapNgn <= 0)) throw new Error(`${rule.id}: daily payout cap must be greater than zero when set.`)
+    if (rule.audience === 'inviter' && rule.requiresReferral !== true) throw new Error(`${rule.id}: inviter rewards must require referral context.`)
+    if (rule.allowedTransactionTypes !== undefined && (!Array.isArray(rule.allowedTransactionTypes) || rule.allowedTransactionTypes.some(type => !validTransactionTypes.has(type)))) throw new Error(`${rule.id}: allowed transaction types are invalid.`)
+    if (rule.excludedTransactionTypes !== undefined && (!Array.isArray(rule.excludedTransactionTypes) || rule.excludedTransactionTypes.some(type => !validTransactionTypes.has(type)))) throw new Error(`${rule.id}: excluded transaction types are invalid.`)
+  }
   await ensureDbReady()
   if (isPostgresEnabled()) {
     const now = new Date().toISOString()
@@ -9761,11 +9989,12 @@ export async function upsertRewardRules(rules: RewardRule[]) {
 export async function getRewardRuleReport(limit = 20): Promise<RewardRuleReport> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
-    const [ruleResult, rewardResult, userResult, requestResult, pendingResult] = await Promise.all([
+    const [ruleResult, rewardResult, userResult, pendingRequestsResult, recentRequestsResult, pendingResult] = await Promise.all([
       queryPostgres<RewardRuleRow>('SELECT * FROM reward_rules ORDER BY created_at DESC, id ASC'),
       queryPostgres<TransactionRow>(`SELECT * FROM transactions WHERE type IN ('referral_bonus', 'reward_bonus') ORDER BY created_at DESC`),
       queryPostgres<UserRow>('SELECT * FROM users'),
-      queryPostgres<RewardAwardRequestRow>('SELECT * FROM reward_award_requests ORDER BY created_at DESC LIMIT ?', [limit]),
+      queryPostgres<RewardAwardRequestRow>(`SELECT * FROM reward_award_requests WHERE status = 'pending' ORDER BY created_at DESC`),
+      queryPostgres<RewardAwardRequestRow>(`SELECT * FROM reward_award_requests WHERE status <> 'pending' ORDER BY created_at DESC LIMIT ?`, [limit]),
       queryPostgres<{ count: string }>(`SELECT COUNT(*) AS count FROM reward_award_requests WHERE status = 'pending'`),
     ])
     const rules = ruleResult.rows.map(mapRewardRuleRow)
@@ -9796,7 +10025,8 @@ export async function getRewardRuleReport(limit = 20): Promise<RewardRuleReport>
         recentAwards.push({ transactionId: row.id, rewardRuleId: ruleId, rewardRuleName: ruleName, rewardType: row.type as RewardAwardRecord['rewardType'], beneficiaryUserId: row.user_id, beneficiaryName: userNameById.get(row.user_id) ?? row.user_id, sourceUserId, sourceUserName: sourceUserId ? userNameById.get(sourceUserId) ?? sourceUserId : undefined, amountNgn: Number(row.amount), status: row.status, createdAt: row.created_at, reference: row.reference })
       }
     }
-    return { totalAwards, totalPayoutNgn, pendingApprovalCount: Number(pendingResult.rows[0]?.count ?? 0), byRule: Array.from(summaries.values()).sort((a, b) => b.totalPayoutNgn - a.totalPayoutNgn || a.ruleName.localeCompare(b.ruleName)), recentAwards, recentRequests: requestResult.rows.map(row => mapRewardAwardRequestRow(row, userNameById)) }
+    const recentRequests = [...pendingRequestsResult.rows, ...recentRequestsResult.rows]
+    return { totalAwards, totalPayoutNgn, pendingApprovalCount: Number(pendingResult.rows[0]?.count ?? 0), byRule: Array.from(summaries.values()).sort((a, b) => b.totalPayoutNgn - a.totalPayoutNgn || a.ruleName.localeCompare(b.ruleName)), recentAwards, recentRequests: recentRequests.map(row => mapRewardAwardRequestRow(row, userNameById)) }
   }
   const db = getDb()
   const ruleRows = db
@@ -9828,12 +10058,11 @@ export async function getRewardRuleReport(limit = 20): Promise<RewardRuleReport>
     })
   }
 
-  const rewardRequestRows = db
-    .prepare(`
-      SELECT * FROM reward_award_requests
-      ORDER BY created_at DESC
-      LIMIT ?
-    `)
+  const pendingRewardRequestRows = db
+    .prepare(`SELECT * FROM reward_award_requests WHERE status = 'pending' ORDER BY created_at DESC`)
+    .all() as RewardAwardRequestRow[]
+  const recentRewardRequestRows = db
+    .prepare(`SELECT * FROM reward_award_requests WHERE status <> 'pending' ORDER BY created_at DESC LIMIT ?`)
     .all(limit) as RewardAwardRequestRow[]
   const pendingByRuleRows = db
     .prepare(`
@@ -9846,7 +10075,7 @@ export async function getRewardRuleReport(limit = 20): Promise<RewardRuleReport>
   const pendingApprovalRow = db
     .prepare(`SELECT COUNT(*) AS count FROM reward_award_requests WHERE status = 'pending'`)
     .get() as { count?: number } | undefined
-  const recentRequests = rewardRequestRows.map(row => mapRewardAwardRequestRow(row, userNameById))
+  const recentRequests = [...pendingRewardRequestRows, ...recentRewardRequestRows].map(row => mapRewardAwardRequestRow(row, userNameById))
   const recentAwards: RewardAwardRecord[] = []
   let totalAwards = 0
   let totalPayoutNgn = 0
@@ -9932,173 +10161,182 @@ export async function reviewRewardAwardRequest(input: {
   reason?: string
 }) {
   await ensureDbReady()
+  const now = new Date().toISOString()
+  let result: {
+    request: RewardAwardRequestRow
+    sourceUser: UserRow
+    beneficiary: UserRow
+    rule: RewardRule
+    transaction?: Transaction
+    approved: boolean
+  }
+
   if (isPostgresEnabled()) {
-    const context = await withPostgresTransaction(async client => {
+    result = await withPostgresTransaction(async client => {
+      const requestLookup = await queryPostgresClient<RewardAwardRequestRow>(client, 'SELECT * FROM reward_award_requests WHERE id = ? LIMIT 1', [input.requestId])
+      const requestHint = requestLookup.rows[0]
+      if (!requestHint) throw new Error('Reward award request not found.')
+      // Keep the lock order consistent with automatic claims: rule, claim, wallet.
+      await queryPostgresClient(client, 'SELECT id FROM reward_rules WHERE id = ? LIMIT 1 FOR UPDATE', [requestHint.reward_rule_id])
       const requestResult = await queryPostgresClient<RewardAwardRequestRow>(client, 'SELECT * FROM reward_award_requests WHERE id = ? LIMIT 1 FOR UPDATE', [input.requestId])
       const request = requestResult.rows[0]
       if (!request) throw new Error('Reward award request not found.')
-      if (request.status === 'approved') throw new Error('Reward award request is already approved.')
+      if (request.status !== 'pending') throw new Error(request.status === 'approved' ? 'Reward award request is already approved.' : 'Reward award request is no longer pending.')
       const users = await queryPostgresClient<UserRow>(client, 'SELECT * FROM users WHERE id IN (?, ?)', [request.source_user_id, request.beneficiary_user_id])
       const sourceUser = users.rows.find(user => user.id === request.source_user_id)
       const beneficiary = users.rows.find(user => user.id === request.beneficiary_user_id)
       if (!sourceUser || !beneficiary) throw new Error('Reward request users could not be loaded.')
-      const now = new Date().toISOString()
+      const claimResult = await queryPostgresClient<RewardAwardClaimRow>(client, 'SELECT * FROM reward_award_claims WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1 FOR UPDATE', [request.reward_rule_id, request.source_user_id])
+      const claim = claimResult.rows[0]
+      if (!claim) throw new Error('Reward idempotency claim is missing. Apply the rewards migration and retry.')
+      if (claim.status === 'paid') throw new Error('Reward has already been paid for this trigger.')
+      if (claim.status !== 'pending' || claim.reward_request_id !== request.id) throw new Error('Reward request is no longer eligible for review.')
+
       if (input.action === 'reject') {
-        await queryPostgresClient(client, `UPDATE reward_award_requests SET status = 'rejected', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`, [input.reason?.trim() || 'Rejected by admin.', now, input.adminUserId, now, input.requestId])
-        return { request, sourceUser, beneficiary, approved: false, now }
+        const reason = input.reason?.trim() || 'Rejected by admin.'
+        await queryPostgresClient(client, `UPDATE reward_award_requests SET status = 'rejected', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`, [reason, now, input.adminUserId, now, request.id])
+        await queryPostgresClient(client, `UPDATE reward_award_claims SET status = 'rejected', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`, [reason, now, input.adminUserId, now, claim.id])
+        return { request, sourceUser, beneficiary, rule: { id: request.reward_rule_id, name: request.reward_rule_name, kind: request.reward_kind, triggerEvent: request.trigger_event, audience: request.audience, amountNgn: Number(request.amount_ngn), requiresReferral: request.audience === 'inviter', isActive: false, createdAt: request.created_at, updatedAt: now }, approved: false }
       }
-      const duplicate = await queryPostgresClient<{ id: string }>(client, `SELECT id FROM transactions WHERE user_id = ? AND type = ? AND status = ? AND metadata LIKE ? LIMIT 1`, [beneficiary.id, request.reward_type, 'success', `%"rewardRuleId":"${request.reward_rule_id}"%`])
-      if (duplicate.rows[0]) throw new Error('Reward has already been paid for this rule trigger.')
-      await queryPostgresClient(client, `UPDATE reward_award_requests SET status = 'approved', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`, [input.reason?.trim() || 'Approved by admin.', now, input.adminUserId, now, input.requestId])
-      return { request, sourceUser, beneficiary, approved: true, now }
+
+      const ruleResult = await queryPostgresClient<RewardRuleRow>(client, 'SELECT * FROM reward_rules WHERE id = ? LIMIT 1 FOR UPDATE', [request.reward_rule_id])
+      const rule = ruleResult.rows[0] ? mapRewardRuleRow(ruleResult.rows[0]) : {
+        id: request.reward_rule_id, name: request.reward_rule_name, kind: request.reward_kind,
+        triggerEvent: request.trigger_event, audience: request.audience, amountNgn: Number(request.amount_ngn),
+        requiresReferral: request.audience === 'inviter', isActive: false, createdAt: request.created_at, updatedAt: now,
+      }
+      const payoutRule = { ...rule, name: request.reward_rule_name, kind: request.reward_kind, amountNgn: Number(request.amount_ngn) }
+      if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
+        const { start, end } = getNigeriaRewardDayRange(new Date(now))
+        const paidResult = await queryPostgresClient<{ total: string }>(client, `
+          SELECT COALESCE(SUM(amount_ngn), 0) AS total
+          FROM reward_award_claims
+          WHERE reward_rule_id = ? AND status = 'paid' AND paid_at >= ? AND paid_at < ?
+        `, [rule.id, start, end])
+        if (Number(paidResult.rows[0]?.total ?? 0) + Number(request.amount_ngn) > (rule.dailyPayoutCapNgn ?? 0)) {
+          throw new Error('Daily reward payout cap has been reached. The request remains pending for a later review.')
+        }
+      }
+
+      const rewardTransaction: Transaction = {
+        id: `tx_${randomBytes(6).toString('hex')}`,
+        type: request.reward_type,
+        status: 'success',
+        amount: Number(request.amount_ngn),
+        fee: 0,
+        description: request.reward_kind === 'referral' ? `${request.reward_rule_name} — ${sourceUser.name}` : request.reward_rule_name,
+        reference: generateRef(),
+        createdAt: now,
+        icon: request.reward_kind === 'referral' ? '₦' : '🎁',
+        metadata: {
+          rewardRuleId: request.reward_rule_id, rewardRuleName: request.reward_rule_name,
+          rewardEvent: request.trigger_event, sourceUserId: sourceUser.id,
+          sourceReferralCode: sourceUser.referredByReferralCode ?? '',
+          triggerTransactionId: request.trigger_transaction_id ?? undefined,
+          role: request.audience, referredUserId: request.audience === 'inviter' ? sourceUser.id : undefined,
+          approvalMode: 'manual',
+        },
+      }
+      await applyRewardCreditPostgresClient(client, beneficiary.id, Number(request.amount_ngn), rewardTransaction)
+      const claimUpdate = await queryPostgresClient(client, `
+        UPDATE reward_award_claims
+        SET status = 'paid', reward_transaction_id = ?, paid_at = ?, status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ?
+        WHERE id = ? AND status = 'pending'
+      `, [rewardTransaction.id, now, input.reason?.trim() || 'Approved by admin.', now, input.adminUserId, now, claim.id])
+      if (claimUpdate.rowCount !== 1) throw new Error('Reward claim changed while being reviewed; no payout was committed.')
+      await queryPostgresClient(client, `UPDATE reward_award_requests SET status = 'approved', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ? AND status = 'pending'`, [input.reason?.trim() || 'Approved by admin.', now, input.adminUserId, now, request.id])
+      return { request, sourceUser, beneficiary, rule: payoutRule, transaction: rewardTransaction, approved: true }
     })
-    if (!context.approved) {
-      await insertAuditLog({ userId: context.beneficiary.id, actorUserId: input.adminUserId, action: 'reward.rule_rejected_manual', entityType: 'reward_award_request', entityId: input.requestId, metadata: { rewardRuleId: context.request.reward_rule_id, sourceUserId: context.sourceUser.id, amount: Number(context.request.amount_ngn), reason: input.reason?.trim() || 'Rejected by admin.' } })
-      return getRewardRuleReport()
+  } else {
+    const db = getDb()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const request = db.prepare('SELECT * FROM reward_award_requests WHERE id = ? LIMIT 1').get(input.requestId) as RewardAwardRequestRow | undefined
+      if (!request) throw new Error('Reward award request not found.')
+      if (request.status !== 'pending') throw new Error(request.status === 'approved' ? 'Reward award request is already approved.' : 'Reward award request is no longer pending.')
+      const sourceUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(request.source_user_id) as UserRow | undefined
+      const beneficiary = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(request.beneficiary_user_id) as UserRow | undefined
+      if (!sourceUser || !beneficiary) throw new Error('Reward request users could not be loaded.')
+      const claim = db.prepare('SELECT * FROM reward_award_claims WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1').get(request.reward_rule_id, request.source_user_id) as RewardAwardClaimRow | undefined
+      if (!claim) throw new Error('Reward idempotency claim is missing. Apply the rewards migration and retry.')
+      if (claim.status === 'paid') throw new Error('Reward has already been paid for this trigger.')
+      if (claim.status !== 'pending' || claim.reward_request_id !== request.id) throw new Error('Reward request is no longer eligible for review.')
+
+      const fallbackRule: RewardRule = {
+        id: request.reward_rule_id, name: request.reward_rule_name, kind: request.reward_kind,
+        triggerEvent: request.trigger_event, audience: request.audience, amountNgn: Number(request.amount_ngn),
+        requiresReferral: request.audience === 'inviter', isActive: false, createdAt: request.created_at, updatedAt: now,
+      }
+      if (input.action === 'reject') {
+        const reason = input.reason?.trim() || 'Rejected by admin.'
+        db.prepare(`UPDATE reward_award_requests SET status = 'rejected', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`).run(reason, now, input.adminUserId, now, request.id)
+        db.prepare(`UPDATE reward_award_claims SET status = 'rejected', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ?`).run(reason, now, input.adminUserId, now, claim.id)
+        db.exec('COMMIT')
+        result = { request, sourceUser, beneficiary, rule: fallbackRule, approved: false }
+      } else {
+        const ruleRow = db.prepare('SELECT * FROM reward_rules WHERE id = ? LIMIT 1').get(request.reward_rule_id) as RewardRuleRow | undefined
+        const rule = ruleRow ? mapRewardRuleRow(ruleRow) : fallbackRule
+        const payoutRule = { ...rule, name: request.reward_rule_name, kind: request.reward_kind, amountNgn: Number(request.amount_ngn) }
+        if (Number.isFinite(rule.dailyPayoutCapNgn) && (rule.dailyPayoutCapNgn ?? 0) > 0) {
+          const { start, end } = getNigeriaRewardDayRange(new Date(now))
+          const paid = db.prepare(`SELECT COALESCE(SUM(amount_ngn), 0) AS total FROM reward_award_claims WHERE reward_rule_id = ? AND status = 'paid' AND paid_at >= ? AND paid_at < ?`).get(rule.id, start, end) as { total?: number } | undefined
+          if (Number(paid?.total ?? 0) + Number(request.amount_ngn) > (rule.dailyPayoutCapNgn ?? 0)) {
+            throw new Error('Daily reward payout cap has been reached. The request remains pending for a later review.')
+          }
+        }
+        const rewardTransaction: Transaction = {
+          id: `tx_${randomBytes(6).toString('hex')}`, type: request.reward_type, status: 'success',
+          amount: Number(request.amount_ngn), fee: 0,
+          description: request.reward_kind === 'referral' ? `${request.reward_rule_name} — ${sourceUser.name}` : request.reward_rule_name,
+          reference: generateRef(), createdAt: now, icon: request.reward_kind === 'referral' ? '₦' : '🎁',
+          metadata: {
+            rewardRuleId: request.reward_rule_id, rewardRuleName: request.reward_rule_name,
+            rewardEvent: request.trigger_event, sourceUserId: sourceUser.id,
+            sourceReferralCode: sourceUser.referredByReferralCode ?? '',
+            triggerTransactionId: request.trigger_transaction_id ?? undefined,
+            role: request.audience, referredUserId: request.audience === 'inviter' ? sourceUser.id : undefined,
+            approvalMode: 'manual',
+          },
+        }
+        applyRewardCreditSqliteTransaction(db, beneficiary.id, Number(request.amount_ngn), rewardTransaction)
+        const claimUpdate = db.prepare(`
+          UPDATE reward_award_claims
+          SET status = 'paid', reward_transaction_id = ?, paid_at = ?, status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ?
+          WHERE id = ? AND status = 'pending'
+        `).run(rewardTransaction.id, now, input.reason?.trim() || 'Approved by admin.', now, input.adminUserId, now, claim.id)
+        if (Number(claimUpdate.changes ?? 0) !== 1) throw new Error('Reward claim changed while being reviewed; no payout was committed.')
+        db.prepare(`UPDATE reward_award_requests SET status = 'approved', status_reason = ?, reviewed_at = ?, reviewed_by_user_id = ?, updated_at = ? WHERE id = ? AND status = 'pending'`).run(input.reason?.trim() || 'Approved by admin.', now, input.adminUserId, now, request.id)
+        db.exec('COMMIT')
+        result = { request, sourceUser, beneficiary, rule: payoutRule, transaction: rewardTransaction, approved: true }
+      }
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
     }
-    const request = context.request
-    const rewardTransaction: Transaction = { id: `tx_${randomBytes(6).toString('hex')}`, type: request.reward_type, status: 'success', amount: Number(request.amount_ngn), fee: 0, description: request.reward_kind === 'referral' ? `${request.reward_rule_name} â€” ${context.sourceUser.name}` : request.reward_rule_name, reference: generateRef(), createdAt: context.now, icon: request.reward_kind === 'referral' ? 'â‚¦' : 'ðŸŽ', metadata: { rewardRuleId: request.reward_rule_id, rewardRuleName: request.reward_rule_name, rewardEvent: request.trigger_event, sourceUserId: context.sourceUser.id, sourceReferralCode: context.sourceUser.referredByReferralCode ?? '', triggerTransactionId: request.trigger_transaction_id ?? undefined, role: request.audience, referredUserId: request.audience === 'inviter' ? context.sourceUser.id : undefined, approvalMode: 'manual' } }
-    await applyWalletMutation({ userId: context.beneficiary.id, asset: 'NGN', balanceDelta: Number(request.amount_ngn), transaction: rewardTransaction })
-    await insertNotification(createNotification({ userId: context.beneficiary.id, title: `${request.reward_rule_name} paid`, message: `You earned â‚¦${Number(request.amount_ngn).toLocaleString('en-NG')} from the "${request.reward_rule_name}" reward rule.`, type: 'success' }))
-    await insertAuditLog({ userId: context.beneficiary.id, actorUserId: input.adminUserId, action: 'reward.rule_approved_manual', entityType: 'reward_award_request', entityId: input.requestId, metadata: { rewardRuleId: request.reward_rule_id, sourceUserId: context.sourceUser.id, amount: Number(request.amount_ngn) } })
-    return getRewardRuleReport()
   }
-  const db = getDb()
-  const requestRow = db
-    .prepare('SELECT * FROM reward_award_requests WHERE id = ? LIMIT 1')
-    .get(input.requestId) as RewardAwardRequestRow | undefined
-  if (!requestRow) throw new Error('Reward award request not found.')
-  if (requestRow.status === 'approved') throw new Error('Reward award request is already approved.')
 
-  const sourceUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(requestRow.source_user_id) as UserRow | undefined
-  const beneficiary = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(requestRow.beneficiary_user_id) as UserRow | undefined
-  const adminUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(input.adminUserId) as UserRow | undefined
-  if (!sourceUser || !beneficiary) throw new Error('Reward request users could not be loaded.')
-
-  const now = new Date().toISOString()
-  if (input.action === 'reject') {
-    db.prepare(`
-      UPDATE reward_award_requests
-      SET status = 'rejected',
-          status_reason = ?,
-          reviewed_at = ?,
-          reviewed_by_user_id = ?,
-          updated_at = ?
-      WHERE id = ?
-    `).run(
-      input.reason?.trim() || 'Rejected by admin.',
-      now,
-      input.adminUserId,
-      now,
-      input.requestId
-    )
+  try {
+    if (result.approved && result.transaction) {
+      await recordRewardPayoutSideEffects({ beneficiaryUserId: result.beneficiary.id, sourceUserId: result.sourceUser.id, rule: result.rule, transaction: result.transaction })
+    }
     await insertAuditLog({
-      userId: beneficiary.id,
+      userId: result.beneficiary.id,
       actorUserId: input.adminUserId,
-      action: 'reward.rule_rejected_manual',
+      action: result.approved ? 'reward.rule_approved_manual' : 'reward.rule_rejected_manual',
       entityType: 'reward_award_request',
       entityId: input.requestId,
       metadata: {
-        rewardRuleId: requestRow.reward_rule_id,
-        rewardRuleName: requestRow.reward_rule_name,
-        sourceUserId: sourceUser.id,
-        amount: Number(requestRow.amount_ngn),
-        reason: input.reason?.trim() || 'Rejected by admin.',
+        rewardRuleId: result.request.reward_rule_id,
+        sourceUserId: result.sourceUser.id,
+        amount: Number(result.request.amount_ngn),
+        reason: input.reason?.trim() || (result.approved ? 'Approved by admin.' : 'Rejected by admin.'),
       },
     })
-    return getRewardRuleReport()
+  } catch (error) {
+    console.error('[rewards] review audit write failed', error)
   }
-
-  const existingRewardRows = db
-    .prepare('SELECT metadata FROM transactions WHERE user_id = ? AND type = ? AND status = ?')
-    .all(beneficiary.id, requestRow.reward_type, 'success') as Array<Pick<TransactionRow, 'metadata'>>
-  const alreadyAwarded = existingRewardRows.some(existingRow => {
-    const metadata = parseJson(existingRow.metadata, undefined as Record<string, unknown> | undefined)
-    return metadata?.rewardRuleId === requestRow.reward_rule_id && metadata?.sourceUserId === sourceUser.id
-  })
-  if (alreadyAwarded) throw new Error('Reward has already been paid for this rule trigger.')
-
-  const rewardTransaction: Transaction = {
-    id: `tx_${randomBytes(6).toString('hex')}`,
-    type: requestRow.reward_type,
-    status: 'success',
-    amount: Number(requestRow.amount_ngn),
-    fee: 0,
-    description: requestRow.reward_kind === 'referral' ? `${requestRow.reward_rule_name} — ${sourceUser.name}` : requestRow.reward_rule_name,
-    reference: generateRef(),
-    createdAt: now,
-    icon: requestRow.reward_kind === 'referral' ? '₦' : '🎁',
-    metadata: {
-      rewardRuleId: requestRow.reward_rule_id,
-      rewardRuleName: requestRow.reward_rule_name,
-      rewardEvent: requestRow.trigger_event,
-      sourceUserId: sourceUser.id,
-      sourceReferralCode: sourceUser.referredByReferralCode ?? '',
-      triggerTransactionId: requestRow.trigger_transaction_id ?? undefined,
-      role: requestRow.audience,
-      referredUserId: requestRow.audience === 'inviter' ? sourceUser.id : undefined,
-      approvalMode: 'manual',
-    },
-  }
-
-  await applyWalletMutation({
-    userId: beneficiary.id,
-    asset: 'NGN',
-    balanceDelta: Number(requestRow.amount_ngn),
-    transaction: rewardTransaction,
-  })
-
-  db.prepare(`
-    UPDATE reward_award_requests
-    SET status = 'approved',
-        status_reason = ?,
-        reviewed_at = ?,
-        reviewed_by_user_id = ?,
-        updated_at = ?
-    WHERE id = ?
-  `).run(
-    input.reason?.trim() || 'Approved by admin.',
-    now,
-    input.adminUserId,
-    now,
-    input.requestId
-  )
-
-  await insertNotification(createNotification({
-    userId: beneficiary.id,
-    title: `${requestRow.reward_rule_name} paid`,
-    message: `You earned ₦${Number(requestRow.amount_ngn).toLocaleString('en-NG')} from the "${requestRow.reward_rule_name}" reward rule.`,
-    type: 'success',
-  }))
-
-  if (requestRow.audience === 'inviter') {
-    await insertNotification(createNotification({
-      userId: sourceUser.id,
-      title: 'Referral tracked',
-      message: 'Your qualifying activity triggered your inviter’s referral reward.',
-      type: 'info',
-    }))
-  }
-
-  await insertAuditLog({
-    userId: beneficiary.id,
-    actorUserId: input.adminUserId,
-    action: 'reward.rule_approved_manual',
-    entityType: 'reward_award_request',
-    entityId: input.requestId,
-    metadata: {
-      rewardRuleId: requestRow.reward_rule_id,
-      rewardRuleName: requestRow.reward_rule_name,
-      sourceUserId: sourceUser.id,
-      triggerTransactionId: requestRow.trigger_transaction_id ?? undefined,
-      amount: Number(requestRow.amount_ngn),
-      approvedByName: adminUser?.name ?? input.adminUserId,
-    },
-  })
-
   return getRewardRuleReport()
 }
-
 export async function getNetworkProviders(): Promise<NetworkProvider[]> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
@@ -11430,7 +11668,6 @@ export async function createUser(input: { name: string; email: string; phone: st
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [user.id, 0, null, null, 0, null, 0, 1, now, now])
     })
-    await maybeApplySignupRewardsForUser(user.id)
     return user
   }
 
@@ -11473,7 +11710,6 @@ export async function createUser(input: { name: string; email: string; phone: st
     throw error
   }
 
-  await maybeApplySignupRewardsForUser(user.id)
   return user
 }
 

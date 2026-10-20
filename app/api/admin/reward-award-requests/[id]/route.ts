@@ -25,7 +25,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     return NextResponse.json({ data, success: true })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Reward request update failed.'
-    const status = /not found/i.test(message) ? 404 : /already approved/i.test(message) ? 409 : 400
+    const status = /not found/i.test(message) ? 404 : /already approved|no longer pending|already been paid/i.test(message) ? 409 : 400
     return NextResponse.json({ error: message, success: false }, { status })
   }
 }
