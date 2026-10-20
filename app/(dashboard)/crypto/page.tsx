@@ -181,7 +181,7 @@ export default function CryptoPage() {
     <div className="space-y-6">
       {/* Fixed dark strip in both themes (does not follow light-mode coal/clay tokens). */}
       <div
-        className="flex items-start justify-between gap-4 rounded-2xl border border-[#3f3428] px-4 py-4 sm:px-5 lg:px-6"
+        className="flex items-start justify-between gap-4 rounded-xl border border-[#3f3428] px-4 py-4 sm:px-5 lg:px-6"
         style={{
           background:
             'linear-gradient(135deg, #0c0907 0%, #18130f 42%, #2a1f14 72%, #18130f 100%)',
@@ -243,7 +243,7 @@ export default function CryptoPage() {
           </div>
         </div>
         <div className="flex shrink-0">
-          <Button variant="secondary" className="rounded-full" onClick={() => openModal('sell')} size="sm">Sell Crypto</Button>
+          <Button variant="secondary" className="rounded-lg" onClick={() => openModal('sell')} size="sm">Sell Crypto</Button>
         </div>
       </div>
 
@@ -259,7 +259,7 @@ export default function CryptoPage() {
                 key={asset.id}
                 type="button"
                 onClick={() => openTradeForAsset(asset, 'buy')}
-                className="flex min-w-[150px] items-center gap-2.5 rounded-2xl border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 text-left transition-colors hover:border-[var(--gold2)]"
+                className="flex min-w-[150px] items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 text-left transition-colors hover:border-[var(--gold2)]"
               >
                 <AssetLogo
                   src={asset.icon}
