@@ -980,6 +980,10 @@ function mapPushTokenRow(row: PushTokenRow): PushTokenRecord {
 }
 
 function mapRewardRuleRow(row: RewardRuleRow): RewardRule {
+  // PostgreSQL exposes legacy SQLite INTEGER flags stored as BIGINT as strings
+  // ("0"/"1"). Boolean("0") is true, so normalize the numeric value explicitly.
+  const isEnabled = (value: unknown) => value === true || Number(value) === 1
+
   return {
     id: row.id,
     name: row.name,
@@ -988,12 +992,12 @@ function mapRewardRuleRow(row: RewardRuleRow): RewardRule {
     triggerEvent: row.trigger_event,
     audience: row.audience,
     amountNgn: Number(row.amount_ngn),
-    requiresReferral: Boolean(row.requires_referral),
+    requiresReferral: isEnabled(row.requires_referral),
     allowedTransactionTypes: normalizeRewardTransactionTypes(parseJson(row.allowed_transaction_types, undefined as unknown)),
     excludedTransactionTypes: normalizeRewardTransactionTypes(parseJson(row.excluded_transaction_types, undefined as unknown)),
     dailyPayoutCapNgn: row.daily_payout_cap_ngn == null ? undefined : Number(row.daily_payout_cap_ngn),
-    manualApprovalRequired: Boolean(row.manual_approval_required),
-    isActive: Boolean(row.is_active),
+    manualApprovalRequired: isEnabled(row.manual_approval_required),
+    isActive: isEnabled(row.is_active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
