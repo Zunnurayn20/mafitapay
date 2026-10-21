@@ -14,9 +14,9 @@ export default async function DisabledDataPlansPage() {
   await requireAdminPageUser()
   const [plans, amigoPlans, asbdataPlans, bardetechPlans, disabledCategories, baseNetworkProviders] = await Promise.all([
     getDisabledDataPlans(),
-    getPricedAmigoPlans().catch(() => []),
-    getPricedAsbdataPlans().catch(() => []),
-    getPricedBardetechPlans().catch(() => []),
+    getPricedAmigoPlans({ includeDisabled: true }).catch(() => []),
+    getPricedAsbdataPlans({ includeDisabled: true }).catch(() => []),
+    getPricedBardetechPlans({ includeDisabled: true }).catch(() => []),
     getDisabledDataPlanCategories(),
     getNetworkProviders(),
   ])

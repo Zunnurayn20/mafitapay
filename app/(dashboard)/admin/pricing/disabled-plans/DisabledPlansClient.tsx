@@ -114,8 +114,8 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
     </tbody></AdminTable>
     <div className="border-t border-slate-200 pt-5">
       <h3 className="text-sm font-bold text-slate-900">Disabled plans</h3>
-      <AdminTable><AdminThead columns={['Provider', 'Network ID', 'Plan ID', 'Reason', '']} /><tbody>
-        {plans.map(plan => { const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`; return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3">{VENDOR_LABELS[plan.vendor]}</td><td className="px-4 py-3">{plan.networkId}</td><td className="px-4 py-3">{plan.planId}</td><td className="px-4 py-3">{plan.reason || '—'}</td><td className="px-4 py-3"><PlanSwitch plan={plan} disabled /></td></tr> })}
+      <AdminTable><AdminThead columns={['Provider', 'Network', 'Plan details', 'Reason', '']} /><tbody>
+        {plans.map(plan => { const details = catalog.find(item => item.vendor === plan.vendor && item.networkId === plan.networkId && item.planId === plan.planId); const key = `${plan.vendor}:${plan.networkId}:${plan.planId}`; return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3 font-semibold text-slate-700">{VENDOR_LABELS[plan.vendor]}</td><td className="px-4 py-3 text-slate-700">{details?.network ?? 'Unavailable'}</td><td className="px-4 py-3"><div className="font-medium text-slate-800">{details?.label ?? 'Plan details unavailable'}</div><div className="mt-0.5 text-xs text-slate-500">{[details?.category || 'Standard', details?.validity, details ? formatNaira(details.retailNgn) : null].filter(Boolean).join(' · ')}</div></td><td className="px-4 py-3 text-slate-600">{plan.reason || '—'}</td><td className="px-4 py-3"><PlanSwitch plan={plan} disabled /></td></tr> })}
         {!plans.length && <tr><td colSpan={5} className="py-6 text-center text-slate-500">No plans are disabled.</td></tr>}
       </tbody></AdminTable>
     </div>

@@ -494,13 +494,14 @@ export async function getCachedBardetechPlans(options?: { forceRefresh?: boolean
 }
 
 /** Vendor catalog (cached) with current pricing rules (uncached) applied. */
-export async function getPricedBardetechPlans(options?: { forceRefresh?: boolean }): Promise<PricedBardetechPlan[]> {
+export async function getPricedBardetechPlans(options?: { forceRefresh?: boolean; includeDisabled?: boolean }): Promise<PricedBardetechPlan[]> {
   const [plans, rules, disabled, disabledCategories] = await Promise.all([
     getCachedBardetechPlans(options),
     loadPricingRules(),
     getDisabledDataPlans(),
     getDisabledDataPlanCategories(),
   ])
+  if (options?.includeDisabled) return applyBardetechPricing(plans, rules)
   const disabledKeys = new Set(disabled.filter(plan => plan.vendor === 'bardetech').map(plan => `${plan.networkId}:${plan.planId}`))
   return applyBardetechPricing(plans, rules).filter(plan => (
     !disabledKeys.has(`${plan.networkId}:${plan.planId}`)

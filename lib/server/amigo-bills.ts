@@ -269,8 +269,9 @@ function toAmigoBundles(plans: PricedAmigoPlan[]): BillDataBundle[] {
 }
 
 /** Static Amigo catalog with current pricing rules applied. */
-export async function getPricedAmigoPlans(): Promise<PricedAmigoPlan[]> {
+export async function getPricedAmigoPlans(options?: { includeDisabled?: boolean }): Promise<PricedAmigoPlan[]> {
   const [rules, disabled, disabledCategories] = await Promise.all([loadPricingRules(), getDisabledDataPlans(), getDisabledDataPlanCategories()])
+  if (options?.includeDisabled) return applyAmigoPricing(rules)
   const disabledKeys = new Set(disabled.filter(plan => plan.vendor === 'amigo').map(plan => `${plan.networkId}:${plan.planId}`))
   return applyAmigoPricing(rules).filter(plan => (
     !disabledKeys.has(`${plan.networkId}:${plan.planId}`)

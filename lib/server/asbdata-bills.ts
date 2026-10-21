@@ -475,13 +475,14 @@ export async function getCachedAsbdataPlans(options?: { forceRefresh?: boolean }
 }
 
 /** Vendor catalog (cached) with current pricing rules (uncached) applied. */
-export async function getPricedAsbdataPlans(options?: { forceRefresh?: boolean }): Promise<PricedAsbdataPlan[]> {
+export async function getPricedAsbdataPlans(options?: { forceRefresh?: boolean; includeDisabled?: boolean }): Promise<PricedAsbdataPlan[]> {
   const [plans, rules, disabled, disabledCategories] = await Promise.all([
     getCachedAsbdataPlans(options),
     loadPricingRules(),
     getDisabledDataPlans(),
     getDisabledDataPlanCategories(),
   ])
+  if (options?.includeDisabled) return applyAsbdataPricing(plans, rules)
   const disabledKeys = new Set(disabled.filter(plan => plan.vendor === 'asbdata').map(plan => `${plan.networkId}:${plan.planId}`))
   return applyAsbdataPricing(plans, rules).filter(plan => (
     !disabledKeys.has(`${plan.networkId}:${plan.planId}`)
