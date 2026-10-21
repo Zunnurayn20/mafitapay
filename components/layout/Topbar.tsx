@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/store'
-import { Bell, LifeBuoy, Moon, Search, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
+import { Bell, Headphones, Moon, Search, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
 import { fmtDate } from '@/lib/utils'
 
 interface TopbarProps {
@@ -74,7 +74,7 @@ export function Topbar({ title }: TopbarProps) {
             title="Contact support"
             aria-label="Contact support"
           >
-            <LifeBuoy size={14} className="text-[var(--text2)]" />
+            <Headphones size={14} className="text-[var(--text2)]" />
           </button>
 
           <div className="relative">
