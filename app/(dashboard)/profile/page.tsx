@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
+import { LifeBuoy } from 'lucide-react'
 export default function ProfilePage() {
   const { refreshSession, showToast, user, wallet } = useAppStore()
   const router = useRouter()
@@ -140,6 +141,12 @@ export default function ProfilePage() {
               sub: kycCopy.headline,
               action: () => router.push('/kyc'),
             },
+            {
+              icon: 'support',
+              title: 'Contact Support',
+              sub: 'Get help from the MafitaPay support team',
+              action: () => router.push('/support'),
+            },
             ...(user?.isAdmin ? [{
               icon: 'Admin',
               title: 'Admin Workspace',
@@ -153,7 +160,9 @@ export default function ProfilePage() {
               onClick={item.action}
               className="flex w-full items-center gap-4 border-b border-[var(--border)] px-5 py-4 text-left transition-colors hover:bg-[var(--clay)] last:border-0"
             >
-              <span className={item.icon === 'Admin' ? 'text-[9px] font-black uppercase tracking-[.8px] text-[var(--gold2)]' : 'text-lg'}>{item.icon}</span>
+              <span className={item.icon === 'Admin' ? 'text-[9px] font-black uppercase tracking-[.8px] text-[var(--gold2)]' : item.icon === 'support' ? 'text-[var(--gold2)]' : 'text-lg'}>
+                {item.icon === 'support' ? <LifeBuoy size={18} /> : item.icon}
+              </span>
               <div className="flex-1">
                 <div className="text-[13px] font-semibold text-[var(--text)]">{item.title}</div>
                 <div className="mt-0.5 text-[9px] text-[var(--muted)]">{item.sub}</div>

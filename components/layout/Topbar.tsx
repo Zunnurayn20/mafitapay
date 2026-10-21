@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/store'
-import { Bell, Moon, Search, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
+import { Bell, LifeBuoy, Moon, Search, Shield, Sun, UserCircle2, CheckCheck, LogOut, X } from 'lucide-react'
 import { fmtDate } from '@/lib/utils'
 
 interface TopbarProps {
@@ -62,8 +62,19 @@ export function Topbar({ title }: TopbarProps) {
           <button
             onClick={() => setSearchOpen(true)}
             className="flex h-9 w-9 items-center justify-center border border-[var(--border)] bg-[var(--clay)] transition-all hover:border-[var(--gold2)]"
+            aria-label="Search"
           >
             <Search size={14} className="text-[var(--text2)]" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => router.push('/support')}
+            className="flex h-9 w-9 items-center justify-center border border-[var(--border)] bg-[var(--clay)] transition-all hover:border-[var(--gold2)]"
+            title="Contact support"
+            aria-label="Contact support"
+          >
+            <LifeBuoy size={14} className="text-[var(--text2)]" />
           </button>
 
           <div className="relative">
