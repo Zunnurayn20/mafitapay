@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
-import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getNetworkProviders, getWalletByUserId, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
@@ -36,11 +36,12 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const forceRefresh = url.searchParams.get('refresh') === '1'
-  const [baseProviders, baseNetworkProviders, billTypeSettings, disabledDataPlanCategories] = await Promise.all([
+  const [baseProviders, baseNetworkProviders, billTypeSettings, disabledDataPlanCategories, disabledDataPlans] = await Promise.all([
     getBillProviders(),
     getNetworkProviders(),
     getBillTypeSettings(),
     getDisabledDataPlanCategories(),
+    getDisabledDataPlans(),
   ])
   const enabledBillTypes = new Set(billTypeSettings.filter(setting => setting.enabled).map(setting => setting.type))
   let providers = baseProviders
@@ -76,6 +77,10 @@ export async function GET(req: Request) {
     dataBundles: network.dataBundles?.filter(bundle => (
       !isDataPlanCategoryDisabled(disabledDataPlanCategories, 'network', network.name)
       && !isDataPlanCategoryDisabled(disabledDataPlanCategories, 'plan_type', bundle.planType)
+      && !(bundle.provider === 'flutterwave' && bundle.providerNetworkId !== undefined
+        && disabledDataPlans.some(plan => plan.vendor === 'flutterwave'
+          && plan.networkId === bundle.providerNetworkId
+          && plan.planId === (bundle.providerPlanId || bundle.itemCode)))
     )),
   }))
 
@@ -205,6 +210,14 @@ async function handleBillPayment(req: Request) {
       : 'amigo'
 
   if (selectedProvider.type === 'data') {
+    if (
+      resolvedDataProvider === 'flutterwave'
+      && providerPlanId
+      && Number.isFinite(providerNetworkId)
+      && await isDataPlanDisabled('flutterwave', providerNetworkId, providerPlanId)
+    ) {
+      return NextResponse.json({ error: 'This data plan is temporarily unavailable.', success: false }, { status: 503 })
+    }
     const disabledCategories = await getDisabledDataPlanCategories()
     if (isDataPlanCategoryDisabled(disabledCategories, 'network', provider)) {
       return NextResponse.json({ error: 'Data plans for this network are temporarily unavailable.', success: false }, { status: 503 })

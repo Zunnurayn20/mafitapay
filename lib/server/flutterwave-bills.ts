@@ -52,6 +52,12 @@ const FLUTTERWAVE_DATA_BILLER_CODES: Record<string, string> = {
   '9mobile': 'BIL111',
   etisalat: 'BIL111',
 }
+const FLUTTERWAVE_DATA_NETWORK_IDS: Record<string, number> = {
+  mtn: 90001,
+  glo: 90002,
+  airtel: 90003,
+  '9mobile': 90004,
+}
 const FLUTTERWAVE_DATA_BUNDLE_VALIDITY_OVERRIDES: Record<string, string> = {
   MD135: '1 day',
   MD136: '7 days',
@@ -308,6 +314,8 @@ function toFlutterwaveDataBundles(items: FlutterwaveBillItem[]): BillDataBundle[
     billerCode: item.billerCode,
     itemName: item.name,
     validity: resolveDataBundleValidity(item.itemCode, item.name),
+    provider: 'flutterwave',
+    providerPlanId: item.itemCode,
   }))
 }
 
@@ -497,7 +505,10 @@ export async function listFlutterwaveDataBundleNetworkProviders(
         const items = await getFlutterwaveBillItems(billerCode)
         const enrichedProvider = {
           ...provider,
-          dataBundles: toFlutterwaveDataBundles(items),
+          dataBundles: toFlutterwaveDataBundles(items).map(bundle => ({
+            ...bundle,
+            providerNetworkId: FLUTTERWAVE_DATA_NETWORK_IDS[networkKey],
+          })),
         }
         logFlutterwaveBills('data-bundles.provider', {
           provider: provider.name,

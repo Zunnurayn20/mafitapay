@@ -46,7 +46,7 @@ export function DataPlanCategoryControls({ options, initialDisabled }: {
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 id="data-category-controls-title" className="text-sm font-bold text-slate-900">Global category switches</h2>
-        <p className="mt-1 text-sm text-slate-500">A switch applies across Amigo, ASBDATA, and Bardetech. Individual plan settings are kept separately.</p>
+        <p className="mt-1 text-sm text-slate-500">A switch applies across Flutterwave, Amigo, ASBDATA, and Bardetech. Individual plan settings are kept separately.</p>
       </div>
       <label className="text-xs text-slate-500">Reason <input value={reason} onChange={event => setReason(event.target.value)} maxLength={300} placeholder="Optional" className="ml-2 border border-slate-200 bg-white px-2 py-1.5 text-slate-800" /></label>
     </div>

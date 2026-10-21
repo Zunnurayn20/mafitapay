@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
 import { getDisabledDataPlans, insertAuditLog, setDataPlanDisabled, setDataPlansDisabled } from '@/lib/server/data'
 
-const VENDORS = new Set(['amigo', 'asbdata', 'bardetech'])
+const VENDORS = new Set(['amigo', 'asbdata', 'bardetech', 'flutterwave'])
 
 export async function GET() {
   const admin = await requireAdminUser()
@@ -31,19 +31,19 @@ export async function PATCH(request: Request) {
     if (typeof body.disabled !== 'boolean' || body.plans.length < 1 || body.plans.length > 2000) {
       return NextResponse.json({ success: false, error: 'Choose between 1 and 2,000 plans and provide an enabled status.' }, { status: 400 })
     }
-    const plans = body.plans.map((value): { vendor: 'amigo' | 'asbdata' | 'bardetech'; networkId: number; planId: string } | null => {
+    const plans = body.plans.map((value): { vendor: 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'; networkId: number; planId: string } | null => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return null
       const item = value as Record<string, unknown>
       const itemVendor = typeof item.vendor === 'string' ? item.vendor.trim().toLowerCase() : ''
       const itemNetworkId = Number(item.networkId)
       const itemPlanId = typeof item.planId === 'string' ? item.planId.trim() : ''
       if (!VENDORS.has(itemVendor) || !Number.isInteger(itemNetworkId) || itemNetworkId <= 0 || !itemPlanId || itemPlanId.length > 100) return null
-      return { vendor: itemVendor as 'amigo' | 'asbdata' | 'bardetech', networkId: itemNetworkId, planId: itemPlanId }
+      return { vendor: itemVendor as 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave', networkId: itemNetworkId, planId: itemPlanId }
     })
     if (plans.some(plan => !plan)) {
       return NextResponse.json({ success: false, error: 'One or more plan selections are invalid.' }, { status: 400 })
     }
-    const validPlans = plans as Array<{ vendor: 'amigo' | 'asbdata' | 'bardetech'; networkId: number; planId: string }>
+    const validPlans = plans as Array<{ vendor: 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'; networkId: number; planId: string }>
     const data = await setDataPlansDisabled({ plans: validPlans, disabled: body.disabled, reason, disabledBy: admin.email })
     await insertAuditLog({
       actorUserId: admin.id,
@@ -60,7 +60,7 @@ export async function PATCH(request: Request) {
   }
 
   const plans = await setDataPlanDisabled({
-    vendor: vendor as 'amigo' | 'asbdata' | 'bardetech',
+    vendor: vendor as 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave',
     networkId,
     planId,
     disabled,

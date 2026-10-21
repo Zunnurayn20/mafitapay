@@ -8405,7 +8405,7 @@ export async function deleteSessionByToken(token: string) {
 }
 
 export type DisabledDataPlanRecord = {
-  vendor: 'amigo' | 'asbdata' | 'bardetech'
+  vendor: 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'
   networkId: number
   planId: string
   reason?: string

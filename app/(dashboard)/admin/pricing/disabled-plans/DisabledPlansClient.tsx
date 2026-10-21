@@ -3,9 +3,9 @@
 import { useMemo, useState } from 'react'
 import { AdminError, AdminInput, AdminSelect, AdminTable, AdminThead, formatNaira } from '@/components/admin/AdminUi'
 
-type DisabledPlan = { vendor: 'amigo' | 'asbdata' | 'bardetech'; networkId: number; planId: string; reason?: string; disabledAt: string; disabledBy?: string }
+type DisabledPlan = { vendor: 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'; networkId: number; planId: string; reason?: string; disabledAt: string; disabledBy?: string }
 type CatalogPlan = { vendor: DisabledPlan['vendor']; networkId: number; network: string; planId: string; category: string; label: string; validity: string; retailNgn: number }
-const VENDOR_LABELS = { amigo: 'Amigo', asbdata: 'ASBDATA', bardetech: 'Bardetech' } as const
+const VENDOR_LABELS = { amigo: 'Amigo', asbdata: 'ASBDATA', bardetech: 'Bardetech', flutterwave: 'Flutterwave' } as const
 
 export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: DisabledPlan[]; catalog: CatalogPlan[] }) {
   const [plans, setPlans] = useState(initialPlans)
