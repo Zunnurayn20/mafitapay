@@ -45,6 +45,9 @@ export async function beginBiometricRegistration(user: User, origin: string) {
     userDisplayName: user.name,
     timeout: 60_000,
     attestationType: 'none',
+    // Prefer ES256 first for Android WebView credential providers, while retaining
+    // the wider algorithm set for authenticators that support EdDSA or RS256.
+    supportedAlgorithmIDs: [-7, -257, -8],
     authenticatorSelection: {
       authenticatorAttachment: 'platform',
       residentKey: 'preferred',
