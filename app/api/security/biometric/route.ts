@@ -65,6 +65,10 @@ export async function POST(req: Request) {
     if (intent === 'toggle') {
       const enabled = body.enabled === true
       const settings = await upsertSecuritySettings(user.id, { biometricEnabled: enabled })
+      console.info('[webauthn] biometric setting updated', {
+        biometricEnabled: settings.biometricEnabled,
+        hasBiometricCredential: settings.hasBiometricCredential,
+      })
       return NextResponse.json({ data: { settings }, success: true })
     }
 

@@ -172,6 +172,9 @@ export default function SecurityPage() {
       if (!response.ok || payload.success === false) {
         throw new Error(payload.error || 'Biometric setting update failed.')
       }
+      if (payload.data?.settings) {
+        useAppStore.setState({ securitySettings: payload.data.settings })
+      }
       await refreshSession()
       showToast(value ? 'Biometric approval enabled.' : 'Biometric approval disabled.')
     } catch (error) {
