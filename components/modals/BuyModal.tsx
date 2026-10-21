@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
-import { createBiometricApproval } from '@/lib/client/biometric'
+import { createBiometricApproval, isBiometricApprovalEnabled } from '@/lib/client/biometric'
 import { getWalletAddressHint, getWalletAddressPlaceholder, validateWalletAddressForPair } from '@/lib/crypto-addresses'
 import { readClipboardText } from '@/lib/clipboard'
 import { useCryptoAssets } from '@/lib/client/catalogs'
@@ -499,7 +499,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
             { label: 'Total debit', value: formatNGN(totalDebit), emphasis: true },
             ...(fee > 0 ? [{ label: 'Network fee', value: formatNGN(fee) }] : []),
           ]}
-          onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={isBiometricApprovalEnabled(securitySettings) ? () => void handleBiometricApproval() : undefined}
           biometricBusy={biometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Order placed!' : undefined}

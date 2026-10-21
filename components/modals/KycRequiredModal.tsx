@@ -4,7 +4,8 @@ import { type FormEvent, useRef, useState } from 'react'
 import { Fingerprint, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { canUseBiometrics, enrollBiometricCredential } from '@/lib/client/biometric'
+import { canUseBiometrics, enrollBiometricCredential, enrollNativeBiometricCredential } from '@/lib/client/biometric'
+import { getTransactionBiometricAvailability, isNativeBiometricPlatform } from '@/lib/client/native-biometric'
 import { useAppStore } from '@/store'
 
 function PinDigits({
@@ -77,6 +78,7 @@ export function KycRequiredModal({ onSecuritySetupChange }: { onSecuritySetupCha
   const [savingBiometric, setSavingBiometric] = useState(false)
   const [biometricSupported, setBiometricSupported] = useState<boolean | null>(null)
   const [error, setError] = useState('')
+  const nativeApp = isNativeBiometricPlatform()
 
   async function submitIdentity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -143,7 +145,9 @@ export function KycRequiredModal({ onSecuritySetupChange }: { onSecuritySetupCha
 
       setStep('biometric')
       showToast('Transaction PIN created.', 'success')
-      const supported = await canUseBiometrics()
+      const supported = nativeApp
+        ? (await getTransactionBiometricAvailability()).available
+        : await canUseBiometrics()
       setBiometricSupported(supported)
       try {
         await refreshSession()
@@ -171,7 +175,8 @@ export function KycRequiredModal({ onSecuritySetupChange }: { onSecuritySetupCha
     setSavingBiometric(true)
     setError('')
     try {
-      await enrollBiometricCredential()
+      if (nativeApp) await enrollNativeBiometricCredential()
+      else await enrollBiometricCredential()
       showToast('Biometric approval is ready on this device.', 'success')
       await finishSecuritySetup()
     } catch (biometricError) {
@@ -242,16 +247,18 @@ export function KycRequiredModal({ onSecuritySetupChange }: { onSecuritySetupCha
               <div className="flex gap-3 border border-[var(--border)] bg-[var(--clay)] p-4">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[rgba(202,165,96,.14)] text-[var(--gold2)]"><Fingerprint size={20} /></span>
                 <div>
-                  <div className="text-[12px] font-bold text-[var(--text)]">Use fingerprint or face unlock</div>
+                  <div className="text-[12px] font-bold text-[var(--text)]">{nativeApp ? 'Use Android biometrics for transactions' : 'Use a passkey for transactions'}</div>
                   <div className="mt-1 text-[11px] leading-relaxed text-[var(--text2)]">
-                    {biometricSupported === false ? 'Biometrics are not available on this device. You can finish with your PIN.' : 'This is optional. You can enroll this device now or do it later in Security settings.'}
+                    {biometricSupported === false
+                      ? nativeApp ? 'Strong biometrics are unavailable on this phone. You can finish with your PIN.' : 'A passkey authenticator is unavailable in this browser. You can finish with your PIN.'
+                      : 'This is optional. Enroll now or finish setup and do it later in Security settings.'}
                   </div>
                 </div>
               </div>
               {error ? <div role="alert" className="text-[11px] text-[var(--red2)]">{error}</div> : null}
               {biometricSupported !== false ? (
                 <Button className="w-full py-3" onClick={() => void enrollBiometrics()} loading={savingBiometric}>
-                  <span className="inline-flex items-center gap-2"><ShieldCheck size={16} /> Enroll biometrics</span>
+                  <span className="inline-flex items-center gap-2"><ShieldCheck size={16} /> {nativeApp ? 'Enroll Android biometrics' : 'Enroll passkey'}</span>
                 </Button>
               ) : null}
               <Button variant="secondary" className="w-full py-3" onClick={() => void finishSecuritySetup()} disabled={savingBiometric}>

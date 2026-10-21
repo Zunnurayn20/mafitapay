@@ -27,7 +27,12 @@ export type AuthenticateResult = {
 
 type BiometricAuthPlugin = {
   isAvailable(): Promise<BiometricAvailability>
+  isTransactionBiometricAvailable(): Promise<BiometricAvailability>
   authenticate(options?: AuthenticateOptions): Promise<AuthenticateResult>
+  createKeyAndSign(options: { deviceId: string; challenge: string }): Promise<{ deviceId: string; publicKey: string; signature: string; certificateChain: string[] }>
+  signChallenge(options: { deviceId: string; challenge: string }): Promise<{ deviceId: string; signature: string }>
+  deleteTransactionKey(options: { deviceId: string }): Promise<void>
+  listTransactionKeys(): Promise<{ deviceIds: string[] }>
 }
 
 const BiometricAuth = registerPlugin<BiometricAuthPlugin>('BiometricAuth')
@@ -49,6 +54,39 @@ export async function getBiometricAvailability(): Promise<BiometricAvailability>
     }
   } catch {
     return { available: false, statusLabel: 'error' }
+  }
+}
+
+export async function getTransactionBiometricAvailability(): Promise<BiometricAvailability> {
+  if (!isNativeBiometricPlatform()) return { available: false, statusLabel: 'not_native' }
+  try {
+    const result = await BiometricAuth.isTransactionBiometricAvailable()
+    return { available: Boolean(result?.available), status: result?.status, statusLabel: result?.statusLabel }
+  } catch {
+    return { available: false, statusLabel: 'error' }
+  }
+}
+
+export async function createTransactionBiometricKey(input: { deviceId: string; challenge: string }) {
+  return BiometricAuth.createKeyAndSign(input)
+}
+
+export async function signTransactionBiometricChallenge(input: { deviceId: string; challenge: string }) {
+  return BiometricAuth.signChallenge(input)
+}
+
+export async function deleteTransactionBiometricKey(deviceId: string) {
+  if (!isNativeBiometricPlatform()) return
+  await BiometricAuth.deleteTransactionKey({ deviceId })
+}
+
+export async function listTransactionBiometricKeyIds() {
+  if (!isNativeBiometricPlatform()) return []
+  try {
+    const result = await BiometricAuth.listTransactionKeys()
+    return Array.isArray(result?.deviceIds) ? result.deviceIds : []
+  } catch {
+    return []
   }
 }
 

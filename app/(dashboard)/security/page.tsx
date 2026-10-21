@@ -5,13 +5,16 @@ import { AlertCircle, CheckCircle2, Fingerprint, KeyRound, LockKeyhole, ShieldCh
 import { Card, CardAction, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { canUseBiometrics, enrollBiometricCredential } from '@/lib/client/biometric'
+import { canUseBiometrics, enrollBiometricCredential, enrollNativeBiometricCredential } from '@/lib/client/biometric'
 import {
   authenticateBiometric,
   BIOMETRIC_UNLOCK_KEY,
   biometricUnavailableHint,
   clearBiometricSession,
   getBiometricAvailability,
+  getTransactionBiometricAvailability,
+  isNativeBiometricPlatform,
+  deleteTransactionBiometricKey,
   markBiometricSessionUnlocked,
   readBiometricSetting,
   writeBiometricSetting,
@@ -25,6 +28,7 @@ interface BiometricCredentialItem {
   label?: string
   createdAt: string
   lastUsedAt?: string
+  credentialType?: 'passkey' | 'native_android'
 }
 
 export default function SecurityPage() {
@@ -62,6 +66,7 @@ export default function SecurityPage() {
   const [nativeBiometricBusy, setNativeBiometricBusy] = useState(false)
   const [nativeBiometricHint, setNativeBiometricHint] = useState<string | null>(null)
   const [nativeBiometricError, setNativeBiometricError] = useState<string | null>(null)
+  const [nativeApp, setNativeApp] = useState(false)
 
   const activeSessions = sessions.map(session => ({
     id: session.id,
@@ -74,7 +79,14 @@ export default function SecurityPage() {
   useEffect(() => {
     void (async () => {
       try {
-        setBiometricSupported(await canUseBiometrics())
+        const isNative = isNativeBiometricPlatform()
+        setNativeApp(isNative)
+        if (isNative) {
+          const availability = await getTransactionBiometricAvailability()
+          setBiometricSupported(availability.available)
+        } else {
+          setBiometricSupported(await canUseBiometrics())
+        }
       } finally {
         setLoadingBiometricSupport(false)
       }
@@ -135,10 +147,13 @@ export default function SecurityPage() {
     if (securitySettings?.hasTransactionPin !== true) {
       setManagingPin(true)
     }
-    if (securitySettings?.hasBiometricCredential !== true) {
+    const hasPlatformCredential = nativeApp
+      ? securitySettings?.hasNativeBiometricCredential
+      : securitySettings?.hasWebBiometricCredential
+    if (hasPlatformCredential !== true) {
       setManagingBiometric(true)
     }
-  }, [securitySettings?.hasBiometricCredential, securitySettings?.hasTransactionPin, setupMode])
+  }, [nativeApp, securitySettings?.hasNativeBiometricCredential, securitySettings?.hasWebBiometricCredential, securitySettings?.hasTransactionPin, setupMode])
 
   async function loadBiometricCredentials() {
     setLoadingBiometricCredentials(true)
@@ -166,7 +181,7 @@ export default function SecurityPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ intent: 'toggle', enabled: value }),
+        body: JSON.stringify({ intent: nativeApp ? 'native_toggle' : 'toggle', enabled: value }),
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) {
@@ -185,7 +200,10 @@ export default function SecurityPage() {
   }
 
   async function setTransactionBiometricEnabled(value: boolean) {
-    if (value && securitySettings?.hasBiometricCredential !== true) {
+    const hasPlatformCredential = nativeApp
+      ? securitySettings?.hasNativeBiometricCredential
+      : securitySettings?.hasWebBiometricCredential
+    if (value && hasPlatformCredential !== true) {
       await registerBiometric()
       return
     }
@@ -195,7 +213,8 @@ export default function SecurityPage() {
   async function registerBiometric() {
     setSavingBiometric(true)
     try {
-      await enrollBiometricCredential()
+      if (nativeApp) await enrollNativeBiometricCredential()
+      else await enrollBiometricCredential()
       await refreshSession()
       await loadBiometricCredentials()
       showToast('Biometric approval is ready on this device.')
@@ -213,11 +232,22 @@ export default function SecurityPage() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ credentialId }),
+        body: JSON.stringify({
+          credentialId,
+          deviceId: credentialId,
+          credentialType: biometricCredentials.find(item => item.credentialId === credentialId)?.credentialType,
+        }),
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) {
         throw new Error(payload.error || 'Biometric device removal failed.')
+      }
+      if (biometricCredentials.find(item => item.credentialId === credentialId)?.credentialType === 'native_android') {
+        try {
+          await deleteTransactionBiometricKey(credentialId)
+        } catch {
+          // The server has revoked the key, so a local keystore cleanup failure cannot authorize use.
+        }
       }
       setBiometricCredentials(Array.isArray(payload.data?.credentials) ? payload.data.credentials : [])
       await refreshSession()
@@ -455,7 +485,10 @@ export default function SecurityPage() {
   }
 
   const setupNeedsPin = securitySettings?.hasTransactionPin !== true
-  const setupNeedsBiometric = biometricSupported && securitySettings?.hasBiometricCredential !== true
+  const hasPlatformBiometricCredential = nativeApp
+    ? securitySettings?.hasNativeBiometricCredential === true
+    : securitySettings?.hasWebBiometricCredential === true
+  const setupNeedsBiometric = biometricSupported && !hasPlatformBiometricCredential
   const setupComplete = !setupNeedsPin
 
   return (
@@ -499,9 +532,9 @@ export default function SecurityPage() {
                     {!biometricSupported ? <Smartphone size={18} /> : setupNeedsBiometric ? <Sparkles size={18} /> : <CheckCircle2 size={18} />}
                   </span>
                   <div>
-                    <div className="text-[11px] font-black uppercase tracking-[0.12em] text-[rgba(248,238,220,.95)]">Biometric Approval</div>
+                    <div className="text-[11px] font-black uppercase tracking-[0.12em] text-[rgba(248,238,220,.95)]">{nativeApp ? 'Android Biometric Approval' : 'Passkey Approval'}</div>
                     <div className="mt-0.5 text-[10px] text-[rgba(233,214,186,.68)]">
-                      {!biometricSupported ? 'Not available here' : setupNeedsBiometric ? 'Optional enrollment' : 'Device enrolled'}
+                      {!biometricSupported ? 'Not available here' : setupNeedsBiometric ? 'Optional enrollment' : nativeApp ? 'Android device enrolled' : 'Passkey enrolled'}
                     </div>
                   </div>
                 </div>
@@ -648,13 +681,13 @@ export default function SecurityPage() {
             <div className="min-w-0 flex-1">
               <div className="text-[14px] font-black text-[var(--text)]">Device biometrics</div>
               <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
-                Use fingerprint or face to unlock this app and approve transactions.
+                {nativeApp ? 'Use Android biometrics to unlock the app and approve transactions.' : 'Use a browser passkey to approve transactions on this device.'}
               </p>
             </div>
           </div>
 
           <div className="mt-5 space-y-4">
-            <label className={`flex items-center justify-between gap-3 ${!nativeBiometricAvailable ? 'opacity-60' : ''}`}>
+            {nativeApp ? <label className={`flex items-center justify-between gap-3 ${!nativeBiometricAvailable ? 'opacity-60' : ''}`}>
               <span>
                 <span className="block text-sm font-semibold text-[var(--text)]">Unlock app</span>
                 <span className="mt-0.5 block text-xs text-[var(--muted)]">Ask for fingerprint or face when opening the app.</span>
@@ -666,17 +699,19 @@ export default function SecurityPage() {
                 onChange={event => void toggleNativeBiometric(BIOMETRIC_UNLOCK_KEY, event.target.checked, setNativeBiometricUnlock)}
                 className="h-5 w-5 accent-[var(--gold)]"
               />
-            </label>
+            </label> : null}
 
             <label className={`flex items-center justify-between gap-3 ${!biometricSupported ? 'opacity-60' : ''}`}>
               <span>
                 <span className="block text-sm font-semibold text-[var(--text)]">Confirm transactions</span>
-                <span className="mt-0.5 block text-xs text-[var(--muted)]">Use your device passkey instead of entering your transaction PIN.</span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">{nativeApp ? 'Use Android biometrics with a protected device key instead of entering your transaction PIN.' : 'Use your browser passkey instead of entering your transaction PIN.'}</span>
               </span>
               <input
                 type="checkbox"
-                checked={Boolean(securitySettings?.hasBiometricCredential && securitySettings.biometricEnabled)}
-                disabled={(!biometricSupported && !securitySettings?.biometricEnabled) || savingBiometric || updatingSetting === 'biometricEnabled'}
+                checked={nativeApp
+                  ? Boolean(securitySettings?.hasNativeBiometricCredential && securitySettings.nativeBiometricEnabled)
+                  : Boolean(securitySettings?.hasWebBiometricCredential && securitySettings.biometricEnabled)}
+                disabled={(!biometricSupported && !(nativeApp ? securitySettings?.nativeBiometricEnabled : securitySettings?.biometricEnabled)) || savingBiometric || updatingSetting === 'biometricEnabled'}
                 onChange={event => void setTransactionBiometricEnabled(event.target.checked)}
                 className="h-5 w-5 accent-[var(--gold)]"
               />
@@ -684,38 +719,38 @@ export default function SecurityPage() {
           </div>
 
           {nativeBiometricError ? <div className="mt-4 text-xs text-[var(--red2)]">{nativeBiometricError}</div> : null}
-          {!nativeBiometricAvailable ? (
+          {nativeApp && !nativeBiometricAvailable ? (
             <div className="mt-4 text-xs leading-relaxed text-[var(--muted)]">
               {nativeBiometricHint || 'App unlock requires the Android app on a device with fingerprint or face unlock set up.'}
             </div>
           ) : null}
           {!loadingBiometricSupport && !biometricSupported ? (
-            <div className="mt-4 text-xs leading-relaxed text-[var(--muted)]">This device does not offer a passkey authenticator. You can still confirm transactions with your PIN.</div>
+            <div className="mt-4 text-xs leading-relaxed text-[var(--muted)]">{nativeApp ? 'This device does not support strong biometrics required for transaction signing. You can still confirm transactions with your PIN.' : 'This browser does not offer a passkey authenticator. You can still confirm transactions with your PIN.'}</div>
           ) : null}
 
           <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
             <span className="text-[10px] text-[var(--muted)]">
-              {securitySettings?.hasBiometricCredential
-                ? `${securitySettings.biometricCredentialCount} passkey device(s) enrolled`
-                : 'No transaction passkey enrolled'}
+              {nativeApp
+                ? securitySettings?.hasNativeBiometricCredential ? `${securitySettings.nativeBiometricCredentialCount} Android device(s) enrolled` : 'No Android biometric key enrolled'
+                : securitySettings?.hasWebBiometricCredential ? `${securitySettings.webBiometricCredentialCount} passkey(s) enrolled` : 'No transaction passkey enrolled'}
             </span>
-            <Button size="sm" variant={managingBiometric ? 'secondary' : 'primary'} onClick={() => setManagingBiometric(current => !current)}>
-              {managingBiometric ? 'Close' : 'Manage passkeys'}
+              <Button size="sm" variant={managingBiometric ? 'secondary' : 'primary'} onClick={() => setManagingBiometric(current => !current)}>
+              {managingBiometric ? 'Close' : nativeApp ? 'Manage devices' : 'Manage passkeys'}
             </Button>
           </div>
 
           {managingBiometric ? (
             <div className="mt-4">
               {loadingBiometricSupport ? (
-                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Checking passkey support…</div>
+                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Checking biometric support…</div>
               ) : loadingBiometricCredentials ? (
-                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Loading passkeys…</div>
-              ) : biometricCredentials.length > 0 ? (
+                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">Loading biometric devices…</div>
+              ) : biometricCredentials.some(credential => nativeApp ? credential.credentialType === 'native_android' : credential.credentialType !== 'native_android') ? (
                 <div className="space-y-2">
-                  {biometricCredentials.map(credential => (
+                  {biometricCredentials.filter(credential => nativeApp ? credential.credentialType === 'native_android' : credential.credentialType !== 'native_android').map(credential => (
                     <div key={credential.id} className="flex items-center justify-between gap-3 rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3">
                       <div>
-                        <div className="text-[11px] font-semibold text-[var(--text)]">{credential.label || 'This device'}</div>
+                        <div className="text-[11px] font-semibold text-[var(--text)]">{credential.label || (credential.credentialType === 'native_android' ? 'Android device' : 'This device')}</div>
                         <div className="mt-1 text-[9px] text-[var(--muted)]">
                           {credential.lastUsedAt ? `Last used ${new Date(credential.lastUsedAt).toLocaleString('en-NG')}` : `Added ${new Date(credential.createdAt).toLocaleString('en-NG')}`}
                         </div>
@@ -727,10 +762,10 @@ export default function SecurityPage() {
                   ))}
                 </div>
               ) : (
-                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">No passkeys enrolled.</div>
+                <div className="rounded border border-[var(--border)] bg-[var(--clay)] px-4 py-3 text-[10px] text-[var(--muted)]">{nativeApp ? 'No Android devices enrolled.' : 'No passkeys enrolled.'}</div>
               )}
               <Button className="mt-4 w-full py-3" onClick={() => void registerBiometric()} disabled={savingBiometric || !biometricSupported}>
-                {savingBiometric ? 'Enrolling…' : securitySettings?.hasBiometricCredential ? 'Add another passkey' : 'Enroll a passkey'}
+                {savingBiometric ? 'Enrolling…' : nativeApp ? (securitySettings?.hasNativeBiometricCredential ? 'Enroll another device' : 'Enroll this device') : (securitySettings?.hasWebBiometricCredential ? 'Add another passkey' : 'Enroll a passkey')}
               </Button>
             </div>
           ) : null}

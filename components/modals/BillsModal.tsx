@@ -5,7 +5,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
-import { createBiometricApproval } from '@/lib/client/biometric'
+import { createBiometricApproval, isBiometricApprovalEnabled } from '@/lib/client/biometric'
 import { refreshBillCatalog, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
 import {
   getBillServiceConfig,
@@ -1111,7 +1111,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               ← Edit payment
             </button>
           )}
-          onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void handleBiometricApproval() : undefined}
+          onBiometric={isBiometricApprovalEnabled(securitySettings) ? () => void handleBiometricApproval() : undefined}
           biometricBusy={biometricBusy}
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? `${serviceName} submitted` : undefined}

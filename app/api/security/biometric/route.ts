@@ -1,14 +1,29 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
-import { beginBiometricApproval, beginBiometricRegistration, disableBiometricCredential, finishBiometricApproval, finishBiometricRegistration } from '@/lib/server/biometric'
-import { getBiometricCredentialsByUserId, upsertSecuritySettings } from '@/lib/server/data'
+import { beginBiometricApproval, beginBiometricRegistration, beginNativeBiometricApproval, beginNativeBiometricRegistration, disableBiometricCredential, disableNativeBiometricDevice, finishBiometricApproval, finishBiometricRegistration, finishNativeBiometricApproval, finishNativeBiometricRegistration } from '@/lib/server/biometric'
+import { getBiometricCredentialsByUserId, getNativeBiometricDevicesByUserId, upsertSecuritySettings } from '@/lib/server/data'
 
 export async function GET() {
   const user = await requireUser()
   if (!user) return unauthorized()
 
-  const credentials = await getBiometricCredentialsByUserId(user.id)
-  return NextResponse.json({ data: { credentials }, success: true })
+  const [credentials, nativeDevices] = await Promise.all([
+    getBiometricCredentialsByUserId(user.id),
+    getNativeBiometricDevicesByUserId(user.id),
+  ])
+  const items = [
+    ...credentials.map(credential => ({ ...credential, credentialType: 'passkey' as const })),
+    ...nativeDevices.map(device => ({
+      id: device.id,
+      userId: device.user_id,
+      credentialId: device.id,
+      label: device.label,
+      createdAt: device.created_at,
+      lastUsedAt: device.last_used_at ?? undefined,
+      credentialType: 'native_android' as const,
+    })),
+  ].sort((a, b) => new Date(b.lastUsedAt || b.createdAt).getTime() - new Date(a.lastUsedAt || a.createdAt).getTime())
+  return NextResponse.json({ data: { credentials: items }, success: true })
 }
 
 export async function POST(req: Request) {
@@ -49,6 +64,44 @@ export async function POST(req: Request) {
       return NextResponse.json({ data: { enrolled: true }, success: true })
     }
 
+    if (intent === 'native_register_challenge') {
+      const challenge = await beginNativeBiometricRegistration(user)
+      return NextResponse.json({ data: { challenge }, success: true })
+    }
+
+    if (intent === 'native_register_verify') {
+      const data = await finishNativeBiometricRegistration({
+        user,
+        challengeId: String(body.challengeId || ''),
+        deviceId: String(body.deviceId || ''),
+        publicKey: String(body.publicKey || ''),
+        signature: String(body.signature || ''),
+        certificateChain: Array.isArray(body.certificateChain) ? body.certificateChain.filter((item: unknown): item is string => typeof item === 'string') : [],
+      })
+      await appendNotification(user.id, createNotification({
+        userId: user.id,
+        title: 'Android transaction biometrics enabled',
+        message: 'This Android device can now approve sensitive transactions with its biometric protected key.',
+        type: 'success',
+      }))
+      return NextResponse.json({ data: { enrolled: true, settings: data.settings }, success: true })
+    }
+
+    if (intent === 'native_approval_challenge') {
+      const challenge = await beginNativeBiometricApproval(user)
+      return NextResponse.json({ data: { challenge }, success: true })
+    }
+
+    if (intent === 'native_approval_verify') {
+      const approval = await finishNativeBiometricApproval({
+        user,
+        challengeId: String(body.challengeId || ''),
+        deviceId: String(body.deviceId || ''),
+        signature: String(body.signature || ''),
+      })
+      return NextResponse.json({ data: { approval }, success: true })
+    }
+
     if (intent === 'approval_options') {
       const options = await beginBiometricApproval(user, origin)
       return NextResponse.json({ data: { options }, success: true })
@@ -69,6 +122,11 @@ export async function POST(req: Request) {
         biometricEnabled: settings.biometricEnabled,
         hasBiometricCredential: settings.hasBiometricCredential,
       })
+      return NextResponse.json({ data: { settings }, success: true })
+    }
+
+    if (intent === 'native_toggle') {
+      const settings = await upsertSecuritySettings(user.id, { nativeBiometricEnabled: body.enabled === true })
       return NextResponse.json({ data: { settings }, success: true })
     }
 
@@ -93,6 +151,21 @@ export async function DELETE(req: Request) {
 
   try {
     const body = await req.json()
+    if (body.credentialType === 'native_android') {
+      const deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : ''
+      if (!deviceId) throw new Error('deviceId is required.')
+      await disableNativeBiometricDevice(user.id, deviceId)
+      const [credentials, nativeDevices] = await Promise.all([
+        getBiometricCredentialsByUserId(user.id),
+        getNativeBiometricDevicesByUserId(user.id),
+      ])
+      const items = [
+        ...credentials.map(credential => ({ ...credential, credentialType: 'passkey' as const })),
+        ...nativeDevices.map(device => ({ id: device.id, userId: device.user_id, credentialId: device.id, label: device.label, createdAt: device.created_at, lastUsedAt: device.last_used_at ?? undefined, credentialType: 'native_android' as const })),
+      ]
+      await refreshBiometricStateNotification(user.id)
+      return NextResponse.json({ data: { credentials: items }, success: true })
+    }
     const credentialId = typeof body.credentialId === 'string' ? body.credentialId.trim() : ''
     if (!credentialId) {
       throw new Error('credentialId is required.')
@@ -113,4 +186,13 @@ export async function DELETE(req: Request) {
       { status: 400 }
     )
   }
+}
+
+async function refreshBiometricStateNotification(userId: string) {
+  await appendNotification(userId, createNotification({
+    userId,
+    title: 'Biometric device removed',
+    message: 'A biometric approval device was removed from your account.',
+    type: 'info',
+  }))
 }

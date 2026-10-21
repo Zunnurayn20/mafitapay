@@ -17,8 +17,13 @@ export interface SessionData {
     transactionPinLockedUntil?: string
     twoFactorEnabled: boolean
     biometricEnabled: boolean
+    nativeBiometricEnabled: boolean
     hasBiometricCredential: boolean
     biometricCredentialCount: number
+    hasWebBiometricCredential: boolean
+    webBiometricCredentialCount: number
+    hasNativeBiometricCredential: boolean
+    nativeBiometricCredentialCount: number
     biometricCredentialLabel?: string
     biometricLastVerifiedAt?: string
     createdAt: string

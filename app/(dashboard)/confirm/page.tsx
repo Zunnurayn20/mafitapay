@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, CheckCircle2, Clock3, Delete, Fingerprint, Landmark, Loader2, ReceiptText, ShoppingBag, XCircle } from 'lucide-react'
-import { createBiometricApproval } from '@/lib/client/biometric'
+import { createBiometricApproval, isBiometricApprovalEnabled } from '@/lib/client/biometric'
 import { clearPendingConfirmation, loadPendingConfirmation, type PendingConfirmation } from '@/lib/client/transaction-confirmation'
 import { formatNGN } from '@/lib/utils'
 import { useAppStore } from '@/store'
+import { isNativeBiometricPlatform } from '@/lib/client/native-biometric'
 
 type Phase = 'review' | 'processing' | 'pending' | 'success' | 'failed'
 
@@ -24,18 +25,20 @@ function NativePinPad({
   onBackspace,
   onBiometric,
   biometricBusy,
+  biometricLabel,
 }: {
   onPress: (digit: string) => void
   onBackspace: () => void
   onBiometric?: () => void
   biometricBusy: boolean
+  biometricLabel: string
 }) {
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', onBiometric ? 'bio' : '', '0', 'back']
   return (
     <div className="grid grid-cols-3 gap-2.5 px-3">
       {keys.map((key, index) => {
         if (!key) return <div key={index} />
-        if (key === 'bio') return <button key={key} type="button" onClick={onBiometric} disabled={biometricBusy} aria-label="Confirm with fingerprint or passkey" title="Use fingerprint or passkey" className="flex h-12 items-center justify-center rounded-2xl border border-[var(--gold)]/30 bg-[rgba(202,165,96,.12)] text-[var(--gold2)] active:scale-95 disabled:opacity-60"><Fingerprint size={22} className={biometricBusy ? 'animate-pulse' : ''} /></button>
+        if (key === 'bio') return <button key={key} type="button" onClick={onBiometric} disabled={biometricBusy} aria-label={`Confirm with ${biometricLabel}`} title={`Use ${biometricLabel}`} className="flex h-12 items-center justify-center rounded-2xl border border-[var(--gold)]/30 bg-[rgba(202,165,96,.12)] text-[var(--gold2)] active:scale-95 disabled:opacity-60"><Fingerprint size={22} className={biometricBusy ? 'animate-pulse' : ''} /></button>
         if (key === 'back') return <button key={key} type="button" onClick={onBackspace} aria-label="Backspace" className="flex h-12 items-center justify-center rounded-2xl text-[var(--muted)] active:bg-[var(--clay2)]"><Delete size={20} /></button>
         return <button key={key} type="button" onClick={() => onPress(key)} className="h-12 rounded-2xl border border-[var(--border)] bg-[var(--coal)] text-lg font-semibold text-[var(--text)] shadow-[0_4px_12px_rgba(0,0,0,.12)] transition active:scale-95 active:bg-[var(--clay2)]">{key}</button>
       })}
@@ -55,8 +58,10 @@ export default function ConfirmTransactionPage() {
   const [error, setError] = useState('')
   const [reference, setReference] = useState('')
   const [biometricBusy, setBiometricBusy] = useState(false)
+  const [nativeApp, setNativeApp] = useState(false)
 
   useEffect(() => {
+    setNativeApp(isNativeBiometricPlatform())
     setPayload(loadPendingConfirmation())
     setReady(true)
   }, [])
@@ -135,8 +140,8 @@ export default function ConfirmTransactionPage() {
         {phase === 'review' && <div className="text-center">
           <p className="text-[13px] font-semibold text-[var(--text)]">Enter PIN to confirm</p>
           <div className="my-4 flex justify-center gap-3.5">{[0, 1, 2, 3].map(index => <span key={index} className={`h-3 w-3 rounded-full transition-all ${index < pin.length ? 'scale-110 bg-[var(--gold)] shadow-[0_0_0_4px_rgba(202,165,96,.13)]' : 'bg-[var(--clay2)]'}`} />)}</div>
-          {securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled && <p className="mb-2 text-[10px] text-[var(--muted)]">Enter your PIN, or use fingerprint / passkey.</p>}
-          <NativePinPad onPress={press} onBackspace={() => { if (!biometricBusy) { setPin(pin.slice(0, -1)); setPinError('') } }} onBiometric={securitySettings?.hasBiometricCredential && securitySettings?.biometricEnabled ? () => void confirmPasskey() : undefined} biometricBusy={biometricBusy} />
+          {isBiometricApprovalEnabled(securitySettings) && <p className="mb-2 text-[10px] text-[var(--muted)]">{nativeApp ? 'Enter your PIN, or use Android biometrics.' : 'Enter your PIN, or use your passkey.'}</p>}
+          <NativePinPad onPress={press} onBackspace={() => { if (!biometricBusy) { setPin(pin.slice(0, -1)); setPinError('') } }} onBiometric={isBiometricApprovalEnabled(securitySettings) ? () => void confirmPasskey() : undefined} biometricBusy={biometricBusy} biometricLabel={nativeApp ? 'fingerprint or face' : 'passkey'} />
           {pinError && <p className="mt-2 text-xs font-medium text-[var(--red2)]">{pinError}</p>}
         </div>}
 

@@ -125,8 +125,13 @@ export interface SecuritySettingsRecord {
   transactionPinLockedUntil?: string
   twoFactorEnabled: boolean
   biometricEnabled: boolean
+  nativeBiometricEnabled: boolean
   hasBiometricCredential: boolean
   biometricCredentialCount: number
+  hasWebBiometricCredential: boolean
+  webBiometricCredentialCount: number
+  hasNativeBiometricCredential: boolean
+  nativeBiometricCredentialCount: number
   biometricCredentialLabel?: string
   biometricLastVerifiedAt?: string
   createdAt: string
@@ -453,6 +458,7 @@ type SecuritySettingsRow = {
   transaction_pin_locked_until: string | null
   two_factor_enabled: number
   biometric_enabled: number
+  native_biometric_enabled: number
   created_at: string
   updated_at: string
 }
@@ -486,6 +492,27 @@ type WebAuthnChallengeRow = {
 type BiometricApprovalRow = {
   token: string
   user_id: string
+  expires_at: string
+  created_at: string
+  used_at: string | null
+  method: string
+}
+
+type NativeBiometricDeviceRow = {
+  id: string
+  user_id: string
+  public_key: string
+  label: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+type NativeBiometricChallengeRow = {
+  id: string
+  user_id: string
+  purpose: 'registration' | 'approval'
+  challenge: string
   expires_at: string
   created_at: string
   used_at: string | null
@@ -1040,8 +1067,13 @@ function mapSecuritySettingsRow(row: SecuritySettingsRow): SecuritySettingsRecor
     transactionPinLockedUntil: row.transaction_pin_locked_until ?? undefined,
     twoFactorEnabled: Boolean(row.two_factor_enabled),
     biometricEnabled: Boolean(row.biometric_enabled),
+    nativeBiometricEnabled: Boolean(row.native_biometric_enabled),
     hasBiometricCredential: false,
     biometricCredentialCount: 0,
+    hasWebBiometricCredential: false,
+    webBiometricCredentialCount: 0,
+    hasNativeBiometricCredential: false,
+    nativeBiometricCredentialCount: 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -1974,6 +2006,7 @@ function initSchema(db: DatabaseSync) {
       transaction_pin_locked_until TEXT,
       two_factor_enabled INTEGER NOT NULL DEFAULT 0,
       biometric_enabled INTEGER NOT NULL DEFAULT 1,
+      native_biometric_enabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -2015,11 +2048,38 @@ function initSchema(db: DatabaseSync) {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      used_at TEXT
+      used_at TEXT,
+      method TEXT NOT NULL DEFAULT 'webauthn'
     );
 
     CREATE INDEX IF NOT EXISTS idx_biometric_approvals_user_created_at
       ON biometric_approvals(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS native_biometric_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_biometric_devices_user_created_at
+      ON native_biometric_devices(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS native_biometric_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'approval')),
+      challenge TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_biometric_challenges_user_purpose_created_at
+      ON native_biometric_challenges(user_id, purpose, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS p2p_merchants (
       id TEXT PRIMARY KEY,
@@ -2772,6 +2832,8 @@ function migrateSchema(db: DatabaseSync) {
   ensureColumn(db, 'security_settings', 'transaction_pin_salt', 'TEXT')
   ensureColumn(db, 'security_settings', 'transaction_pin_failed_attempts', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'security_settings', 'transaction_pin_locked_until', 'TEXT')
+  ensureColumn(db, 'security_settings', 'native_biometric_enabled', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(db, 'biometric_approvals', 'method', "TEXT NOT NULL DEFAULT 'webauthn'")
   ensureColumn(db, 'reward_rules', 'daily_payout_cap_ngn', 'REAL')
   ensureColumn(db, 'reward_rules', 'manual_approval_required', 'INTEGER NOT NULL DEFAULT 0')
   const rewardClaimsNow = new Date().toISOString()
@@ -10907,12 +10969,18 @@ export async function getSecuritySettingsByUserId(userId: string): Promise<Secur
     const result = await queryPostgres<SecuritySettingsRow>('SELECT * FROM security_settings WHERE user_id = ? LIMIT 1', [userId])
     const row = result.rows[0]
     if (!row) return null
-    const [summary, latest] = await Promise.all([
+    const [summary, latest, nativeSummary, nativeLatest] = await Promise.all([
       queryPostgres<{ count: string; last_used_at: string | null }>('SELECT COUNT(*) AS count, MAX(last_used_at) AS last_used_at FROM biometric_credentials WHERE user_id = ?', [userId]),
       queryPostgres<{ label: string | null }>('SELECT label FROM biometric_credentials WHERE user_id = ? ORDER BY COALESCE(last_used_at, created_at) DESC LIMIT 1', [userId]),
+      queryPostgres<{ count: string; last_used_at: string | null }>('SELECT COUNT(*) AS count, MAX(last_used_at) AS last_used_at FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL', [userId]),
+      queryPostgres<{ label: string | null }>('SELECT label FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY COALESCE(last_used_at, created_at) DESC LIMIT 1', [userId]),
     ])
-    const count = Number(summary.rows[0]?.count ?? 0)
-    return { ...mapSecuritySettingsRow(row), hasBiometricCredential: count > 0, biometricCredentialCount: count, biometricCredentialLabel: latest.rows[0]?.label ?? undefined, biometricLastVerifiedAt: summary.rows[0]?.last_used_at ?? undefined }
+    const webCount = Number(summary.rows[0]?.count ?? 0)
+    const nativeCount = Number(nativeSummary.rows[0]?.count ?? 0)
+    const totalCount = webCount + nativeCount
+    const latestLabel = nativeLatest.rows[0]?.label ?? latest.rows[0]?.label
+    const latestUsedAt = nativeSummary.rows[0]?.last_used_at ?? summary.rows[0]?.last_used_at
+    return { ...mapSecuritySettingsRow(row), hasBiometricCredential: totalCount > 0, biometricCredentialCount: totalCount, hasWebBiometricCredential: webCount > 0, webBiometricCredentialCount: webCount, hasNativeBiometricCredential: nativeCount > 0, nativeBiometricCredentialCount: nativeCount, biometricCredentialLabel: latestLabel ?? undefined, biometricLastVerifiedAt: latestUsedAt ?? undefined }
   }
   const db = getDb()
   const row = db
@@ -10933,13 +11001,21 @@ export async function getSecuritySettingsByUserId(userId: string): Promise<Secur
     ORDER BY COALESCE(last_used_at, created_at) DESC
     LIMIT 1
   `).get(userId) as { label?: string | null } | undefined
+  const nativeSummary = db.prepare('SELECT COUNT(*) AS count, MAX(last_used_at) AS last_used_at FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL').get(userId) as { count?: number; last_used_at?: string | null } | undefined
+  const nativeLatest = db.prepare('SELECT label FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY COALESCE(last_used_at, created_at) DESC LIMIT 1').get(userId) as { label?: string | null } | undefined
+  const webCount = Number(summary?.count ?? 0)
+  const nativeCount = Number(nativeSummary?.count ?? 0)
 
   return {
     ...base,
-    hasBiometricCredential: Number(summary?.count ?? 0) > 0,
-    biometricCredentialCount: Number(summary?.count ?? 0),
-    biometricCredentialLabel: latestCredential?.label ?? undefined,
-    biometricLastVerifiedAt: summary?.last_used_at ?? undefined,
+    hasBiometricCredential: webCount + nativeCount > 0,
+    biometricCredentialCount: webCount + nativeCount,
+    hasWebBiometricCredential: webCount > 0,
+    webBiometricCredentialCount: webCount,
+    hasNativeBiometricCredential: nativeCount > 0,
+    nativeBiometricCredentialCount: nativeCount,
+    biometricCredentialLabel: nativeLatest?.label ?? latestCredential?.label ?? undefined,
+    biometricLastVerifiedAt: nativeSummary?.last_used_at ?? summary?.last_used_at ?? undefined,
   }
 }
 
@@ -11115,7 +11191,98 @@ export async function removeBiometricCredential(userId: string, credentialId: st
   }
 }
 
-export async function createBiometricApproval(userId: string) {
+export async function getNativeBiometricDevicesByUserId(userId: string) {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<NativeBiometricDeviceRow>('SELECT * FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY COALESCE(last_used_at, created_at) DESC', [userId])
+    return result.rows
+  }
+  return getDb().prepare('SELECT * FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY COALESCE(last_used_at, created_at) DESC').all(userId) as NativeBiometricDeviceRow[]
+}
+
+export async function getNativeBiometricDevice(userId: string, deviceId: string) {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<NativeBiometricDeviceRow>('SELECT * FROM native_biometric_devices WHERE user_id = ? AND id = ? AND revoked_at IS NULL LIMIT 1', [userId, deviceId])
+    return result.rows[0] ?? null
+  }
+  return (getDb().prepare('SELECT * FROM native_biometric_devices WHERE user_id = ? AND id = ? AND revoked_at IS NULL LIMIT 1').get(userId, deviceId) as NativeBiometricDeviceRow | undefined) ?? null
+}
+
+export async function saveNativeBiometricDevice(input: { userId: string; deviceId: string; publicKey: string; label: string }) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    await queryPostgres('INSERT INTO native_biometric_devices (id, user_id, public_key, label, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL, NULL)', [input.deviceId, input.userId, input.publicKey, input.label, now])
+    return
+  }
+  getDb().prepare('INSERT INTO native_biometric_devices (id, user_id, public_key, label, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL, NULL)').run(input.deviceId, input.userId, input.publicKey, input.label, now)
+}
+
+export async function touchNativeBiometricDevice(userId: string, deviceId: string) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres('UPDATE native_biometric_devices SET last_used_at = ? WHERE user_id = ? AND id = ? AND revoked_at IS NULL', [now, userId, deviceId])
+    if (!(result.rowCount ?? 0)) throw new Error('Native biometric device was revoked.')
+    return
+  }
+  const result = getDb().prepare('UPDATE native_biometric_devices SET last_used_at = ? WHERE user_id = ? AND id = ? AND revoked_at IS NULL').run(now, userId, deviceId)
+  if (!Number(result.changes ?? 0)) throw new Error('Native biometric device was revoked.')
+}
+
+export async function revokeNativeBiometricDevice(userId: string, deviceId: string) {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres('UPDATE native_biometric_devices SET revoked_at = ? WHERE user_id = ? AND id = ? AND revoked_at IS NULL', [now, userId, deviceId])
+    if (!(result.rowCount ?? 0)) throw new Error('Native biometric device not found.')
+    return
+  }
+  const result = getDb().prepare('UPDATE native_biometric_devices SET revoked_at = ? WHERE user_id = ? AND id = ? AND revoked_at IS NULL').run(now, userId, deviceId)
+  if (!Number(result.changes ?? 0)) throw new Error('Native biometric device not found.')
+}
+
+export async function createNativeBiometricChallenge(userId: string, purpose: 'registration' | 'approval') {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const id = `nbc_${randomBytes(12).toString('hex')}`
+  const challenge = randomBytes(32).toString('base64url')
+  const expiresAt = new Date(Date.now() + 2 * 60_000).toISOString()
+  if (isPostgresEnabled()) {
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM native_biometric_challenges WHERE expires_at <= ? OR used_at IS NOT NULL', [now])
+      await queryPostgresClient(client, 'UPDATE native_biometric_challenges SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL', [now, userId, purpose])
+      await queryPostgresClient(client, 'INSERT INTO native_biometric_challenges (id, user_id, purpose, challenge, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, NULL)', [id, userId, purpose, challenge, expiresAt, now])
+    })
+  } else {
+    const db = getDb()
+    db.prepare('DELETE FROM native_biometric_challenges WHERE expires_at <= ? OR used_at IS NOT NULL').run(now)
+    db.prepare('UPDATE native_biometric_challenges SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL').run(now, userId, purpose)
+    db.prepare('INSERT INTO native_biometric_challenges (id, user_id, purpose, challenge, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, NULL)').run(id, userId, purpose, challenge, expiresAt, now)
+  }
+  return { id, challenge, expiresAt }
+}
+
+export async function consumeNativeBiometricChallenge(userId: string, challengeId: string, purpose: 'registration' | 'approval') {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) return withPostgresTransaction(async client => {
+    const result = await queryPostgresClient<NativeBiometricChallengeRow>(client, 'SELECT * FROM native_biometric_challenges WHERE id = ? AND user_id = ? AND purpose = ? AND used_at IS NULL LIMIT 1 FOR UPDATE', [challengeId, userId, purpose])
+    const row = result.rows[0]
+    if (!row || new Date(row.expires_at).getTime() <= Date.now()) throw new Error('Biometric challenge expired. Try again.')
+    await queryPostgresClient(client, 'UPDATE native_biometric_challenges SET used_at = ? WHERE id = ?', [now, challengeId])
+    return row
+  })
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM native_biometric_challenges WHERE id = ? AND user_id = ? AND purpose = ? AND used_at IS NULL LIMIT 1').get(challengeId, userId, purpose) as NativeBiometricChallengeRow | undefined
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) throw new Error('Biometric challenge expired. Try again.')
+  const consumed = db.prepare('UPDATE native_biometric_challenges SET used_at = ? WHERE id = ? AND used_at IS NULL').run(now, challengeId)
+  if (!Number(consumed.changes ?? 0)) throw new Error('Biometric challenge has already been used.')
+  return row
+}
+
+export async function createBiometricApproval(userId: string, method: 'webauthn' | 'native_android' = 'webauthn') {
   await ensureDbReady()
   if (isPostgresEnabled()) {
     const token = `bioap_${randomBytes(24).toString('hex')}`
@@ -11123,7 +11290,7 @@ export async function createBiometricApproval(userId: string) {
     const expiresAt = new Date(Date.now() + BIOMETRIC_APPROVAL_TTL_MINUTES * 60_000).toISOString()
     await withPostgresTransaction(async client => {
       await queryPostgresClient(client, 'DELETE FROM biometric_approvals WHERE expires_at <= ? OR used_at IS NOT NULL', [now])
-      await queryPostgresClient(client, 'INSERT INTO biometric_approvals (token, user_id, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, NULL)', [token, userId, expiresAt, now])
+      await queryPostgresClient(client, 'INSERT INTO biometric_approvals (token, user_id, expires_at, created_at, used_at, method) VALUES (?, ?, ?, ?, NULL, ?)', [token, userId, expiresAt, now, method])
     })
     return { token, expiresAt }
   }
@@ -11133,14 +11300,15 @@ export async function createBiometricApproval(userId: string) {
   const now = new Date().toISOString()
   const expiresAt = new Date(Date.now() + BIOMETRIC_APPROVAL_TTL_MINUTES * 60_000).toISOString()
   db.prepare(`
-    INSERT INTO biometric_approvals (token, user_id, expires_at, created_at, used_at)
-    VALUES (?, ?, ?, ?, NULL)
-  `).run(token, userId, expiresAt, now)
+    INSERT INTO biometric_approvals (token, user_id, expires_at, created_at, used_at, method)
+    VALUES (?, ?, ?, ?, NULL, ?)
+  `).run(token, userId, expiresAt, now, method)
   return { token, expiresAt }
 }
 
 export async function consumeBiometricApproval(userId: string, token: string) {
   await ensureDbReady()
+  let method: string | undefined
   if (isPostgresEnabled()) {
     await withPostgresTransaction(async client => {
       const now = new Date().toISOString()
@@ -11150,8 +11318,9 @@ export async function consumeBiometricApproval(userId: string, token: string) {
       if (!row || row.used_at) throw new Error('Biometric approval is invalid or already used.')
       if (new Date(row.expires_at).getTime() <= Date.now()) throw new Error('Biometric approval expired. Try again.')
       await queryPostgresClient(client, 'UPDATE biometric_approvals SET used_at = ? WHERE token = ?', [now, token])
+      method = row.method
     })
-    return
+    return method ?? 'webauthn'
   }
   const db = getDb()
   cleanupExpiredWebAuthnArtifacts(db)
@@ -11162,12 +11331,14 @@ export async function consumeBiometricApproval(userId: string, token: string) {
   if (new Date(row.expires_at).getTime() <= Date.now()) {
     throw new Error('Biometric approval expired. Try again.')
   }
-  db.prepare('UPDATE biometric_approvals SET used_at = ? WHERE token = ?').run(new Date().toISOString(), token)
+  const consumed = db.prepare('UPDATE biometric_approvals SET used_at = ? WHERE token = ? AND used_at IS NULL').run(new Date().toISOString(), token)
+  if (!Number(consumed.changes ?? 0)) throw new Error('Biometric approval is invalid or already used.')
+  return row.method ?? 'webauthn'
 }
 
 export async function upsertSecuritySettings(
   userId: string,
-  updates: Partial<Pick<SecuritySettingsRecord, 'transactionPinEnabled' | 'twoFactorEnabled' | 'biometricEnabled'>>
+  updates: Partial<Pick<SecuritySettingsRecord, 'transactionPinEnabled' | 'twoFactorEnabled' | 'biometricEnabled' | 'nativeBiometricEnabled'>>
 ): Promise<SecuritySettingsRecord> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
@@ -11176,19 +11347,24 @@ export async function upsertSecuritySettings(
       const selected = await queryPostgresClient<SecuritySettingsRow>(client, 'SELECT * FROM security_settings WHERE user_id = ? LIMIT 1 FOR UPDATE', [userId])
       const row = selected.rows[0]
       const existing = row ? mapSecuritySettingsRow(row) : null
-      const count = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM biometric_credentials WHERE user_id = ?', [userId])
+      const [webCountResult, nativeCountResult] = await Promise.all([
+        queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM biometric_credentials WHERE user_id = ?', [userId]),
+        queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL', [userId]),
+      ])
       const hasPin = Boolean(row?.transaction_pin_hash && row?.transaction_pin_salt)
-      const credentialCount = Number(count.rows[0]?.count ?? 0)
+      const webCredentialCount = Number(webCountResult.rows[0]?.count ?? 0)
+      const nativeCredentialCount = Number(nativeCountResult.rows[0]?.count ?? 0)
       const next = {
         transactionPinEnabled: hasPin ? (typeof updates.transactionPinEnabled === 'boolean' ? updates.transactionPinEnabled : existing?.transactionPinEnabled ?? false) : false,
         twoFactorEnabled: updates.twoFactorEnabled ?? existing?.twoFactorEnabled ?? false,
-        biometricEnabled: credentialCount > 0 ? (updates.biometricEnabled ?? existing?.biometricEnabled ?? true) : false,
+        biometricEnabled: webCredentialCount > 0 ? (updates.biometricEnabled ?? existing?.biometricEnabled ?? true) : false,
+        nativeBiometricEnabled: nativeCredentialCount > 0 ? (updates.nativeBiometricEnabled ?? existing?.nativeBiometricEnabled ?? false) : false,
       }
       await queryPostgresClient(client, `
-        INSERT INTO security_settings (user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET transaction_pin_enabled = excluded.transaction_pin_enabled, two_factor_enabled = excluded.two_factor_enabled, biometric_enabled = excluded.biometric_enabled, updated_at = excluded.updated_at
-      `, [userId, next.transactionPinEnabled, row?.transaction_pin_hash ?? null, row?.transaction_pin_salt ?? null, Number(row?.transaction_pin_failed_attempts ?? 0), row?.transaction_pin_locked_until ?? null, next.twoFactorEnabled, next.biometricEnabled, existing?.createdAt ?? now, now])
+        INSERT INTO security_settings (user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, native_biometric_enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET transaction_pin_enabled = excluded.transaction_pin_enabled, two_factor_enabled = excluded.two_factor_enabled, biometric_enabled = excluded.biometric_enabled, native_biometric_enabled = excluded.native_biometric_enabled, updated_at = excluded.updated_at
+      `, [userId, next.transactionPinEnabled, row?.transaction_pin_hash ?? null, row?.transaction_pin_salt ?? null, Number(row?.transaction_pin_failed_attempts ?? 0), row?.transaction_pin_locked_until ?? null, next.twoFactorEnabled, next.biometricEnabled, next.nativeBiometricEnabled, existing?.createdAt ?? now, now])
     })
     const record = await getSecuritySettingsByUserId(userId)
     if (!record) throw new Error('Unable to persist security settings')
@@ -11201,26 +11377,31 @@ export async function upsertSecuritySettings(
   const existing = row ? mapSecuritySettingsRow(row) : null
   const now = new Date().toISOString()
   const hasTransactionPin = Boolean(row?.transaction_pin_hash && row?.transaction_pin_salt)
-  const biometricCredentialCount = Number((db.prepare('SELECT COUNT(*) AS count FROM biometric_credentials WHERE user_id = ?').get(userId) as { count?: number } | undefined)?.count ?? 0)
+  const webBiometricCredentialCount = Number((db.prepare('SELECT COUNT(*) AS count FROM biometric_credentials WHERE user_id = ?').get(userId) as { count?: number } | undefined)?.count ?? 0)
+  const nativeBiometricCredentialCount = Number((db.prepare('SELECT COUNT(*) AS count FROM native_biometric_devices WHERE user_id = ? AND revoked_at IS NULL').get(userId) as { count?: number } | undefined)?.count ?? 0)
   const requestedPinEnabled = typeof updates.transactionPinEnabled === 'boolean'
     ? updates.transactionPinEnabled
     : existing?.transactionPinEnabled ?? false
   const next = {
     transactionPinEnabled: hasTransactionPin ? requestedPinEnabled : false,
     twoFactorEnabled: updates.twoFactorEnabled ?? existing?.twoFactorEnabled ?? false,
-    biometricEnabled: biometricCredentialCount > 0
+    biometricEnabled: webBiometricCredentialCount > 0
       ? (updates.biometricEnabled ?? existing?.biometricEnabled ?? true)
+      : false,
+    nativeBiometricEnabled: nativeBiometricCredentialCount > 0
+      ? (updates.nativeBiometricEnabled ?? existing?.nativeBiometricEnabled ?? false)
       : false,
   }
 
   db.prepare(`
     INSERT INTO security_settings (
-      user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      user_id, transaction_pin_enabled, transaction_pin_hash, transaction_pin_salt, transaction_pin_failed_attempts, transaction_pin_locked_until, two_factor_enabled, biometric_enabled, native_biometric_enabled, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       transaction_pin_enabled = excluded.transaction_pin_enabled,
       two_factor_enabled = excluded.two_factor_enabled,
       biometric_enabled = excluded.biometric_enabled,
+      native_biometric_enabled = excluded.native_biometric_enabled,
       updated_at = excluded.updated_at
   `).run(
     userId,
@@ -11231,6 +11412,7 @@ export async function upsertSecuritySettings(
     row?.transaction_pin_locked_until ?? null,
     next.twoFactorEnabled ? 1 : 0,
     next.biometricEnabled ? 1 : 0,
+    next.nativeBiometricEnabled ? 1 : 0,
     existing?.createdAt ?? now,
     now
   )
@@ -11474,9 +11656,12 @@ export async function verifySensitiveActionAuthorization(
   }
 
   if (biometricApprovalToken) {
-    await consumeBiometricApproval(userId, biometricApprovalToken)
+    const approvalMethod = await consumeBiometricApproval(userId, biometricApprovalToken)
     const settings = await getSecuritySettingsByUserId(userId)
-    if (!settings?.hasBiometricCredential || !settings.biometricEnabled) {
+    const enabled = approvalMethod === 'native_android'
+      ? settings?.hasNativeBiometricCredential && settings.nativeBiometricEnabled
+      : settings?.hasWebBiometricCredential && settings.biometricEnabled
+    if (!enabled) {
       throw new Error('Biometric approval is not enabled for this account.')
     }
     return settings
