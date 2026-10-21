@@ -7,6 +7,9 @@ import { Buffer } from 'node:buffer'
  */
 export const MOBILE_APP_HOST = 'mafitapay.vercel.app'
 
+/** Production website domain and its www subdomain. */
+const PRODUCTION_WEB_HOSTS = ['mafitapay.com']
+
 /**
  * Debug signing certificate. Must stay in sync with public/.well-known/assetlinks.json.
  * Android WebView passkeys report origin `android:apk-key-hash:<base64url(SHA-256)>`,
@@ -71,7 +74,7 @@ function hostMatches(host: string, root: string) {
 }
 
 function allowedHosts(env: WebAuthnEnv) {
-  return [MOBILE_APP_HOST, hostnameOf(env.appUrl), hostnameOf(env.rpId), 'localhost', '127.0.0.1']
+  return [MOBILE_APP_HOST, ...PRODUCTION_WEB_HOSTS, hostnameOf(env.appUrl), hostnameOf(env.rpId), 'localhost', '127.0.0.1']
     .filter((host): host is string => Boolean(host))
 }
 

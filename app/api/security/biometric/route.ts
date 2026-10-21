@@ -15,9 +15,10 @@ export async function POST(req: Request) {
   const user = await requireUser()
   if (!user) return unauthorized()
 
+  let intent = 'request'
   try {
     const body = await req.json()
-    const intent = typeof body.intent === 'string' ? body.intent : ''
+    intent = typeof body.intent === 'string' ? body.intent : ''
     const origin = req.headers.get('origin') || new URL(req.url).origin
 
     if (intent === 'register_options') {
@@ -69,6 +70,12 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ error: 'Unsupported biometric intent.', success: false }, { status: 400 })
   } catch (error) {
+    console.warn('[webauthn] biometric request rejected', {
+      intent,
+      requestHost: req.headers.get('host') || '',
+      requestOrigin: req.headers.get('origin') || '',
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    })
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Biometric request failed.', success: false },
       { status: 400 }
