@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { syncCryptoDepositEventsOnce } from '@/lib/server/crypto-deposit-scanner'
 
 export const runtime = 'nodejs'
+// A scanner pass is capped at 45 seconds. Leave a small response margin above that limit.
+export const maxDuration = 60
 
 function isAuthorized(request: Request) {
   const expected = process.env.MAFITAPAY_JOB_SECRET
