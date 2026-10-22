@@ -3,6 +3,7 @@ import { requireAdminUser, unauthorized } from '@/lib/server/auth'
 import {
   forceScanDepositAddress,
   kickCryptoDepositScanner,
+  reconcileErc20DepositTransaction,
   syncCryptoDepositEventsOnce,
 } from '@/lib/server/crypto-deposit-scanner'
 import { getRecentSweepGasStats, runEvmTreasuryBatchConversion, sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
@@ -56,6 +57,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ data: result, success: true })
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Force scan failed', success: false }, { status: 400 })
+    }
+  }
+
+  if (intent === 'reconcile-erc20-transaction') {
+    const address = typeof body.address === 'string' ? body.address.trim() : ''
+    const txHash = typeof body.txHash === 'string' ? body.txHash.trim() : ''
+    const chain = typeof body.chain === 'string' ? body.chain.trim().toLowerCase() : ''
+    if (!address || !txHash || !chain) {
+      return NextResponse.json({ error: 'address, chain, and txHash are required', success: false }, { status: 400 })
+    }
+    try {
+      const result = await reconcileErc20DepositTransaction({
+        address,
+        chain: chain as any,
+        txHash,
+      })
+      return NextResponse.json({ data: result, success: true })
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Transaction reconciliation failed', success: false }, { status: 400 })
     }
   }
 

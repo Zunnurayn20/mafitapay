@@ -921,6 +921,69 @@ export async function processAlchemyErc20Activity(input: {
   return { processed: true, settled: result.settled, pairId: asset.pairId }
 }
 
+/** Reconcile a single transaction after an administrator has verified its ownership. */
+export async function reconcileErc20DepositTransaction(input: {
+  address: string
+  chain: ScanChain
+  txHash: string
+}) {
+  const address = await getCryptoDepositAddressByAddress(input.address.trim())
+  if (!address || address.addressFamily !== 'evm') throw new Error('Address is not a known EVM deposit address.')
+  if (!/^0x[0-9a-f]{64}$/i.test(input.txHash)) throw new Error('A valid transaction hash is required.')
+
+  const client: AnyClient = input.chain === 'polygon'
+    ? createPolygonClient()
+    : input.chain === 'base'
+      ? createBaseClient()
+      : input.chain === 'bsc'
+        ? createBscClient()
+        : input.chain === 'robinhood'
+          ? createRobinhoodClient()
+          : (() => { throw new Error('Unsupported EVM chain for deposit reconciliation.') })()
+  const receipt = await client.getTransactionReceipt({ hash: input.txHash as `0x${string}` })
+  if (receipt.status !== 'success') throw new Error('The transaction did not succeed on chain.')
+
+  const recipient = getAddress(address.address).toLowerCase()
+  for (const log of receipt.logs) {
+    const rawLog = log as typeof log & { topics: readonly string[]; data: string; address: string; logIndex: number }
+    if (rawLog.topics[0]?.toLowerCase() !== TRANSFER_EVENT_TOPIC || rawLog.topics.length < 3) continue
+    if (`0x${rawLog.topics[2].slice(-40)}`.toLowerCase() !== recipient) continue
+    const asset = getSupportedAssets().find((candidate) =>
+      candidate.chain === input.chain && candidate.kind === 'erc20' &&
+      typeof candidate.tokenAddress === 'string' && candidate.tokenAddress.toLowerCase() === rawLog.address.toLowerCase()
+    )
+    if (!asset || !/^0x[0-9a-f]{64}$/i.test(rawLog.data)) continue
+
+    const logIndex = Number(rawLog.logIndex)
+    if (!Number.isSafeInteger(logIndex) || logIndex < 0) continue
+    const externalEventId = `${input.chain}:${asset.pairId}:${input.txHash}:${logIndex}`
+    const result = await persistAndSettleDeposit({
+      asset,
+      address,
+      externalEventId,
+      amountUnits: BigInt(rawLog.data),
+      txHash: input.txHash,
+      blockNumber: receipt.blockNumber,
+      logIndex,
+      payload: {
+        type: 'admin_verified_erc20_receipt',
+        tokenAddress: rawLog.address,
+        from: `0x${rawLog.topics[1].slice(-40)}`,
+        to: address.address,
+      },
+    })
+    return {
+      processed: true,
+      settled: result.settled,
+      duplicate: result.duplicate,
+      pairId: asset.pairId,
+      amountCrypto: Number(formatUnits(BigInt(rawLog.data), asset.decimals)),
+      externalEventId,
+    }
+  }
+  throw new Error('No supported ERC-20 transfer to this deposit address was found in that transaction.')
+}
+
 export async function settleDirectCryptoDeposit(input: {
   event: CryptoDepositEvent
   asset: SupportedDepositAsset
