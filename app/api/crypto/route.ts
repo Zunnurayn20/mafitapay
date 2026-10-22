@@ -16,6 +16,7 @@ import { assertSuiTreasuryCanExecuteBuy, getSuiQuotedReceiveForBuy } from '@/lib
 import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
 import { ensureTonReceiptAutoSyncWatchdog } from '@/lib/server/ton-receipt-sync'
 import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
+import { isDepositableCryptoAsset } from '@/lib/crypto-deposit-assets'
 import { createPlatformCryptoCostSnapshot } from '@/lib/server/crypto-platform-cost'
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
 import { createCexDepositIntent } from '@/lib/server/data'
@@ -168,6 +169,9 @@ export async function POST(req: Request) {
   const requestedAsset = assets.find(item => item.id === pairId)
   if (!requestedAsset) {
     return NextResponse.json({ error: 'Crypto pair not found.', success: false }, { status: 404 })
+  }
+  if (action === 'sell' && !isDepositableCryptoAsset(requestedAsset)) {
+    return NextResponse.json({ error: 'Crypto deposits are not supported for this asset yet.', success: false }, { status: 400 })
   }
   try {
     await assertCryptoActionEnabled(requestedAsset, action)

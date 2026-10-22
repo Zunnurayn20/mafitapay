@@ -17,6 +17,26 @@ const EVM_DEPOSIT_NETWORKS = new Set([
   'robinhood',
 ])
 
+// Keep this aligned with the chain scanner and sweep adapter. An EVM-shaped address by itself
+// does not mean the backend can identify, credit, and safely sweep that asset.
+const SCANNED_CRYPTO_DEPOSIT_PAIRS = new Set([
+  'ETH_BASE',
+  'USDC_BASE',
+  'CNGN_BASE',
+  'RIZE_BASE',
+  'BNB_BSC',
+  'USDT_BSC',
+  'POL_POLYGON',
+  'USDC_POLYGON',
+  'USDT_POLYGON',
+  'ETH_ROBINHOOD',
+  'USDC_SOLANA',
+  'SOL_SOLANA',
+  'TON_TON',
+  'SUI_SUI',
+  'NEAR_NEAR',
+])
+
 export function getCryptoDepositAddressFamilyForAsset(
   asset?: CryptoAsset | null,
 ): CryptoDepositAddressFamily | null {
@@ -32,7 +52,7 @@ export function getCryptoDepositAddressFamilyForAsset(
 
 /** A pair can only be deposited against if we can derive an address for its chain. */
 export function isDepositableCryptoAsset(asset?: CryptoAsset | null) {
-  return Boolean(getCryptoDepositAddressFamilyForAsset(asset))
+  return Boolean(asset && SCANNED_CRYPTO_DEPOSIT_PAIRS.has(asset.id) && getCryptoDepositAddressFamilyForAsset(asset))
 }
 
 export type CryptoDepositAssetGroup = {

@@ -11,7 +11,7 @@ import {
 import { base, bsc, polygon } from 'viem/chains'
 import { Address as TonAddress, TonClient } from '@ton/ton'
 import { getBaseExecutorConfig } from '@/lib/server/base-executor'
-import { CNGN_BASE_TOKEN_ADDRESS } from '@/lib/routed-assets'
+import { CNGN_BASE_TOKEN_ADDRESS, RIZE_BASE_TOKEN_ADDRESS } from '@/lib/routed-assets'
 import { getBscExecutorConfig } from '@/lib/server/bsc-executor'
 import { sanitizeEvmRpcUrls } from '@/lib/server/evm-rpc'
 import { getRobinhoodRpcUrls, robinhoodChain } from '@/lib/server/robinhood-chain'
@@ -462,6 +462,15 @@ function getSupportedAssets(): SupportedDepositAsset[] {
       tokenAddress: CNGN_BASE_TOKEN_ADDRESS,
     },
     {
+      chain: 'base',
+      pairId: 'RIZE_BASE',
+      network: 'Base',
+      symbol: 'RIZE',
+      decimals: 18,
+      kind: 'erc20',
+      tokenAddress: RIZE_BASE_TOKEN_ADDRESS,
+    },
+    {
       chain: 'bsc',
       pairId: 'BNB_BSC',
       network: 'BSC',
@@ -721,9 +730,12 @@ async function persistAndSettleDeposit(input: {
         event: existing,
         asset: input.asset,
       })
-      const sweepResult = await sweepCryptoDepositEventSafely(direct)
-      console.log(`[crypto-deposit-scanner] re-try direct credit + sweep for ${input.externalEventId}: credited=${direct?.status !== 'unmatched'} sweep=${JSON.stringify(sweepResult)}`)
-      return { event: direct, settled: true, duplicate: true }
+      const credited = direct.status === 'matched'
+      const sweepResult = credited
+        ? await sweepCryptoDepositEventSafely(direct)
+        : { swept: false, reason: 'deposit_not_credited' }
+      console.log(`[crypto-deposit-scanner] re-try direct credit + sweep for ${input.externalEventId}: credited=${credited} sweep=${JSON.stringify(sweepResult)}`)
+      return { event: direct, settled: credited, duplicate: true }
     }
 
     await settleCryptoSellDeposit({
@@ -799,10 +811,13 @@ async function persistAndSettleDeposit(input: {
       event,
       asset: input.asset,
     })
-    const sweepResult = await sweepCryptoDepositEventSafely(direct)
+    const credited = direct.status === 'matched'
+    const sweepResult = credited
+      ? await sweepCryptoDepositEventSafely(direct)
+      : { swept: false, reason: 'deposit_not_credited' }
     // Extra visibility for the exact case the user reported (POL credit + sweep uncertainty)
-    console.log(`[crypto-deposit-scanner] direct NGN credit + sweep path completed for ${input.externalEventId}: credited=${direct?.status !== 'unmatched'} sweepResult=${JSON.stringify(sweepResult)}`)
-    return { event: direct, settled: true, duplicate: false }
+    console.log(`[crypto-deposit-scanner] direct NGN credit + sweep path completed for ${input.externalEventId}: credited=${credited} sweepResult=${JSON.stringify(sweepResult)}`)
+    return { event: direct, settled: credited, duplicate: false }
   }
 
   console.log(`[crypto-deposit-scanner] matched pending sell order ${order.id} for deposit ${input.externalEventId}`)
