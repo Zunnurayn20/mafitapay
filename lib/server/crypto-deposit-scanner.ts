@@ -1165,6 +1165,10 @@ async function scanErc20Deposits(input: {
     ? BigInt(16)
     : input.asset.chain === 'base'
       ? BigInt(25)
+      : input.asset.chain === 'polygon'
+        // Alchemy's free Polygon endpoint allows at most 10 blocks per eth_getLogs request.
+        // getLogsChunked treats this as a block difference, so 9 means 10 blocks inclusive.
+        ? BigInt(9)
       : BigInt(50)
   let { logs, coveredTo } = await getLogsChunked(input.client, {
     address: input.asset.tokenAddress as Address,
