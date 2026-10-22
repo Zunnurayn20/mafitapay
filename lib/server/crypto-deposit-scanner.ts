@@ -1177,10 +1177,10 @@ async function scanErc20Deposits(input: {
     toBlock,
   }, erc20ChunkSize)
 
-  // Alchemy's Polygon endpoint has returned successful but empty eth_getLogs responses for blocks
-  // that contain confirmed USDT transfers. Cross-check empty Polygon token scans against an
-  // independent provider so a false-empty response cannot silently skip customer deposits.
-  if (input.asset.chain === 'polygon' && logs.length === 0) {
+  // Alchemy's Polygon endpoint has returned false-empty responses and HTTP 429s. Cross-check
+  // empty or partially covered scans against an independent provider so neither case can silently
+  // skip customer deposits.
+  if (input.asset.chain === 'polygon' && (logs.length === 0 || coveredTo < toBlock)) {
     try {
       const fallbackClient = createPublicClient({
         chain: polygon,
@@ -1192,10 +1192,12 @@ async function scanErc20Deposits(input: {
         fromBlock,
         toBlock,
       }, erc20ChunkSize)
-      logs = fallbackResult.logs
-      coveredTo = fallbackResult.coveredTo
-      if (logs.length > 0) {
-        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: primary Polygon RPC returned no logs; independent RPC found ${logs.length} logs`)
+      if (fallbackResult.coveredTo >= coveredTo) {
+        logs = fallbackResult.logs
+        coveredTo = fallbackResult.coveredTo
+      }
+      if (fallbackResult.logs.length > 0 || fallbackResult.coveredTo > fromBlock - BigInt(1)) {
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: Polygon RPC coverage was incomplete; independent RPC covered through ${fallbackResult.coveredTo} with ${fallbackResult.logs.length} logs`)
       }
       if (coveredTo < fromBlock) {
         console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent Polygon RPC did not cover the scan window; cursor will not advance`)
