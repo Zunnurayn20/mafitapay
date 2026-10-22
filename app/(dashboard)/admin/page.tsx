@@ -213,9 +213,14 @@ export default async function AdminOverviewPage() {
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-[rgba(46,170,92,.28)] bg-[rgba(46,170,92,.08)] p-3">
               <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--green2)]">Primary · Base treasury</div>
-              <div className="mt-2 font-mono text-xl font-bold text-[var(--green2)]">
+              <div className="mt-2 font-mono text-base font-bold text-[var(--text)]">
                 {liquidity.baseTreasury ? `${(Number(liquidity.baseTreasury.usdcUnits) / 1_000_000).toFixed(6)} USDC` : 'Unavailable'}
               </div>
+              {liquidity.baseTreasury && (
+                <div className="mt-1 truncate font-mono text-[10px] text-[var(--muted)]" title={liquidity.baseTreasury.walletAddress}>
+                  {liquidity.baseTreasury.walletAddress}
+                </div>
+              )}
               <div className="mt-1 text-[10px] text-[var(--green2)]">Live USDC balance · Base executor wallet</div>
             </div>
             <div className="rounded-md border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.08)] p-3">
