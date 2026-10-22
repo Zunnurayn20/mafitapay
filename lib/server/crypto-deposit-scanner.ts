@@ -193,6 +193,7 @@ const SECONDARY_GAP_LOOKBACK_BLOCKS = BigInt(
   Math.max(256, Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SECONDARY_GAP_LOOKBACK_BLOCKS ?? 512) || 512)
 )
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
+const TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 
 const DEFAULT_POLYGON_RPC_URL = 'https://rpc.ankr.com/polygon' // fallback only; prefer MAFITAPAY_POLYGON_RPC_URLS with Alchemy
 
@@ -833,6 +834,91 @@ async function persistAndSettleDeposit(input: {
   await sweepCryptoDepositEventSafely(event)
 
   return { event, settled: true, duplicate: false }
+}
+
+/** Process the signed transfer log already included in an Alchemy Address Activity webhook.
+ * This avoids depending on eth_getLogs indexing for the webhook-triggered deposit. */
+export async function processAlchemyErc20Activity(input: {
+  address: string
+  chain: ScanChain
+  activity: {
+    toAddress?: unknown
+    rawContract?: { address?: unknown }
+    log?: {
+      address?: unknown
+      topics?: unknown
+      data?: unknown
+      blockNumber?: unknown
+      transactionHash?: unknown
+      logIndex?: unknown
+      removed?: unknown
+    }
+    blockNum?: unknown
+  }
+}) {
+  const address = await getCryptoDepositAddressByAddress(input.address.trim())
+  if (!address || address.addressFamily !== 'evm') return { processed: false, settled: false }
+
+  const activity = input.activity
+  const log = activity.log
+  if (!log || log.removed === true || typeof activity.toAddress !== 'string' || typeof log.data !== 'string') {
+    return { processed: false, settled: false }
+  }
+  const topics = Array.isArray(log.topics) ? log.topics.filter((topic): topic is string => typeof topic === 'string') : []
+  if (topics.length < 3 || topics[0]?.toLowerCase() !== TRANSFER_EVENT_TOPIC) {
+    return { processed: false, settled: false }
+  }
+
+  const toTopic = topics[2]
+  const to = `0x${toTopic.slice(-40)}`
+  let normalizedTo: string
+  let normalizedAddress: string
+  try {
+    normalizedTo = getAddress(to).toLowerCase()
+    normalizedAddress = getAddress(address.address).toLowerCase()
+  } catch {
+    return { processed: false, settled: false }
+  }
+  if (normalizedTo !== normalizedAddress || activity.toAddress.toLowerCase() !== normalizedAddress) {
+    return { processed: false, settled: false }
+  }
+
+  const contract = typeof log.address === 'string' ? log.address : activity.rawContract?.address
+  if (typeof contract !== 'string') return { processed: false, settled: false }
+  const asset = getSupportedAssets().find((candidate) =>
+    candidate.chain === input.chain && candidate.kind === 'erc20' &&
+    typeof candidate.tokenAddress === 'string' && candidate.tokenAddress.toLowerCase() === contract.toLowerCase()
+  )
+  if (!asset) return { processed: false, settled: false }
+
+  const transactionHash = typeof log.transactionHash === 'string' ? log.transactionHash : ''
+  if (!/^0x[0-9a-f]{64}$/i.test(transactionHash) || !/^0x[0-9a-f]{64}$/i.test(log.data)) {
+    return { processed: false, settled: false }
+  }
+  const logIndex = typeof log.logIndex === 'string' && /^0x[0-9a-f]+$/i.test(log.logIndex)
+    ? Number(BigInt(log.logIndex))
+    : typeof log.logIndex === 'number' && Number.isSafeInteger(log.logIndex) ? log.logIndex : null
+  if (logIndex === null || !Number.isSafeInteger(logIndex) || logIndex < 0) {
+    return { processed: false, settled: false }
+  }
+  const blockNumber = typeof log.blockNumber === 'string' && /^0x[0-9a-f]+$/i.test(log.blockNumber)
+    ? BigInt(log.blockNumber)
+    : typeof activity.blockNum === 'string' && /^0x[0-9a-f]+$/i.test(activity.blockNum)
+      ? BigInt(activity.blockNum)
+      : undefined
+
+  const from = topics[1]?.length >= 42 ? `0x${topics[1].slice(-40)}` : ''
+  const result = await persistAndSettleDeposit({
+    asset,
+    address,
+    externalEventId: `${input.chain}:${asset.pairId}:${transactionHash}:${logIndex}`,
+    amountUnits: BigInt(log.data),
+    txHash: transactionHash,
+    blockNumber,
+    logIndex,
+    payload: { type: 'alchemy_webhook_erc20_transfer', tokenAddress: contract, from, to: address.address },
+  })
+  return { processed: true, settled: result.settled, pairId: asset.pairId }
 }
 
 export async function settleDirectCryptoDeposit(input: {

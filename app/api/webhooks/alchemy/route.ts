@@ -1,13 +1,24 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getCryptoDepositAddressByAddress } from '@/lib/server/data'
-import { forceScanDepositAddress } from '@/lib/server/crypto-deposit-scanner'
+import { forceScanDepositAddress, processAlchemyErc20Activity } from '@/lib/server/crypto-deposit-scanner'
 import { getAlchemyWebhookChain, getAlchemyWebhookSigningKey } from '@/lib/server/alchemy-address-webhooks'
 
 export const runtime = 'nodejs'
 
 type AlchemyActivity = {
   toAddress?: unknown
+  rawContract?: { address?: unknown }
+  blockNum?: unknown
+  log?: {
+    address?: unknown
+    topics?: unknown
+    data?: unknown
+    blockNumber?: unknown
+    transactionHash?: unknown
+    logIndex?: unknown
+    removed?: unknown
+  }
 }
 
 type AlchemyPayload = {
@@ -60,6 +71,29 @@ export async function POST(request: Request) {
 
   let scanned = 0
   let ignored = 0
+  let processedFromWebhook = 0
+  const webhookProcessedAddresses = new Set<string>()
+  for (const item of activity) {
+    const address = typeof item?.toAddress === 'string' ? item.toAddress.trim() : ''
+    if (!address) continue
+    const record = await getCryptoDepositAddressByAddress(address)
+    if (!record || record.addressFamily !== 'evm') continue
+    try {
+      const result = await processAlchemyErc20Activity({ address: record.address, chain, activity: item })
+      if (result.processed) {
+        processedFromWebhook += 1
+        webhookProcessedAddresses.add(record.address.toLowerCase())
+      }
+    } catch (error) {
+      console.error('[alchemy-webhook] signed transfer processing failed', {
+        chain,
+        address: record.address,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return NextResponse.json({ success: false, error: 'Deposit processing failed; please retry.' }, { status: 500 })
+    }
+  }
+
   for (const address of addresses) {
     // Address Activity includes outbound activity too. Only scan a known receiving address.
     const record = await getCryptoDepositAddressByAddress(address)
@@ -72,6 +106,7 @@ export async function POST(request: Request) {
       ignored += 1
       continue
     }
+    if (webhookProcessedAddresses.has(record.address.toLowerCase())) continue
     try {
       await forceScanDepositAddress({ address: record.address, chain, backgroundReconcile: false })
       scanned += 1
@@ -83,6 +118,6 @@ export async function POST(request: Request) {
     }
   }
 
-  console.log(`[alchemy-webhook] processed chain=${chain} receivingAddresses=${addresses.length} scanned=${scanned} ignored=${ignored}`)
-  return NextResponse.json({ success: true, scanned, ignored })
+  console.log(`[alchemy-webhook] processed chain=${chain} receivingAddresses=${addresses.length} webhookTransfers=${processedFromWebhook} scanned=${scanned} ignored=${ignored}`)
+  return NextResponse.json({ success: true, webhookTransfers: processedFromWebhook, scanned, ignored })
 }
