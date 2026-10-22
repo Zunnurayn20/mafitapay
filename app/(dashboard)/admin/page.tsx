@@ -209,13 +209,32 @@ export default async function AdminOverviewPage() {
         )}
         <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-3">
           <div className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Crypto treasury balances</div>
-          <p className="mt-1 text-xs text-[var(--muted)]">Base USDC is MafitaPay’s primary crypto liquidity. Local BSC and Polygon inventory is shown separately with its estimated Base-USDC conversion value. Crypto is not included in the NGN coverage total until we deliberately convert it.</p>
-          <div className="mt-2 rounded-md border border-[rgba(46,170,92,.28)] bg-[rgba(46,170,92,.08)] p-3">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--green2)]">Primary Base USDC treasury</div>
-            <div className="mt-1 font-mono text-xl font-bold text-[var(--green2)]">
-              {liquidity.baseTreasury ? `${(Number(liquidity.baseTreasury.usdcUnits) / 1_000_000).toFixed(6)} USDC` : 'Unavailable'}
+          <p className="mt-1 text-xs text-[var(--muted)]">Base USDC is the primary crypto liquidity treasury; TON has a separate treasury for TON network payouts. Local BSC and Polygon inventory is shown below with its estimated Base-USDC conversion value. Crypto is not included in NGN coverage until deliberately converted.</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-md border border-[rgba(46,170,92,.28)] bg-[rgba(46,170,92,.08)] p-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--green2)]">Primary · Base treasury</div>
+              <div className="mt-2 font-mono text-xl font-bold text-[var(--green2)]">
+                {liquidity.baseTreasury ? `${(Number(liquidity.baseTreasury.usdcUnits) / 1_000_000).toFixed(6)} USDC` : 'Unavailable'}
+              </div>
+              <div className="mt-1 text-[10px] text-[var(--green2)]">Live USDC balance · Base executor wallet</div>
             </div>
-            <div className="mt-1 text-[10px] text-[var(--green2)]">Live balance in the Base executor wallet</div>
+            <div className="rounded-md border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.08)] p-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--gold2)]">Separate · TON treasury</div>
+              {liquidity.tonTreasury ? (
+                <>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-base font-bold text-[var(--text)]">
+                    <span>{(Number(liquidity.tonTreasury.tonNano) / 1_000_000_000).toFixed(4)} TON</span>
+                    <span>{(Number(liquidity.tonTreasury.usdtUnits) / 1_000_000).toFixed(4)} USDT</span>
+                  </div>
+                  <div className="mt-1 truncate font-mono text-[10px] text-[var(--muted)]" title={liquidity.tonTreasury.walletAddress}>
+                    {liquidity.tonTreasury.walletAddress}
+                  </div>
+                </>
+              ) : (
+                <div className="mt-2 font-mono text-xl font-bold text-[var(--muted)]">Unavailable</div>
+              )}
+              <div className="mt-1 text-[10px] text-[var(--gold2)]">Live TON gas and USDT payout balances</div>
+            </div>
           </div>
           {cryptoTreasuryItems.length === 0 ? (
             <div className="mt-2 text-xs text-[var(--muted)]">No readable BSC or Polygon treasury balance.</div>

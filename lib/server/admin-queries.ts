@@ -18,6 +18,7 @@ import { getAsbdataBalance } from '@/lib/server/asbdata-bills'
 import { getBardetechBalance } from '@/lib/server/bardetech-bills'
 import { runEvmTreasuryBatchConversion } from '@/lib/server/crypto-deposit-sweeper'
 import { getBaseTreasuryBalances } from '@/lib/server/base-executor'
+import { getTonTreasuryBalances } from '@/lib/server/ton-executor'
 import type { ProviderBalance } from '@/lib/server/provider-balance'
 import type { ProviderEvent, Transaction, User, Wallet } from '@/types'
 
@@ -194,7 +195,7 @@ export async function listAdminWalletRows(limit = 100): Promise<AdminWalletRow[]
 }
 
 export async function loadAdminOverviewData() {
-  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance, bardetechBalance, cryptoTreasury, baseTreasury] = await Promise.all([
+  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance, bardetechBalance, cryptoTreasury, baseTreasury, tonTreasury] = await Promise.all([
     listUsers(),
     listAdminWalletRows(100),
     listRecentTransactions(100),
@@ -209,6 +210,7 @@ export async function loadAdminOverviewData() {
     getBardetechBalance(),
     runEvmTreasuryBatchConversion({ dryRun: true, allowBelowThreshold: true }).catch(() => null),
     getBaseTreasuryBalances().catch(() => null),
+    getTonTreasuryBalances().catch(() => null),
   ])
 
   const today = new Date()
@@ -281,6 +283,7 @@ export async function loadAdminOverviewData() {
       coverage: liquidityCoverage,
       cryptoTreasury,
       baseTreasury,
+      tonTreasury,
     },
     stats: {
       usersToday,
