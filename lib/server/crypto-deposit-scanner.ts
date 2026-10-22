@@ -196,6 +196,7 @@ const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, addres
 const TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 
 const DEFAULT_POLYGON_RPC_URL = 'https://rpc.ankr.com/polygon' // fallback only; prefer MAFITAPAY_POLYGON_RPC_URLS with Alchemy
+const POLYGON_LOGS_FALLBACK_RPC_URL = 'https://polygon-bor-rpc.publicnode.com'
 
 // Control verbose on-chain deposit scanner logs (matched, persistAndSettle etc.)
 // Set MAFITAPAY_VERBOSE_DEPOSIT_SCANNER=1 to re-enable full on-chain spam (including TON).
@@ -1165,12 +1166,41 @@ async function scanErc20Deposits(input: {
     : input.asset.chain === 'base'
       ? BigInt(25)
       : BigInt(50)
-  const { logs, coveredTo } = await getLogsChunked(input.client, {
+  let { logs, coveredTo } = await getLogsChunked(input.client, {
     address: input.asset.tokenAddress as Address,
     event: TRANSFER_EVENT,
     fromBlock,
     toBlock,
   }, erc20ChunkSize)
+
+  // Alchemy's Polygon endpoint has returned successful but empty eth_getLogs responses for blocks
+  // that contain confirmed USDT transfers. Cross-check empty Polygon token scans against an
+  // independent provider so a false-empty response cannot silently skip customer deposits.
+  if (input.asset.chain === 'polygon' && logs.length === 0) {
+    try {
+      const fallbackClient = createPublicClient({
+        chain: polygon,
+        transport: http(POLYGON_LOGS_FALLBACK_RPC_URL, { retryCount: 0, timeout: 8_000 }),
+      })
+      const fallbackResult = await getLogsChunked(fallbackClient, {
+        address: input.asset.tokenAddress as Address,
+        event: TRANSFER_EVENT,
+        fromBlock,
+        toBlock,
+      }, erc20ChunkSize)
+      logs = fallbackResult.logs
+      coveredTo = fallbackResult.coveredTo
+      if (logs.length > 0) {
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: primary Polygon RPC returned no logs; independent RPC found ${logs.length} logs`)
+      }
+      if (coveredTo < fromBlock) {
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent Polygon RPC did not cover the scan window; cursor will not advance`)
+      }
+    } catch (error) {
+      coveredTo = fromBlock - BigInt(1)
+      console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent Polygon log scan failed; cursor will not advance:`, sanitizeErrorForLogs(error))
+    }
+  }
 
   let detected = 0
   let settled = 0

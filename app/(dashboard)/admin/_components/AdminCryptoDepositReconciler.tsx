@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 
 const CONFIRMED_ADDRESS = '0x37a8E877698aE7134E92eB2E85Fcd637a87aa6D6'
-const CONFIRMED_TX = '0x7bb43e78655368485431c742cba35aee7036e1849c68004b4b459bd7ccc1db87'
+const CONFIRMED_TX = '0x6586f00db894062b3f075037d3d861e652e2bcb20fb5f1e3e5e7935d036eea1c'
 
 export function AdminCryptoDepositReconciler() {
   const [address, setAddress] = useState(CONFIRMED_ADDRESS)
