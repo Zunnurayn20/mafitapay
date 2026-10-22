@@ -30,11 +30,13 @@ import { getLifiQuoteForConversion } from './lifi'
 import { sanitizePolygonRpcUrls } from '@/lib/server/crypto-deposit-scanner'
 import { createTonHttpAdapter, getTonExecutorConfig } from '@/lib/server/ton-executor'
 import {
-  claimCryptoDepositEventSweep,
+  claimCryptoDepositEventSweepGroup,
+  getCryptoTradingSettings,
   getPersistedCryptoMarketSnapshots,
   getCryptoDepositAddressSecretById,
-  markCryptoDepositEventSweepFailed,
-  markCryptoDepositEventSwept,
+  markCryptoDepositEventSweepGroupFailed,
+  markCryptoDepositEventSweepGroupSwept,
+  releaseCryptoDepositEventSweepGroup,
   updateCryptoDepositEventConversion,
   updateCryptoDepositEventSweepEconomics,
   appendCryptoDepositEventTreasuryConversion,
@@ -1450,23 +1452,41 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     return { swept: false, reason: 'already_swept', txHash: event.sweepTxHash }
   }
 
-  const claimed = await claimCryptoDepositEventSweep(event.externalEventId)
-  if (!claimed) {
-    console.log(`[crypto-deposit-sweeper] skip sweep: claim failed for ${event.externalEventId}`)
-    return { swept: false, reason: 'not_claimed' }
+  const asset = getSweepAsset(event.pairId)
+  if (!asset) {
+    console.warn(`[crypto-deposit-sweeper] unsupported pairId for sweep: ${event.pairId} (event=${event.externalEventId})`)
+    return { swept: false, reason: 'unsupported_pair' }
+  }
+  if (!event.addressId) {
+    return { swept: false, reason: 'missing_address_id' }
   }
 
+  const claimedEvents = await claimCryptoDepositEventSweepGroup({ addressId: event.addressId, pairId: event.pairId })
+  if (!claimedEvents.length) {
+    console.log(`[crypto-deposit-sweeper] skip sweep: no deposit events claimed for address=${event.addressId} pair=${event.pairId}`)
+    return { swept: false, reason: 'not_claimed' }
+  }
+  const claimedEventIds = claimedEvents.map(item => item.externalEventId)
+
   try {
-    console.log(`[crypto-deposit-sweeper] attempting sweep for event=${event.externalEventId} pair=${event.pairId} amount=${event.amountUnits}`)
-    const asset = getSweepAsset(event.pairId)
-    if (!asset) {
-      console.warn(`[crypto-deposit-sweeper] unsupported pairId for sweep: ${event.pairId} (event=${event.externalEventId})`)
-      throw new Error(`${event.pairId} is not supported for auto sweep yet.`)
+    const groupedAmountUnits = claimedEvents.reduce((sum, item) => sum + BigInt(item.amountUnits), BigInt(0))
+    const groupedCryptoAmount = claimedEvents.reduce((sum, item) => sum + Number(item.amountCrypto || 0), 0)
+    const [settings, marketSnapshots] = await Promise.all([
+      getCryptoTradingSettings(),
+      getPersistedCryptoMarketSnapshots([event.pairId]),
+    ])
+    const marketPriceUsd = Number(marketSnapshots[0]?.marketPriceUsd)
+    if (!Number.isFinite(marketPriceUsd) || marketPriceUsd <= 0) {
+      throw new Error(`A saved USD market price is unavailable for ${event.pairId}; the sweep remains queued.`)
+    }
+    const accumulatedUsdValue = groupedCryptoAmount * marketPriceUsd
+    if (settings.minimumSweepUsd > 0 && accumulatedUsdValue + 1e-8 < settings.minimumSweepUsd) {
+      await releaseCryptoDepositEventSweepGroup(claimedEventIds)
+      console.log(`[crypto-deposit-sweeper] holding ${claimedEvents.length} ${event.pairId} deposit(s) on address=${event.addressId}; accumulated value $${accumulatedUsdValue.toFixed(4)} is below configured $${settings.minimumSweepUsd.toFixed(2)} minimum`)
+      return { swept: false, reason: 'below_minimum', accumulatedUsdValue, minimumSweepUsd: settings.minimumSweepUsd }
     }
 
-    if (!event.addressId) {
-      throw new Error('Deposit address id is unavailable for sweep.')
-    }
+    console.log(`[crypto-deposit-sweeper] attempting accumulated sweep for ${claimedEvents.length} event(s), pair=${event.pairId} amount=${groupedAmountUnits}`)
 
     const secret = await getCryptoDepositAddressSecretById(event.addressId)
     if (!secret) throw new Error('Deposit address secret is unavailable for sweep.')
@@ -1548,7 +1568,7 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     } else {
       throw new Error(`No treasury resolution for chain ${asset.chain}`)
     }
-    const amountUnits = BigInt(event.amountUnits)
+    const amountUnits = groupedAmountUnits
     let hash: any
     if (privateKeyForEvm && asset.chain === 'base' && event.pairId !== 'USDC_BASE') {
       // For EVM family deposits (except USDC on Base), sweep by directly bridging/converting from the user's deposit address
@@ -1596,12 +1616,12 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
       hash = await sweepNative({ asset, privateKey: privateKeyForEvm, treasuryAddress: getAddress(treasuryAddress as string), amountUnits, externalEventId: event.externalEventId })
     }
 
-    await markCryptoDepositEventSwept({
-      externalEventId: event.externalEventId,
+    await markCryptoDepositEventSweepGroupSwept({
+      externalEventIds: claimedEventIds,
       txHash: hash,
     })
     console.info('[crypto-deposit-sweeper] swept', JSON.stringify({
-      eventId: event.id,
+      eventIds: claimedEvents.map(item => item.id),
       externalEventId: event.externalEventId,
       pairId: event.pairId,
       amountUnits: event.amountUnits,
@@ -1620,12 +1640,12 @@ export async function sweepCryptoDepositEvent(event: CryptoDepositEvent) {
     return { swept: true, txHash: hash }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Sweep failed.'
-    await markCryptoDepositEventSweepFailed({
-      externalEventId: event.externalEventId,
+    await markCryptoDepositEventSweepGroupFailed({
+      externalEventIds: claimedEventIds,
       error: message,
     })
     console.warn('[crypto-deposit-sweeper] failed', JSON.stringify({
-      eventId: event.id,
+      eventIds: claimedEvents.map(item => item.id),
       externalEventId: event.externalEventId,
       pairId: event.pairId,
       reason: message,

@@ -2152,6 +2152,7 @@ function initSchema(db: DatabaseSync) {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       buys_enabled INTEGER NOT NULL DEFAULT 1,
       sells_enabled INTEGER NOT NULL DEFAULT 1,
+      minimum_sweep_usd REAL NOT NULL DEFAULT 5,
       updated_by TEXT,
       updated_at TEXT NOT NULL
     );
@@ -2646,11 +2647,15 @@ function migrateSchema(db: DatabaseSync) {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       buys_enabled INTEGER NOT NULL DEFAULT 1,
       sells_enabled INTEGER NOT NULL DEFAULT 1,
+      minimum_sweep_usd REAL NOT NULL DEFAULT 5,
       updated_by TEXT,
       updated_at TEXT NOT NULL
     );
-    INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, updated_at)
-    VALUES (1, 1, 1, '${new Date().toISOString()}')
+  `)
+  ensureColumn(db, 'crypto_trading_settings', 'minimum_sweep_usd', 'REAL NOT NULL DEFAULT 5')
+  db.exec(`
+    INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, minimum_sweep_usd, updated_at)
+    VALUES (1, 1, 1, 5, '${new Date().toISOString()}')
     ON CONFLICT(id) DO NOTHING;
   `)
   db.exec(`
@@ -6686,6 +6691,7 @@ export async function getCryptoDepositEventByExternalId(externalEventId: string)
 export async function listCryptoDepositEvents(input: {
   limit?: number
   userId?: string
+  addressId?: string
   pairId?: string
   status?: CryptoDepositEvent['status']
   sweepStatus?: string
@@ -6697,6 +6703,10 @@ export async function listCryptoDepositEvents(input: {
   if (input.userId) {
     sql += ` AND user_id = ?`
     params.push(input.userId)
+  }
+  if (input.addressId) {
+    sql += ` AND address_id = ?`
+    params.push(input.addressId)
   }
   if (input.pairId) {
     sql += ` AND pair_id = ?`
@@ -7329,6 +7339,72 @@ export async function claimCryptoDepositEventSweep(externalEventId: string): Pro
   `).run(now, externalEventId)
   const event = await getCryptoDepositEventByExternalId(externalEventId)
   return event?.sweepStatus === 'sweeping' ? event : null
+}
+
+export async function claimCryptoDepositEventSweepGroup(input: { addressId: string; pairId: string }): Promise<CryptoDepositEvent[]> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CryptoDepositEventRow>(`
+      UPDATE crypto_deposit_events
+      SET sweep_status = 'sweeping', sweep_error = NULL, updated_at = ?
+      WHERE address_id = ? AND pair_id = ? AND status = 'matched' AND source = 'onchain'
+        AND (sweep_status IS NULL OR sweep_status IN ('pending', 'failed'))
+      RETURNING *
+    `, [now, input.addressId, input.pairId])
+    return result.rows.map(mapCryptoDepositEventRow)
+  }
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const rows = db.prepare(`
+      UPDATE crypto_deposit_events
+      SET sweep_status = 'sweeping', sweep_error = NULL, updated_at = ?
+      WHERE address_id = ? AND pair_id = ? AND status = 'matched' AND source = 'onchain'
+        AND (sweep_status IS NULL OR sweep_status IN ('pending', 'failed'))
+      RETURNING *
+    `).all(now, input.addressId, input.pairId) as CryptoDepositEventRow[]
+    db.exec('COMMIT')
+    return rows.map(mapCryptoDepositEventRow)
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export async function releaseCryptoDepositEventSweepGroup(externalEventIds: string[]): Promise<void> {
+  await updateCryptoDepositEventSweepGroup(externalEventIds, { status: 'pending' })
+}
+
+export async function markCryptoDepositEventSweepGroupSwept(input: { externalEventIds: string[]; txHash: string }): Promise<void> {
+  await updateCryptoDepositEventSweepGroup(input.externalEventIds, { status: 'swept', txHash: input.txHash })
+}
+
+export async function markCryptoDepositEventSweepGroupFailed(input: { externalEventIds: string[]; error: string }): Promise<void> {
+  await updateCryptoDepositEventSweepGroup(input.externalEventIds, { status: 'failed', error: input.error })
+}
+
+async function updateCryptoDepositEventSweepGroup(
+  externalEventIds: string[],
+  input: { status: 'pending' } | { status: 'swept'; txHash: string } | { status: 'failed'; error: string },
+) {
+  await ensureDbReady()
+  const ids = [...new Set(externalEventIds.filter(Boolean))].slice(0, 200)
+  if (!ids.length) return
+  const now = new Date().toISOString()
+  const placeholders = ids.map(() => '?').join(', ')
+  const params: Array<string> = input.status === 'pending'
+    ? [now, ...ids]
+    : input.status === 'swept'
+      ? [input.txHash, now, now, ...ids]
+      : [input.error.slice(0, 500), now, ...ids]
+  const sql = input.status === 'pending'
+    ? `UPDATE crypto_deposit_events SET sweep_status = 'pending', sweep_error = NULL, updated_at = ? WHERE sweep_status = 'sweeping' AND external_event_id IN (${placeholders})`
+    : input.status === 'swept'
+      ? `UPDATE crypto_deposit_events SET sweep_status = 'swept', sweep_tx_hash = ?, sweep_error = NULL, swept_at = ?, updated_at = ? WHERE sweep_status = 'sweeping' AND external_event_id IN (${placeholders})`
+      : `UPDATE crypto_deposit_events SET sweep_status = 'failed', sweep_error = ?, updated_at = ? WHERE sweep_status = 'sweeping' AND external_event_id IN (${placeholders})`
+  if (isPostgresEnabled()) await queryPostgres(sql, params)
+  else getDb().prepare(sql).run(...params)
 }
 
 export async function markCryptoDepositEventSwept(input: {
@@ -9177,6 +9253,7 @@ export async function getCryptoAssetsForAdmin(): Promise<CryptoAsset[]> {
 export type CryptoTradingSettings = {
   buysEnabled: boolean
   sellsEnabled: boolean
+  minimumSweepUsd: number
   updatedBy?: string
   updatedAt: string
 }
@@ -9184,44 +9261,47 @@ export type CryptoTradingSettings = {
 export async function getCryptoTradingSettings(): Promise<CryptoTradingSettings> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
-    const result = await queryPostgres<{ buys_enabled: boolean; sells_enabled: boolean; updated_by: string | null; updated_at: string }>(
-      'SELECT buys_enabled, sells_enabled, updated_by, updated_at FROM crypto_trading_settings WHERE id = ? LIMIT 1', [1]
+    const result = await queryPostgres<{ buys_enabled: boolean; sells_enabled: boolean; minimum_sweep_usd: number | string; updated_by: string | null; updated_at: string }>(
+      'SELECT buys_enabled, sells_enabled, minimum_sweep_usd, updated_by, updated_at FROM crypto_trading_settings WHERE id = ? LIMIT 1', [1]
     )
     const row = result.rows[0]
     return row
-      ? { buysEnabled: Boolean(row.buys_enabled), sellsEnabled: Boolean(row.sells_enabled), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
-      : { buysEnabled: true, sellsEnabled: true, updatedAt: new Date(0).toISOString() }
+      ? { buysEnabled: Boolean(row.buys_enabled), sellsEnabled: Boolean(row.sells_enabled), minimumSweepUsd: Number(row.minimum_sweep_usd), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
+      : { buysEnabled: true, sellsEnabled: true, minimumSweepUsd: 5, updatedAt: new Date(0).toISOString() }
   }
-  const row = getDb().prepare('SELECT buys_enabled, sells_enabled, updated_by, updated_at FROM crypto_trading_settings WHERE id = 1').get() as {
-    buys_enabled: number; sells_enabled: number; updated_by: string | null; updated_at: string
+  const row = getDb().prepare('SELECT buys_enabled, sells_enabled, minimum_sweep_usd, updated_by, updated_at FROM crypto_trading_settings WHERE id = 1').get() as {
+    buys_enabled: number; sells_enabled: number; minimum_sweep_usd: number; updated_by: string | null; updated_at: string
   } | undefined
   return row
-    ? { buysEnabled: Boolean(row.buys_enabled), sellsEnabled: Boolean(row.sells_enabled), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
-    : { buysEnabled: true, sellsEnabled: true, updatedAt: new Date(0).toISOString() }
+    ? { buysEnabled: Boolean(row.buys_enabled), sellsEnabled: Boolean(row.sells_enabled), minimumSweepUsd: Number(row.minimum_sweep_usd), updatedBy: row.updated_by ?? undefined, updatedAt: row.updated_at }
+    : { buysEnabled: true, sellsEnabled: true, minimumSweepUsd: 5, updatedAt: new Date(0).toISOString() }
 }
 
-export async function updateCryptoTradingSettings(input: { buysEnabled?: boolean; sellsEnabled?: boolean; updatedBy: string }) {
+export async function updateCryptoTradingSettings(input: { buysEnabled?: boolean; sellsEnabled?: boolean; minimumSweepUsd?: number; updatedBy: string }) {
   const current = await getCryptoTradingSettings()
   const next = {
     buysEnabled: input.buysEnabled ?? current.buysEnabled,
     sellsEnabled: input.sellsEnabled ?? current.sellsEnabled,
+    minimumSweepUsd: input.minimumSweepUsd ?? current.minimumSweepUsd,
     updatedBy: input.updatedBy,
     updatedAt: new Date().toISOString(),
   }
   if (isPostgresEnabled()) {
     await queryPostgres(`
-      INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, minimum_sweep_usd, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT (id) DO UPDATE SET buys_enabled = excluded.buys_enabled, sells_enabled = excluded.sells_enabled,
+        minimum_sweep_usd = excluded.minimum_sweep_usd,
         updated_by = excluded.updated_by, updated_at = excluded.updated_at
-    `, [1, next.buysEnabled, next.sellsEnabled, next.updatedBy, next.updatedAt])
+    `, [1, next.buysEnabled, next.sellsEnabled, next.minimumSweepUsd, next.updatedBy, next.updatedAt])
   } else {
     getDb().prepare(`
-      INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, updated_by, updated_at)
-      VALUES (1, ?, ?, ?, ?)
+      INSERT INTO crypto_trading_settings (id, buys_enabled, sells_enabled, minimum_sweep_usd, updated_by, updated_at)
+      VALUES (1, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET buys_enabled = excluded.buys_enabled, sells_enabled = excluded.sells_enabled,
+        minimum_sweep_usd = excluded.minimum_sweep_usd,
         updated_by = excluded.updated_by, updated_at = excluded.updated_at
-    `).run(next.buysEnabled ? 1 : 0, next.sellsEnabled ? 1 : 0, next.updatedBy, next.updatedAt)
+    `).run(next.buysEnabled ? 1 : 0, next.sellsEnabled ? 1 : 0, next.minimumSweepUsd, next.updatedBy, next.updatedAt)
   }
   return next
 }

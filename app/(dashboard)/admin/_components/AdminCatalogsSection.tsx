@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
@@ -100,6 +100,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
   const [selectedRewardRuleId, setSelectedRewardRuleId] = useState<string | null>(null)
   const [showNewBillProviderForm, setShowNewBillProviderForm] = useState(false)
   const [selectedBillProviderId, setSelectedBillProviderId] = useState<string | null>(null)
+  const [minimumSweepDraft, setMinimumSweepDraft] = useState('5')
   const {
     CRYPTO_NETWORK_OPTIONS,
     CRYPTO_EXECUTION_RAIL_OPTIONS,
@@ -120,6 +121,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     cryptoTradingSettings,
     savingCryptoSetting,
     setCryptoTradingSetting,
+    setCryptoMinimumSweepUsd,
     saveCryptoPair,
     savingCryptoPairId,
     discardCryptoPairEdits,
@@ -188,6 +190,10 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     saveConfig,
     saving,
   } = workspace
+
+  useEffect(() => {
+    setMinimumSweepDraft(String(cryptoTradingSettings.minimumSweepUsd))
+  }, [cryptoTradingSettings.minimumSweepUsd])
   const showAssets = !submodule || submodule === 'assets'
   const showRewards = !submodule || submodule === 'rewards'
   const showBills = !submodule || submodule === 'bills'
@@ -335,6 +341,36 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               disabled={savingCryptoSetting !== null}
               onChange={checked => void setCryptoTradingSetting('sellsEnabled', checked)}
             />
+          </div>
+          <div className="mt-4 flex flex-col gap-3 border-t border-[var(--border)] pt-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-xl">
+              <label htmlFor="crypto-minimum-sweep-usd" className="text-[11px] font-semibold text-[var(--text)]">Minimum automatic sweep (USD)</label>
+              <div className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
+                Customer deposits are credited as usual. Smaller on-chain deposits accumulate per address and asset until their combined value reaches this amount. Set to $0 to sweep every deposit.
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="flex h-10 w-32 items-center rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 text-xs text-[var(--muted)]">
+                <span className="mr-2">$</span>
+                <input
+                  id="crypto-minimum-sweep-usd"
+                  aria-label="Minimum automatic sweep amount in US dollars"
+                  type="number"
+                  min="0"
+                  max="100000"
+                  step="0.01"
+                  value={minimumSweepDraft}
+                  onChange={event => setMinimumSweepDraft(event.target.value)}
+                  className="w-full bg-transparent text-[var(--text)] outline-none"
+                />
+              </div>
+              <Button
+                onClick={() => void setCryptoMinimumSweepUsd(Number(minimumSweepDraft))}
+                disabled={savingCryptoSetting !== null || minimumSweepDraft.trim() === '' || !Number.isFinite(Number(minimumSweepDraft)) || Number(minimumSweepDraft) < 0 || Number(minimumSweepDraft) > 100000 || Math.abs(Math.round(Number(minimumSweepDraft) * 100) - Number(minimumSweepDraft) * 100) > 1e-8}
+              >
+                {savingCryptoSetting === 'minimumSweepUsd' ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
           </div>
         </div>}
         <div className="mb-3 rounded-lg border border-[rgba(202,165,96,.25)] bg-[rgba(202,165,96,.06)] px-4 py-3 text-[11px] leading-relaxed text-[var(--text)]">

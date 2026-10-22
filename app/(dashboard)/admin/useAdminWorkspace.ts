@@ -132,6 +132,7 @@ type CryptoMarketHealth = {
 type CryptoTradingSettings = {
   buysEnabled: boolean
   sellsEnabled: boolean
+  minimumSweepUsd: number
   updatedBy?: string
   updatedAt: string
 }
@@ -239,8 +240,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
   const [authorized, setAuthorized] = useState(true)
   const [saving, setSaving] = useState<AdminKey | null>(null)
   const [savingCryptoPricing, setSavingCryptoPricing] = useState(false)
-  const [cryptoTradingSettings, setCryptoTradingSettings] = useState<CryptoTradingSettings>({ buysEnabled: true, sellsEnabled: true, updatedAt: '' })
-  const [savingCryptoSetting, setSavingCryptoSetting] = useState<'buysEnabled' | 'sellsEnabled' | null>(null)
+  const [cryptoTradingSettings, setCryptoTradingSettings] = useState<CryptoTradingSettings>({ buysEnabled: true, sellsEnabled: true, minimumSweepUsd: 5, updatedAt: '' })
+  const [savingCryptoSetting, setSavingCryptoSetting] = useState<'buysEnabled' | 'sellsEnabled' | 'minimumSweepUsd' | null>(null)
   const [users, setUsers] = useState<User[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([])
@@ -466,7 +467,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
           if (!active) return
           const nextAssets = Array.isArray(loadedCryptoPricing) ? loadedCryptoPricing : []
           adoptPersistedCryptoPricing(nextAssets)
-          setCryptoTradingSettings(loadedTradingSettings ?? { buysEnabled: true, sellsEnabled: true, updatedAt: '' })
+          setCryptoTradingSettings(loadedTradingSettings ?? { buysEnabled: true, sellsEnabled: true, minimumSweepUsd: 5, updatedAt: '' })
           setDrafts(current => ({ ...current, assets: JSON.stringify(nextAssets, null, 2) }))
           return
         }
@@ -721,6 +722,28 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       showToast(`${key === 'buysEnabled' ? 'Crypto buys' : 'Crypto sells'} ${value ? 'enabled' : 'paused'}.`)
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Crypto trading setting could not be saved.', 'error')
+    } finally {
+      setSavingCryptoSetting(null)
+    }
+  }
+
+  async function setCryptoMinimumSweepUsd(value: number) {
+    setSavingCryptoSetting('minimumSweepUsd')
+    try {
+      const response = await fetch('/api/admin/crypto-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ minimumSweepUsd: value }),
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.success === false) throw new Error(payload.error || 'Minimum sweep amount could not be saved.')
+      const next = payload.data as CryptoTradingSettings
+      setCryptoTradingSettings(next)
+      primeAdminFetchCache('/api/admin/crypto-settings', next)
+      showToast(`Automatic sweep minimum set to $${next.minimumSweepUsd.toFixed(2)}.`)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Minimum sweep amount could not be saved.', 'error')
     } finally {
       setSavingCryptoSetting(null)
     }
@@ -1758,6 +1781,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     cryptoTradingSettings,
     savingCryptoSetting,
     setCryptoTradingSetting,
+    setCryptoMinimumSweepUsd,
     users,
     auditLogs,
     providerEvents,
