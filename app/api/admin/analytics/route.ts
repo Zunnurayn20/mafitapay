@@ -6,6 +6,11 @@ import type { Transaction, TransactionStatus, TransactionType } from '@/types'
 const BILL_TYPES = new Set<TransactionType>(['airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water'])
 const MONEY_IN_TYPES = new Set<TransactionType>(['deposit', 'transfer_in', 'p2p_deposit', 'admin_credit', 'crypto_sell', 'reward_bonus', 'referral_bonus'])
 const MONEY_OUT_TYPES = new Set<TransactionType>(['withdrawal', 'transfer_out', 'p2p_withdrawal', 'admin_debit', 'crypto_buy', ...BILL_TYPES])
+// This metric represents customer transaction activity, not every ledger entry. Internal
+// transfers are counted once from the sender's transfer_out record; transfer_in is the other
+// ledger side of the same movement. Admin adjustments and rewards are wallet funding/adjustment
+// entries rather than customer transaction volume.
+const NON_VOLUME_TYPES = new Set<TransactionType>(['transfer_in', 'admin_credit', 'admin_debit', 'reward_bonus', 'referral_bonus'])
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function roundMoney(value: number) {
@@ -45,7 +50,10 @@ export async function GET() {
   const successfulTransactions = snapshot.transactions.filter(item => item.status === 'success')
   const sumTypes = (types: Set<TransactionType>) => roundMoney(successfulTransactions
     .filter(item => types.has(item.type))
-    .reduce((total, item) => total + item.amount, 0))
+    .reduce((total, item) => total + Math.abs(item.amount), 0))
+  const successfulVolume = (rows: typeof successfulTransactions) => roundMoney(rows
+    .filter(item => !NON_VOLUME_TYPES.has(item.type))
+    .reduce((total, item) => total + Math.abs(item.amount), 0))
   const feeTotal = roundMoney(successfulTransactions.reduce((total, item) => total + item.fee, 0))
 
   const daily = days.map(day => {
@@ -53,13 +61,13 @@ export async function GET() {
     const successful = records.filter(item => item.status === 'success')
     const amountForTypes = (types: Set<TransactionType>) => successful
       .filter(item => types.has(item.type))
-      .reduce((total, item) => total + item.amount, 0)
+      .reduce((total, item) => total + Math.abs(item.amount), 0)
     return {
       day,
       label: dayLabel(day),
       count: records.reduce((total, item) => total + item.count, 0),
       successfulCount: successful.reduce((total, item) => total + item.count, 0),
-      volume: roundMoney(successful.reduce((total, item) => total + item.amount, 0)),
+      volume: successfulVolume(successful),
       moneyIn: roundMoney(amountForTypes(MONEY_IN_TYPES)),
       moneyOut: roundMoney(amountForTypes(MONEY_OUT_TYPES)),
       fees: roundMoney(successful.reduce((total, item) => total + item.fee, 0)),
@@ -78,7 +86,7 @@ export async function GET() {
     acc[bucket].count += item.count
     if (item.status === 'success') {
       acc[bucket].success += item.count
-      acc[bucket].volume += item.amount
+      if (!NON_VOLUME_TYPES.has(item.type)) acc[bucket].volume += Math.abs(item.amount)
     }
     if (item.status === 'failed') acc[bucket].failed += item.count
     return acc
@@ -173,7 +181,7 @@ export async function GET() {
         lockedBalance: walletSummary.locked,
         fundingAccountCoverage: walletSummary.fundingAccountCoverage,
         transactionCount,
-        successfulVolume: roundMoney(successfulTransactions.reduce((total, item) => total + item.amount, 0)),
+        successfulVolume: successfulVolume(successfulTransactions),
         moneyIn: sumTypes(MONEY_IN_TYPES),
         moneyOut: sumTypes(MONEY_OUT_TYPES),
         fees: feeTotal,

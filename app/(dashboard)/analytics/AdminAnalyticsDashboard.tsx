@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Activity, AlertTriangle, ArrowDownLeft, ArrowUpRight, BadgeDollarSign, BarChart3, CheckCircle2, Clock3, CreditCard, RadioTower, ShieldCheck, Users } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import type { Transaction } from '@/types'
 
 type DailyPoint = {
@@ -97,6 +97,12 @@ const emptyPayload: AnalyticsPayload['data'] = {
   cryptoDeposits: { total: 0, matched: 0, unmatched: 0, ignored: 0, swept: 0, direct: 0, volumes: [] },
 }
 
+const VOLUME_COLORS = ['var(--gold)', 'var(--green)', 'var(--red2)', '#38bdf8', '#a78bfa', '#f97316', '#e879f9', '#94a3b8']
+
+function getVolumeColor(index: number) {
+  return VOLUME_COLORS[index % VOLUME_COLORS.length]
+}
+
 function formatNgn(value: number) {
   return `₦${value.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`
 }
@@ -149,8 +155,20 @@ export function AdminAnalyticsDashboard() {
 
   const data = payload?.data ?? emptyPayload
   const summary = data.summary
-  const maxDailyVolume = useMemo(() => Math.max(1, ...data.daily.map(item => item.volume)), [data.daily])
   const maxBucketVolume = useMemo(() => Math.max(1, ...data.byType.map(item => item.volume)), [data.byType])
+  const volumeSlices = useMemo(() => data.byType.filter(item => item.volume > 0), [data.byType])
+  const volumeTotal = useMemo(() => volumeSlices.reduce((total, item) => total + item.volume, 0), [volumeSlices])
+  const maxDailyMovement = useMemo(() => Math.max(1, ...data.daily.flatMap(item => [item.volume, item.moneyIn, item.moneyOut])), [data.daily])
+  const volumePieStyle = useMemo<CSSProperties>(() => {
+    if (volumeTotal <= 0) return { background: 'var(--clay)' }
+    let angle = 0
+    const stops = volumeSlices.map((item, index) => {
+      const start = angle
+      angle += item.volume / volumeTotal * 360
+      return `${getVolumeColor(index)} ${start}deg ${angle}deg`
+    })
+    return { background: `conic-gradient(${stops.join(', ')})` }
+  }, [volumeSlices, volumeTotal])
   const lastUpdated = payload?.generatedAt
     ? new Date(payload.generatedAt).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
     : 'Not loaded'
@@ -186,9 +204,9 @@ export function AdminAnalyticsDashboard() {
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={<BadgeDollarSign size={18} />} label="All-Time Successful Amount" value={formatNgn(summary.successfulVolume)} detail={`${formatNumber(data.statusCounts.success ?? 0)} successful transaction records`} tone="gold" />
-        <MetricCard icon={<ArrowDownLeft size={18} />} label="All-Time Money In" value={formatNgn(summary.moneyIn)} detail={`${formatNgn(summary.deposits)} deposits`} tone="green" />
-        <MetricCard icon={<ArrowUpRight size={18} />} label="All-Time Money Out" value={formatNgn(summary.moneyOut)} detail={`${formatNgn(summary.withdrawals)} withdrawals`} tone="red" />
+        <MetricCard icon={<BadgeDollarSign size={18} />} label="All-Time Transaction Volume" value={formatNgn(summary.successfulVolume)} detail="Successful customer transactions; internal transfers counted once" tone="gold" />
+        <MetricCard icon={<ArrowDownLeft size={18} />} label="All-Time Wallet Credits" value={formatNgn(summary.moneyIn)} detail="Deposits, transfers, rewards, and admin credits" tone="green" />
+        <MetricCard icon={<ArrowUpRight size={18} />} label="All-Time Wallet Debits" value={formatNgn(summary.moneyOut)} detail="Payouts, transfers, bills, crypto buys, and admin debits" tone="red" />
         <MetricCard icon={<CreditCard size={18} />} label="Customer NGN Balance" value={formatNgn(summary.walletBalance)} detail={`${formatNgn(summary.lockedBalance)} locked`} tone="blue" />
         <MetricCard icon={<Users size={18} />} label="Users" value={formatNumber(summary.users)} detail={`${formatNumber(summary.activeUsers)} active · ${formatNumber(summary.verifiedUsers)} verified`} tone="plain" />
         <MetricCard icon={<ShieldCheck size={18} />} label="KYC Pending" value={formatNumber(summary.pendingKyc)} detail={`${summary.fundingAccountCoverage}% funding account coverage`} tone="gold" />
@@ -198,14 +216,14 @@ export function AdminAnalyticsDashboard() {
 
       <section className="grid gap-4 xl:grid-cols-[1.35fr_.65fr]">
         <Card className="p-4" pattern="soft">
-          <SectionHeader title="14-Day Money Movement" detail="Successful transaction amounts and customer money in/out, by UTC date." />
+          <SectionHeader title="14-Day Money Movement" detail="Successful customer transaction volume and wallet credits/debits, by UTC date." />
           <div className="mt-4 flex h-64 items-end gap-2 overflow-x-auto pb-2">
             {data.daily.map(point => (
               <div key={point.day} className="flex min-w-14 flex-1 flex-col items-center gap-2">
                 <div className="flex h-48 w-full items-end gap-1">
-                  <div className="flex-1 bg-[var(--gold)]" style={{ height: `${Math.max(4, (point.volume / maxDailyVolume) * 100)}%` }} title={`Volume ${formatNgn(point.volume)}`} />
-                  <div className="flex-1 bg-[var(--green)]" style={{ height: `${Math.max(4, (point.moneyIn / maxDailyVolume) * 100)}%` }} title={`In ${formatNgn(point.moneyIn)}`} />
-                  <div className="flex-1 bg-[var(--red2)]" style={{ height: `${Math.max(4, (point.moneyOut / maxDailyVolume) * 100)}%` }} title={`Out ${formatNgn(point.moneyOut)}`} />
+                  <div className="flex-1 bg-[var(--gold)]" style={{ height: `${Math.max(4, (point.volume / maxDailyMovement) * 100)}%` }} title={`Transaction volume ${formatNgn(point.volume)}`} />
+                  <div className="flex-1 bg-[var(--green)]" style={{ height: `${Math.max(4, (point.moneyIn / maxDailyMovement) * 100)}%` }} title={`Wallet credits ${formatNgn(point.moneyIn)}`} />
+                  <div className="flex-1 bg-[var(--red2)]" style={{ height: `${Math.max(4, (point.moneyOut / maxDailyMovement) * 100)}%` }} title={`Wallet debits ${formatNgn(point.moneyOut)}`} />
                 </div>
                 <div className="text-center text-[9px] font-bold uppercase text-[var(--muted)]">{point.label}</div>
               </div>
@@ -213,8 +231,8 @@ export function AdminAnalyticsDashboard() {
           </div>
           <div className="mt-3 flex flex-wrap gap-2 text-[9px] font-bold uppercase tracking-[.8px] text-[var(--muted)]">
             <Legend color="bg-[var(--gold)]" label="Volume" />
-            <Legend color="bg-[var(--green)]" label="Money In" />
-            <Legend color="bg-[var(--red2)]" label="Money Out" />
+            <Legend color="bg-[var(--green)]" label="Wallet Credits" />
+            <Legend color="bg-[var(--red2)]" label="Wallet Debits" />
           </div>
         </Card>
 
@@ -244,20 +262,41 @@ export function AdminAnalyticsDashboard() {
 
       <section className="grid gap-4 xl:grid-cols-3">
         <Card className="p-4 xl:col-span-2">
-          <SectionHeader title="Transaction Amount by Product" detail="All-time NGN across successful records; internal transfers include both ledger sides, so this is not unique payment volume or revenue." />
-          <div className="mt-4 space-y-3">
-            {data.byType.length === 0 ? (
-              <EmptyAnalytics label="No transaction buckets available." />
-            ) : data.byType.map(item => (
-              <div key={item.bucket} className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem] sm:items-center">
-                <div className="text-[10px] font-black uppercase tracking-[.8px] text-[var(--text)]">{titleCase(item.bucket)}</div>
-                <div className="h-3 overflow-hidden bg-[var(--clay)]">
-                  <div className="h-full bg-[linear-gradient(90deg,var(--gold),var(--green))]" style={{ width: `${Math.max(3, (item.volume / maxBucketVolume) * 100)}%` }} />
-                </div>
-                <div className="text-right text-[10px] font-bold text-[var(--muted)]">{formatNgn(item.volume)}</div>
+          <SectionHeader title="Transaction Volume by Product" detail="Successful customer transaction amounts in NGN. Internal transfers are counted once; rewards and admin adjustments are excluded." />
+          {volumeSlices.length === 0 ? (
+            <div className="mt-4"><EmptyAnalytics label="No successful transaction volume recorded." /></div>
+          ) : (
+            <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-center">
+              <div className="space-y-3">
+                {data.byType.filter(item => item.volume > 0).map((item, index) => (
+                  <div key={item.bucket} className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem] sm:items-center">
+                    <div className="text-[10px] font-black uppercase tracking-[.8px] text-[var(--text)]">{titleCase(item.bucket)}</div>
+                    <div className="h-3 overflow-hidden bg-[var(--clay)]">
+                      <div className="h-full" style={{ width: `${Math.max(1, (item.volume / maxBucketVolume) * 100)}%`, background: getVolumeColor(index) }} />
+                    </div>
+                    <div className="text-right text-[10px] font-bold text-[var(--muted)]">{formatNgn(item.volume)}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+              <div className="flex flex-col items-center gap-4">
+                <div
+                  className="h-40 w-40 rounded-full border border-[var(--border)] shadow-[0_0_40px_rgba(0,0,0,.25)]"
+                  style={volumePieStyle}
+                  role="img"
+                  aria-label={`Pie chart showing product transaction volume totalling ${formatNgn(volumeTotal)}`}
+                />
+                <div className="grid w-full grid-cols-2 gap-x-3 gap-y-2">
+                  {volumeSlices.map((item, index) => (
+                    <div key={item.bucket} className="flex min-w-0 items-center gap-1.5" title={`${titleCase(item.bucket)}: ${formatNgn(item.volume)}`}>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: getVolumeColor(index) }} />
+                      <span className="truncate text-[9px] font-bold text-[var(--muted)]">{titleCase(item.bucket)}</span>
+                      <span className="ml-auto text-[9px] font-black text-[var(--text)]">{Math.round(item.volume / volumeTotal * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card className="p-4">
