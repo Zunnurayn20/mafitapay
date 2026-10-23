@@ -85,6 +85,7 @@ const MAX_SCAN_CYCLE_MS = Math.max(
   15_000,
   Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_MAX_CYCLE_MS ?? 45_000) || 45_000
 )
+const ASSET_SCAN_CURSOR_KEY = 'crypto:deposit-scanner:next-asset-index'
 // Per-chain timeout overrides. A chain that *stalls* rather than erroring will hold the cycle for
 // the full timeout, so a 120s leash on a 120s cadence lets one chain consume the entire interval
 // and leave the HTTP server no idle time. NEAR is the observed offender: its public RPCs sit on
@@ -1405,13 +1406,13 @@ async function scanTonDeposits(input: {
 
   let detected = 0
   let settled = 0
+  let failedAddresses = 0
   const tonClient = input.client
 
   for (const addr of tonAddrs) {
     try {
       // Normalize the stored address (from provisioning: bounceable false, urlSafe true)
       const destAddr = TonAddress.parse(addr.address)
-      const normalized = destAddr.toString({ bounceable: false, urlSafe: true }).toLowerCase()
       // Fetch recent txs (re-scan ok, duplicate check in persist handles)
       const txs = await tonClient.getTransactions(destAddr, { limit: 50 })
       for (const tx of txs) {
@@ -1447,9 +1448,11 @@ async function scanTonDeposits(input: {
         if (result.settled) settled += 1
       }
     } catch (e) {
-      console.warn(`[crypto-deposit-scanner] TON scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
+      failedAddresses += 1
+      console.warn(`[crypto-deposit-scanner] TON scan error for ${addr.address}:`, sanitizeErrorForLogs(e))
     }
   }
+  if (failedAddresses > 0) throw new Error(`${input.asset.pairId} TON scan failed for ${failedAddresses} deposit address(es).`)
   return { detected, settled }
 }
 
@@ -1463,6 +1466,7 @@ async function scanSolanaDeposits(input: {
 
   let detected = 0
   let settled = 0
+  let failedAddresses = 0
   const conn = input.connection
   const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
@@ -1536,9 +1540,11 @@ async function scanSolanaDeposits(input: {
         if (result.settled) settled += 1
       }
     } catch (e) {
-      console.warn(`[crypto-deposit-scanner] Solana scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
+      failedAddresses += 1
+      console.warn(`[crypto-deposit-scanner] Solana scan error for ${addr.address}:`, sanitizeErrorForLogs(e))
     }
   }
+  if (failedAddresses > 0) throw new Error(`${input.asset.pairId} Solana scan failed for ${failedAddresses} deposit address(es).`)
   return { detected, settled }
 }
 
@@ -1552,6 +1558,7 @@ async function scanSuiDeposits(input: {
 
   let detected = 0
   let settled = 0
+  let failedAddresses = 0
   const client = input.client
   const NATIVE_SUI_TYPE = '0x2::sui::SUI'
 
@@ -1614,9 +1621,11 @@ async function scanSuiDeposits(input: {
         if (result.settled) settled += 1
       }
     } catch (e) {
-      console.warn(`[crypto-deposit-scanner] Sui scan error for ${addr.address}:`, e instanceof Error ? e.message : e)
+      failedAddresses += 1
+      console.warn(`[crypto-deposit-scanner] Sui scan error for ${addr.address}:`, sanitizeErrorForLogs(e))
     }
   }
+  if (failedAddresses > 0) throw new Error(`${input.asset.pairId} Sui scan failed for ${failedAddresses} deposit address(es).`)
   return { detected, settled }
 }
 
@@ -1675,13 +1684,14 @@ async function scanNearDeposits(input: {
 
   let detected = 0
   let settled = 0
+  let scanFailed = false
   const provider = input.provider
   const targetSet = new Set(nearAddrs.map((a) => a.address.toLowerCase()))
 
   try {
     const status = await nearNodeStatus(provider)
     const headHeight = Number(status?.sync_info?.latest_block_height || 0)
-    if (!headHeight) return { detected: 0, settled: 0 }
+    if (!headHeight) throw new Error('NEAR RPC returned no latest block height.')
 
     const SCAN_WINDOW = 180
     const scanKey = `near:${input.asset.pairId}:native`
@@ -1786,10 +1796,13 @@ async function scanNearDeposits(input: {
     if (lastCompleteHeight >= fromHeight) {
       await persistLastScannedBlock(scanKey, BigInt(lastCompleteHeight))
     }
+    if (stoppedOnError) throw new Error(`NEAR scan stopped before completing through block ${toHeight}.`)
   } catch (e) {
+    scanFailed = true
     console.warn(`[crypto-deposit-scanner] NEAR scan top-level error:`, sanitizeTextForLogs(e instanceof Error ? e.message : String(e)))
   }
 
+  if (scanFailed) throw new Error(`${input.asset.pairId} NEAR scan failed; see scanner logs for details.`)
   return { detected, settled }
 }
 
@@ -1850,26 +1863,46 @@ export async function syncCryptoDepositEventsOnce() {
     const errors: string[] = []
 
     // Scan assets sequentially. Public RPCs throttle hard when every chain is scanned in parallel.
+    // Persist a rotating start index because a bounded cycle can end before reaching every pair;
+    // always starting at Base would otherwise starve later networks on busy or degraded cycles.
     const assetResults: Array<{ detected: number; settled: number; error: string | null }> = []
     const skippedChains = new Set<ScanChain>()
     const parkedChains = new Set<ScanChain>()
     const failedChainsThisCycle = new Set<ScanChain>()
     let cycleBudgetExhausted = false
-    for (const asset of getSupportedAssets()) {
+    const scanAssets = getSupportedAssets()
+    const savedAssetCursor = await getLastScannedBlock(ASSET_SCAN_CURSOR_KEY)
+    const startAssetIndex = scanAssets.length > 0
+      ? Number((savedAssetCursor ?? BigInt(0)) % BigInt(scanAssets.length))
+      : 0
+    let nextAssetIndex = startAssetIndex
+    let consideredAssets = 0
+
+    for (let offset = 0; offset < scanAssets.length; offset += 1) {
       if (Date.now() - startedAt >= MAX_SCAN_CYCLE_MS) {
         cycleBudgetExhausted = true
         break
       }
+      const assetIndex = (startAssetIndex + offset) % scanAssets.length
+      const asset = scanAssets[assetIndex]
+      const advanceAssetCursor = async () => {
+        nextAssetIndex = (assetIndex + 1) % scanAssets.length
+        await setLastScannedBlock(ASSET_SCAN_CURSOR_KEY, BigInt(nextAssetIndex))
+        consideredAssets += 1
+      }
       if (!isChainEnabled(asset.chain)) {
         skippedChains.add(asset.chain)
+        await advanceAssetCursor()
         continue
       }
       if (failedChainsThisCycle.has(asset.chain)) {
         skippedChains.add(asset.chain)
+        await advanceAssetCursor()
         continue
       }
       if (isChainParked(state, asset.chain, Date.now())) {
         parkedChains.add(asset.chain)
+        await advanceAssetCursor()
         continue
       }
       try {
@@ -1913,6 +1946,7 @@ export async function syncCryptoDepositEventsOnce() {
         }
         assetResults.push({ detected: 0, settled: 0, error: `${asset.pairId}: ${msg}` })
       }
+      await advanceAssetCursor()
     }
 
     for (const r of assetResults) {
@@ -1922,8 +1956,8 @@ export async function syncCryptoDepositEventsOnce() {
     }
 
     const durationMs = Date.now() - startedAt
-    console.log(`[crypto-deposit-scanner] sync complete in ${Math.round(durationMs / 1000)}s: totalDetected=${detected} totalSettled=${settled} errors=${errors.length}${cycleBudgetExhausted ? ' cycleBudgetExhausted=true' : ''}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}${parkedChains.size > 0 ? ` parkedChains=${[...parkedChains].join(',')}` : ''}`)
-    return { skipped: false, detected, settled, errors }
+    console.log(`[crypto-deposit-scanner] sync complete in ${Math.round(durationMs / 1000)}s: totalDetected=${detected} totalSettled=${settled} errors=${errors.length} assetsConsidered=${consideredAssets}/${scanAssets.length} nextAsset=${scanAssets[nextAssetIndex]?.pairId ?? 'none'}${cycleBudgetExhausted ? ' cycleBudgetExhausted=true' : ''}${skippedChains.size > 0 ? ` skippedChains=${[...skippedChains].join(',')}` : ''}${parkedChains.size > 0 ? ` parkedChains=${[...parkedChains].join(',')}` : ''}`)
+    return { skipped: false, detected, settled, errors, assetsConsidered: consideredAssets, totalAssets: scanAssets.length, nextAsset: scanAssets[nextAssetIndex]?.pairId ?? null, cycleBudgetExhausted }
   } finally {
     state.running = false
     // Stamp the cooldown from when the cycle *finished*, not when it started. Stamping at the
