@@ -45,6 +45,7 @@ import { formatCrypto, sanitizeErrorForLogs, sanitizeTextForLogs, sanitizeUrlFor
 import type { CryptoDepositAddress, CryptoDepositEvent, CryptoOrder } from '@/types'
 
 const SCAN_BLOCK_WINDOW = BigInt(256) // larger window for native EVM deposits (Base ETH etc) to reduce risk of missing txs due to timing/RPC lag in small incremental scans. ERC20 still uses chunked getLogs. For prod prefer dedicated RPCs.
+const BASE_LOGS_FALLBACK_RPC_URL = process.env.MAFITAPAY_BASE_LOGS_FALLBACK_RPC_URL?.trim() || 'https://base-rpc.publicnode.com'
 const POLYGON_NATIVE_INITIAL_SCAN_WINDOW = BigInt(
   Number(process.env.MAFITAPAY_POLYGON_NATIVE_INITIAL_SCAN_BLOCKS ?? 900) || 900
 )
@@ -232,7 +233,7 @@ const warnedOnce = new Set<string>()
 
 async function getLogsChunked(
   client: AnyClient,
-  baseParams: { address: Address; event: any; fromBlock: bigint; toBlock: bigint },
+  baseParams: { address: Address; event: any; args?: any; fromBlock: bigint; toBlock: bigint },
   chunkSize = BigInt(25)
 ): Promise<{ logs: any[]; coveredTo: bigint }> {
   const logs: any[] = []
@@ -942,7 +943,31 @@ export async function reconcileErc20DepositTransaction(input: {
         : input.chain === 'robinhood'
           ? createRobinhoodClient()
           : (() => { throw new Error('Unsupported EVM chain for deposit reconciliation.') })()
-  const receipt = await client.getTransactionReceipt({ hash: input.txHash as `0x${string}` })
+  type ReconcileReceipt = {
+    status: string
+    blockNumber: bigint
+    logs: readonly { topics: readonly string[]; data: string; address: string; logIndex: number }[]
+  }
+  let receipt: ReconcileReceipt | null = null
+  if (input.chain === 'base') {
+    // A fallback transport treats a null receipt as a successful response and will not try its
+    // next RPC. Query independent Base endpoints explicitly so a lagging indexer cannot reject a
+    // transaction that is already confirmed on chain.
+    const baseConfig = getBaseExecutorConfig()
+    const urls = [...new Set([...baseConfig.rpcUrls, BASE_LOGS_FALLBACK_RPC_URL])]
+    for (const url of urls) {
+      try {
+        const candidate = createPublicClient({ chain: base, transport: http(url, { retryCount: 0, timeout: 8_000 }) })
+        receipt = await candidate.getTransactionReceipt({ hash: input.txHash as `0x${string}` }) as unknown as ReconcileReceipt
+        if (receipt) break
+      } catch {
+        // Keep checking the remaining independent endpoints.
+      }
+    }
+  } else {
+    receipt = await client.getTransactionReceipt({ hash: input.txHash as `0x${string}` }) as unknown as ReconcileReceipt
+  }
+  if (!receipt) throw new Error('The transaction receipt was not found by the configured Base RPCs. Please retry shortly.')
   if (receipt.status !== 'success') throw new Error('The transaction did not succeed on chain.')
 
   const recipient = getAddress(address.address).toLowerCase()
@@ -1162,6 +1187,10 @@ async function scanErc20Deposits(input: {
   const latestBlock = await input.client.getBlockNumber()
   const rangeKey = `${input.asset.chain}:${input.asset.pairId}:erc20`
   const { fromBlock, toBlock } = await getScanRange(rangeKey, latestBlock)
+  const trackedRecipients = [...new Set([...input.lookup.values()]
+    .filter(item => item.addressFamily === 'evm')
+    .map(item => getAddress(item.address)))]
+  if (trackedRecipients.length === 0) return { detected: 0, settled: 0 }
   const erc20ChunkSize = input.asset.chain === 'bsc'
     ? BigInt(16)
     : input.asset.chain === 'base'
@@ -1174,22 +1203,24 @@ async function scanErc20Deposits(input: {
   let { logs, coveredTo } = await getLogsChunked(input.client, {
     address: input.asset.tokenAddress as Address,
     event: TRANSFER_EVENT,
+    args: { to: trackedRecipients },
     fromBlock,
     toBlock,
   }, erc20ChunkSize)
 
-  // Alchemy's Polygon endpoint has returned false-empty responses and HTTP 429s. Cross-check
-  // empty or partially covered scans against an independent provider so neither case can silently
-  // skip customer deposits.
-  if (input.asset.chain === 'polygon' && (logs.length === 0 || coveredTo < toBlock)) {
+  // RPCs can return empty eth_getLogs results for a range that contains token transfers.
+  // Cross-check empty/partial Base and Polygon scans independently so a false-empty response
+  // cannot advance the durable cursor past a customer deposit.
+  if ((input.asset.chain === 'base' || input.asset.chain === 'polygon') && (logs.length === 0 || coveredTo < toBlock)) {
     try {
-      const fallbackClient = createPublicClient({
-        chain: polygon,
-        transport: http(POLYGON_LOGS_FALLBACK_RPC_URL, { retryCount: 0, timeout: 8_000 }),
-      })
+      const isBase = input.asset.chain === 'base'
+      const fallbackClient = isBase
+        ? createPublicClient({ chain: base, transport: http(BASE_LOGS_FALLBACK_RPC_URL, { retryCount: 0, timeout: 8_000 }) })
+        : createPublicClient({ chain: polygon, transport: http(POLYGON_LOGS_FALLBACK_RPC_URL, { retryCount: 0, timeout: 8_000 }) })
       const fallbackResult = await getLogsChunked(fallbackClient, {
         address: input.asset.tokenAddress as Address,
         event: TRANSFER_EVENT,
+        args: { to: trackedRecipients },
         fromBlock,
         toBlock,
       }, erc20ChunkSize)
@@ -1198,14 +1229,14 @@ async function scanErc20Deposits(input: {
         coveredTo = fallbackResult.coveredTo
       }
       if (fallbackResult.logs.length > 0 || fallbackResult.coveredTo > fromBlock - BigInt(1)) {
-        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: Polygon RPC coverage was incomplete; independent RPC covered through ${fallbackResult.coveredTo} with ${fallbackResult.logs.length} logs`)
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: primary RPC returned empty/incomplete logs; independent RPC covered through ${fallbackResult.coveredTo} with ${fallbackResult.logs.length} logs`)
       }
       if (coveredTo < fromBlock) {
-        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent Polygon RPC did not cover the scan window; cursor will not advance`)
+        console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent RPC did not cover the scan window; cursor will not advance`)
       }
     } catch (error) {
       coveredTo = fromBlock - BigInt(1)
-      console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent Polygon log scan failed; cursor will not advance:`, sanitizeErrorForLogs(error))
+      console.warn(`[crypto-deposit-scanner] ${input.asset.pairId}: independent log scan failed; cursor will not advance:`, sanitizeErrorForLogs(error))
     }
   }
 
