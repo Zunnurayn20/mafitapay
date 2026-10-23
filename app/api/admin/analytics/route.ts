@@ -167,6 +167,10 @@ export async function GET() {
     lockedBalance: roundMoney(row.locked),
     fundingAccounts: row.fundingAccounts,
   }))
+  const userLeaderboard = snapshot.userLeaderboard.map(row => ({
+    ...row,
+    volume: roundMoney(row.volume),
+  }))
 
   return NextResponse.json({
     success: true,
@@ -204,6 +208,7 @@ export async function GET() {
       providerBreakdown: Object.entries(providerBreakdown).map(([provider, value]) => ({ provider, ...value })),
       settlementSummary,
       topWallets,
+      userLeaderboard,
       latestTransactions,
       cryptoOrders,
       cryptoDeposits: cryptoDepositSummary,

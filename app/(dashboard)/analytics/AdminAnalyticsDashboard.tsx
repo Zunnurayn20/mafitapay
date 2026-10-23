@@ -54,6 +54,7 @@ type AnalyticsPayload = {
       payouts: { total: number; pending: number; success: number; failed: number; volume: number }
     }
     topWallets: Array<{ userId: string; name: string; email: string; balance: number; lockedBalance: number; fundingAccounts: number }>
+    userLeaderboard: Array<{ userId: string; name: string; email: string; transactionCount: number; volume: number }>
     latestTransactions: Array<{ userId: string; transaction: Transaction }>
     cryptoOrders: { total: number; pending: number; success: number; failed: number }
     cryptoDeposits: { total: number; matched: number; unmatched: number; ignored: number; swept: number; direct: number; volumes: Array<{ asset: string; network: string; pairId: string; amount: number }> }
@@ -92,6 +93,7 @@ const emptyPayload: AnalyticsPayload['data'] = {
     payouts: { total: 0, pending: 0, success: 0, failed: 0, volume: 0 },
   },
   topWallets: [],
+  userLeaderboard: [],
   latestTransactions: [],
   cryptoOrders: { total: 0, pending: 0, success: 0, failed: 0 },
   cryptoDeposits: { total: 0, matched: 0, unmatched: 0, ignored: 0, swept: 0, direct: 0, volumes: [] },
@@ -320,6 +322,39 @@ export function AdminAnalyticsDashboard() {
           </div>
         </Card>
       </section>
+
+      <Card className="p-4">
+        <SectionHeader title="Top Users" detail="Ranked by all-time successful transaction volume. Transfers count once; rewards and admin adjustments are excluded." />
+        <div className="mt-4 overflow-x-auto">
+          {data.userLeaderboard.length === 0 ? (
+            <EmptyAnalytics label="No successful customer transactions recorded yet." />
+          ) : (
+            <table className="w-full min-w-[620px] text-left">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-[9px] font-black uppercase tracking-[.8px] text-[var(--muted)]">
+                  <th className="px-3 py-2">Rank</th>
+                  <th className="px-3 py-2">User</th>
+                  <th className="px-3 py-2 text-right">Successful transactions</th>
+                  <th className="px-3 py-2 text-right">Volume</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.userLeaderboard.map((user, index) => (
+                  <tr key={user.userId} className="border-b border-[var(--border)] last:border-0">
+                    <td className="px-3 py-3 text-[11px] font-black text-[var(--gold2)]">{String(index + 1).padStart(2, '0')}</td>
+                    <td className="px-3 py-3">
+                      <Link href={`/admin/users?q=${encodeURIComponent(user.userId)}`} className="block truncate text-[11px] font-black text-[var(--text)] hover:text-[var(--gold2)]">{user.name}</Link>
+                      <div className="truncate text-[10px] text-[var(--muted)]">{user.email}</div>
+                    </td>
+                    <td className="px-3 py-3 text-right text-[11px] font-bold text-[var(--text)]">{formatNumber(user.transactionCount)}</td>
+                    <td className="px-3 py-3 text-right text-[12px] font-black text-[var(--gold2)]">{formatNgn(user.volume)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Card>
 
       <section className="grid gap-4 xl:grid-cols-2">
         <Card className="p-4">

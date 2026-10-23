@@ -3911,7 +3911,7 @@ export async function getAdminAnalyticsSnapshot(days: string[]) {
   const dailyParams: Array<string | number> = [startDay]
   const dayExpr = 'substr(created_at, 1, 10)'
 
-  const [userTotalsResult, newUsersResult, transactionTotalsResult, transactionDaysResult, providerResult, depositResult, payoutResult, cryptoOrderResult, cryptoDepositResult, walletResult] = await Promise.all([
+  const [userTotalsResult, newUsersResult, transactionTotalsResult, transactionDaysResult, providerResult, depositResult, payoutResult, cryptoOrderResult, cryptoDepositResult, walletResult, userLeaderboardResult] = await Promise.all([
     isPostgresEnabled()
       ? queryPostgres<{ users: string; active: string; verified: string; pending_kyc: string }>(`
           SELECT COUNT(*) AS users,
@@ -3978,6 +3978,27 @@ export async function getAdminAnalyticsSnapshot(days: string[]) {
             GROUP BY user_id
           ) b ON b.user_id = w.user_id
         `).all() as Array<{ user_id: string; name: string; email: string; balance: number; locked: number; virtual_accounts: string }> }),
+    isPostgresEnabled()
+      ? queryPostgres<{ user_id: string; name: string; email: string; transaction_count: string; volume: string }>(`
+          SELECT t.user_id, u.name, u.email, COUNT(*) AS transaction_count,
+            COALESCE(SUM(ABS(t.amount)), 0) AS volume
+          FROM transactions t JOIN users u ON u.id = t.user_id
+          WHERE t.status = 'success'
+            AND t.type NOT IN ('transfer_in', 'admin_credit', 'admin_debit', 'reward_bonus', 'referral_bonus')
+          GROUP BY t.user_id, u.name, u.email
+          ORDER BY volume DESC, transaction_count DESC, u.name ASC
+          LIMIT 10
+        `)
+      : Promise.resolve({ rows: getDb().prepare(`
+          SELECT t.user_id, u.name, u.email, COUNT(*) AS transaction_count,
+            COALESCE(SUM(ABS(t.amount)), 0) AS volume
+          FROM transactions t JOIN users u ON u.id = t.user_id
+          WHERE t.status = 'success'
+            AND t.type NOT IN ('transfer_in', 'admin_credit', 'admin_debit', 'reward_bonus', 'referral_bonus')
+          GROUP BY t.user_id, u.name, u.email
+          ORDER BY volume DESC, transaction_count DESC, u.name ASC
+          LIMIT 10
+        `).all() as Array<{ user_id: string; name: string; email: string; transaction_count: number; volume: number }> }),
   ])
 
   const userTotals = userTotalsResult.rows[0]
@@ -4019,6 +4040,13 @@ export async function getAdminAnalyticsSnapshot(days: string[]) {
       withFundingAccount: walletRows.filter(row => row.fundingAccounts > 0).length,
       top: walletRows.sort((a, b) => b.balance - a.balance).slice(0, 8),
     },
+    userLeaderboard: userLeaderboardResult.rows.map(row => ({
+      userId: row.user_id,
+      name: row.name,
+      email: row.email,
+      transactionCount: Number(row.transaction_count),
+      volume: Number(row.volume),
+    })),
   }
 }
 
