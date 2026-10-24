@@ -39,7 +39,9 @@ export function readWebAuthnEnv(env: NodeJS.ProcessEnv = process.env): WebAuthnE
     appUrl: env.MAFITAPAY_APP_URL,
     rpId: env.MAFITAPAY_WEBAUTHN_RP_ID,
     rpName: env.MAFITAPAY_WEBAUTHN_RP_NAME,
-    androidCertSha256: env.MAFITAPAY_ANDROID_CERT_SHA256,
+    androidCertSha256: [env.MAFITAPAY_ANDROID_CERT_SHA256, env.MAFITAPAY_ANDROID_CERT_SHA256_RELEASE]
+      .filter(Boolean)
+      .join(' '),
   }
 }
 

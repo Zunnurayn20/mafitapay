@@ -41,7 +41,10 @@ function normalizeFingerprint(value: string) {
 }
 
 function allowedAppSigners() {
-  const values = (process.env.MAFITAPAY_ANDROID_CERT_SHA256 || '').split(/[\s,]+/).filter(Boolean)
+  const values = [
+    process.env.MAFITAPAY_ANDROID_CERT_SHA256,
+    process.env.MAFITAPAY_ANDROID_CERT_SHA256_RELEASE,
+  ].filter(Boolean).join(' ').split(/[\s,]+/).filter(Boolean)
   const fingerprints = values.map(normalizeFingerprint).filter((value): value is string => Boolean(value))
   if (!fingerprints.length) {
     throw new Error('Android signing certificate is not configured for hardware attestation.')
