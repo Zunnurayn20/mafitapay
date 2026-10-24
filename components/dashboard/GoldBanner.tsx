@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, Gift, Smartphone, TrendingUp } from 'lucide-react'
+import { ChevronRight, Download, Gift, TrendingUp } from 'lucide-react'
 
 const SLIDES = [
   {
     href: '/downloads/mafitapay-android.apk',
     eyebrow: 'MafitaPay for Android',
     title: 'Download the Android app',
-    Icon: Smartphone,
+    Icon: Download,
     iconLabel: 'Android app',
   },
   {
