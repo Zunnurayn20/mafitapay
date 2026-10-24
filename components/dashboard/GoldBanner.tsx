@@ -6,6 +6,13 @@ import { ChevronRight, Gift, Smartphone, TrendingUp } from 'lucide-react'
 
 const SLIDES = [
   {
+    href: '/downloads/mafitapay-android.apk',
+    eyebrow: 'MafitaPay for Android',
+    title: 'Download the Android app',
+    Icon: Smartphone,
+    iconLabel: 'Android app',
+  },
+  {
     href: '/stocks',
     eyebrow: 'Stocks · watch',
     title: 'NGX markets — watch only',
@@ -18,13 +25,6 @@ const SLIDES = [
     title: 'Share your code and earn rewards',
     Icon: Gift,
     iconLabel: 'Referral rewards',
-  },
-  {
-    href: '/downloads/mafitapay-android.apk',
-    eyebrow: 'MafitaPay for Android',
-    title: 'Download the Android app',
-    Icon: Smartphone,
-    iconLabel: 'Android app',
   },
 ] as const
 
