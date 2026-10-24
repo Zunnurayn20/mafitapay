@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "ng.mafitapay.app",
       "sha256_cert_fingerprints": [
-        "6A:09:5D:E4:52:AF:78:8E:36:9B:FF:C7:6D:66:90:1F:ED:69:F3:F9:B9:66:6D:4D:B7:F2:F9:36:DF:63:C2:5E"
+        "6A:09:5D:E4:52:AF:78:8E:36:9B:FF:C7:6D:66:90:1F:ED:69:F3:F9:B9:66:6D:4D:B7:F2:F9:36:DF:63:C2:5E",
+        "4F:CA:EE:8D:B0:8E:6C:38:96:3E:B2:FD:1B:B6:41:80:06:97:C8:12:4A:92:94:A4:E4:2C:87:37:49:57:16:FB"
       ]
     }
   }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, Gift, TrendingUp } from 'lucide-react'
+import { ChevronRight, Gift, Smartphone, TrendingUp } from 'lucide-react'
 
 const SLIDES = [
   {
@@ -18,6 +18,13 @@ const SLIDES = [
     title: 'Share your code and earn rewards',
     Icon: Gift,
     iconLabel: 'Referral rewards',
+  },
+  {
+    href: '/downloads/mafitapay-android.apk',
+    eyebrow: 'MafitaPay for Android',
+    title: 'Download the Android app',
+    Icon: Smartphone,
+    iconLabel: 'Android app',
   },
 ] as const
 
@@ -59,6 +66,8 @@ export function GoldBanner() {
           <Link
             key={href}
             href={href}
+            download={href.endsWith('.apk') ? 'MafitaPay.apk' : undefined}
+            prefetch={false}
             aria-label={`${iconLabel}: ${title}`}
             aria-hidden={activeSlide !== index}
             tabIndex={activeSlide === index ? 0 : -1}
