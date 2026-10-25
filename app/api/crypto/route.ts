@@ -13,7 +13,7 @@ import { ensureNearReceiptAutoSyncWatchdog } from '@/lib/server/near-receipt-syn
 import { ensureRoutedReceiptAutoSyncWatchdog } from '@/lib/server/routed-receipt-sync'
 import { ensureSuiReceiptAutoSyncWatchdog } from '@/lib/server/sui-receipt-sync'
 import { assertSuiTreasuryCanExecuteBuy, getSuiQuotedReceiveForBuy } from '@/lib/server/sui-treasury'
-import { assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
+import { assertTonDestinationIsNotTreasury, assertTonTreasuryCanExecuteBuy, getTonQuotedReceiveForBuy } from '@/lib/server/ton-executor'
 import { ensureTonReceiptAutoSyncWatchdog } from '@/lib/server/ton-receipt-sync'
 import { getCryptoDepositAddressForAsset } from '@/lib/server/crypto-deposit-addresses'
 import { isDepositableCryptoAsset } from '@/lib/crypto-deposit-assets'
@@ -169,6 +169,13 @@ export async function POST(req: Request) {
   const requestedAsset = assets.find(item => item.id === pairId)
   if (!requestedAsset) {
     return NextResponse.json({ error: 'Crypto pair not found.', success: false }, { status: 404 })
+  }
+  if (action === 'buy' && requestedAsset.id === 'USDT_TON' && walletAddress) {
+    try {
+      await assertTonDestinationIsNotTreasury(walletAddress)
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Use a personal TON wallet address.', success: false }, { status: 400 })
+    }
   }
   if (action === 'sell' && !isDepositableCryptoAsset(requestedAsset)) {
     return NextResponse.json({ error: 'Crypto deposits are not supported for this asset yet.', success: false }, { status: 400 })

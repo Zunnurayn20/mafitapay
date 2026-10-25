@@ -208,6 +208,24 @@ export async function getTonExecutorHealth() {
   }
 }
 
+export async function assertTonDestinationIsNotTreasury(destinationAddress: string) {
+  const health = await getTonExecutorHealth()
+  const treasuryAddress = health.derivedAddress || health.configuredAddress
+  if (!treasuryAddress) return
+  let destination: Address
+  let treasury: Address
+  try {
+    destination = Address.parse(destinationAddress)
+    treasury = Address.parse(treasuryAddress)
+  } catch {
+    // Let the normal address validator return the user-facing error for malformed addresses.
+    return
+  }
+  if (destination.equals(treasury)) {
+    throw new Error('Choose your own TON wallet address. The MafitaPay treasury address cannot be used as the purchase destination.')
+  }
+}
+
 async function getTonClients() {
   const config = getTonExecutorConfig()
   if (config.mnemonicWords.length !== 24) {
@@ -516,7 +534,9 @@ async function executeTonUsdtJettonTransferForOrder(order: CryptoOrder): Promise
     .storeAddress(receiverAddress)
     .storeAddress(wallet.address)
     .storeBit(false)
-    .storeCoins(BigInt(0))
+    // TEP-74 emits transfer_notification only when forward_ton_amount is > 0.
+    // One nanoton is enough and lets custodial/exchange destinations observe the credit.
+    .storeCoins(BigInt(1))
     .storeBit(false)
     .endCell()
 
@@ -573,46 +593,37 @@ export async function getTonUsdtTransferReceipt(input: {
   recipientJettonWallet: string
   treasuryJettonWallet: string
   queryId: string
+  usdtUnits: string
 }) {
   const { tonClient } = await getTonClients()
   const queryId = BigInt(input.queryId)
-  const isQuery = (body?: import('@ton/core').Cell) => {
+  const expectedUnits = BigInt(input.usdtUnits)
+  const findInternalTransfer = (body?: import('@ton/core').Cell) => {
     if (!body) return false
     try {
       const slice = body.beginParse()
-      if (slice.remainingBits < 96 || slice.loadUint(32) !== 0x7362d09c) return false
-      return slice.loadUintBig(64) === queryId
+      if (slice.remainingBits < 96 || slice.loadUint(32) !== 0x178d4519) return false
+      if (slice.loadUintBig(64) !== queryId) return false
+      return slice.loadCoins() === expectedUnits
     } catch {
       return false
     }
   }
   const recipientTransactions = await tonClient.getTransactions(Address.parse(input.recipientJettonWallet), { limit: 30 })
-  const delivered = recipientTransactions.find(tx => tx.inMessage?.info.type === 'internal' && isQuery(tx.inMessage.body))
-  if (delivered) {
-    const description = delivered.description
-    const failed = description.type === 'generic'
-      && (description.aborted || (description.computePhase.type === 'vm' && !description.computePhase.success)
-        || (description.actionPhase != null && !description.actionPhase.success))
-    return { delivered: !failed, failed, txHash: delivered.hash().toString('hex') }
+  const credited = recipientTransactions.find(tx =>
+    tx.inMessage?.info.type === 'internal'
+    && tx.inMessage.info.src.equals(Address.parse(input.treasuryJettonWallet))
+    && findInternalTransfer(tx.inMessage.body)
+  )
+  if (credited) {
+    const description = credited.description
+    const failed = description.type !== 'generic'
+      || description.aborted
+      || (description.computePhase.type === 'vm' && !description.computePhase.success)
+      || (description.actionPhase != null && !description.actionPhase.success)
+    return { delivered: !failed, failed, txHash: credited.hash().toString('hex') }
   }
-
-  const treasuryTransactions = await tonClient.getTransactions(Address.parse(input.treasuryJettonWallet), { limit: 30 })
-  const transfer = treasuryTransactions.find(tx => {
-    const body = tx.inMessage?.body
-    if (!body) return false
-    try {
-      const slice = body.beginParse()
-      return slice.remainingBits >= 96 && slice.loadUint(32) === 0x0f8a7ea5 && slice.loadUintBig(64) === queryId
-    } catch {
-      return false
-    }
-  })
-  if (!transfer) return { delivered: false, failed: false, txHash: null }
-  const description = transfer.description
-  const failed = description.type === 'generic'
-    && (description.aborted || (description.computePhase.type === 'vm' && !description.computePhase.success)
-      || (description.actionPhase != null && !description.actionPhase.success))
-  return { delivered: false, failed, txHash: transfer.hash().toString('hex') }
+  return { delivered: false, failed: false, txHash: null }
 }
 
 async function executeTonSwapForOrder(order: CryptoOrder): Promise<TonSwapExecution> {

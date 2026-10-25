@@ -117,7 +117,7 @@ export default function CryptoOrdersPage() {
 
   const pendingSyncOrders = useMemo(() => orders.filter(order =>
     order.status === 'pending'
-    && (order.executionRail === 'base_legacy' || order.executionRail === 'base_treasury' || order.executionRail === 'bsc_treasury' || order.executionRail === 'routed_treasury' || order.executionRail === 'sui_treasury' || order.executionRail === 'near_intents')
+    && (order.executionRail === 'base_legacy' || order.executionRail === 'base_treasury' || order.executionRail === 'bsc_treasury' || order.executionRail === 'routed_treasury' || order.executionRail === 'sui_treasury' || order.executionRail === 'near_intents' || order.executionRail === 'ton_treasury')
     && order.executionStatus === 'broadcasted'
     && !(order.executionRail === 'near_intents' && order.providerStatus === 'SUCCESS:AWAITING_NATIVE_PAYOUT')
     && !(order.executionRail === 'sui_treasury' && order.providerStatus === 'DONE:AWAITING_SUI_PAYOUT')

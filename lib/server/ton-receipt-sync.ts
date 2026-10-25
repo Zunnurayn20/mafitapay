@@ -1,6 +1,7 @@
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { getCryptoOrderById, listCryptoOrders, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
 import { getTonSwapStatus, getTonUsdtTransferReceipt, queryTonSubmittedTransaction } from '@/lib/server/ton-executor'
+import { Address } from '@ton/ton'
 
 const AUTO_SYNC_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000]
 const WATCHDOG_INTERVAL_MS = 20_000
@@ -105,8 +106,24 @@ export async function syncTonReceiptForCryptoOrder(orderId: string, actorUserId:
   if (providerPayload.transferType === 'jetton') {
     const recipientJettonWallet = typeof providerPayload.recipientJettonWallet === 'string' ? providerPayload.recipientJettonWallet : ''
     const treasuryJettonWallet = typeof providerPayload.treasuryJettonWallet === 'string' ? providerPayload.treasuryJettonWallet : ''
-    if (!recipientJettonWallet || !treasuryJettonWallet) throw new Error('TON USDT transfer metadata is incomplete for receipt sync.')
-    const receipt = await getTonUsdtTransferReceipt({ recipientJettonWallet, treasuryJettonWallet, queryId })
+    const receiverAddress = typeof providerPayload.receiverAddress === 'string' ? providerPayload.receiverAddress : ''
+    if (!recipientJettonWallet || !treasuryJettonWallet || !receiverAddress) throw new Error('TON USDT transfer metadata is incomplete for receipt sync.')
+    const usdtUnits = typeof providerPayload.usdtUnits === 'string' ? providerPayload.usdtUnits : ''
+    if (!usdtUnits) throw new Error('TON USDT transfer amount is missing from receipt metadata.')
+    if (Address.parse(receiverAddress).equals(Address.parse(ownerAddress))) {
+      providerPayload.transferStatus = 'failed_destination_is_treasury'
+      await updateCryptoOrderProviderState({ id: order.id, providerStatus: 'JETTON_TRANSFER_FAILED', providerPayload })
+      const failed = await settleCryptoOrderTerminalState({
+        order,
+        outcome: 'failed',
+        actorUserId,
+        source: 'chain_receipt',
+        metadata: { queryId, pairId: order.pairId, failureReason: 'Destination address is the MafitaPay treasury.' },
+      })
+      clearScheduledTonReceiptAutoSync(orderId)
+      return { settled: true, status: { delivered: false, failed: true }, ...failed }
+    }
+    const receipt = await getTonUsdtTransferReceipt({ recipientJettonWallet, treasuryJettonWallet, queryId, usdtUnits })
     if (!receipt.delivered && !receipt.failed) {
       await updateCryptoOrderProviderState({ id: order.id, providerStatus: 'JETTON_TRANSFER_PENDING', providerPayload })
       return { settled: false, status: { delivered: false }, order: (await getCryptoOrderById(order.id)) ?? order }

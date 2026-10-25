@@ -1975,7 +1975,7 @@ export async function syncCryptoDepositEventsOnce() {
           warnedOnce.add('polygon-rpc')
           console.warn(`[crypto-deposit-scanner] Polygon RPC failed. We now aggressively drop dead endpoints (especially the permanently dead public.blastapi.io / Blast API). Check the "polygon RPCs configured (after removing dead endpoints incl. Blast)" line. Prefer MAFITAPAY_POLYGON_RPC_URLS with your Alchemy key. Falling back to Ankr if needed.`)
         }
-        assetResults.push({ detected: 0, settled: 0, error: `${asset.pairId}: ${msg}` })
+        assetResults.push({ detected: 0, settled: 0, error: `${asset.pairId}: ${sanitizeTextForLogs(msg)}` })
       }
       await advanceAssetCursor()
     }
