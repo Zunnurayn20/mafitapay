@@ -27,6 +27,7 @@ function getCryptoNetworkForPair(pairId: CryptoPairId): CryptoNetwork {
     case 'NEAR_NEAR':
       return 'NEAR'
     case 'TON_TON':
+    case 'USDT_TON':
       return 'TON'
   }
 
