@@ -1,4 +1,4 @@
-import { AdminNav } from '@/components/admin/AdminNav'
+import { AdminMobileNav, AdminNav } from '@/components/admin/AdminNav'
 import { AdminBreadcrumbs } from '@/components/admin/AdminBreadcrumbs'
 import { AdminShellActions } from '@/components/layout/AdminShellActions'
 
@@ -39,8 +39,12 @@ export function AdminShell({
           </div>
         </header>
 
-        <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto xl:grid xl:grid-cols-[16rem_minmax(0,1fr)] xl:gap-4 xl:overflow-hidden">
-          <aside className="min-h-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--coal)] xl:flex xl:h-full xl:flex-col">
+        <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto xl:grid xl:grid-cols-[16rem_minmax(0,1fr)] xl:gap-4 xl:overflow-hidden">
+          <div className="shrink-0 xl:hidden">
+            <AdminMobileNav />
+          </div>
+
+          <aside className="hidden min-h-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--coal)] xl:flex xl:h-full xl:flex-col">
             <div className="hidden shrink-0 border-b border-[var(--border)] px-5 py-4 xl:block">
               <div className="text-[8px] font-bold uppercase tracking-[1.6px] text-[var(--muted)]">Admin navigation</div>
             </div>

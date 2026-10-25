@@ -24,6 +24,8 @@ import {
   Wrench,
   ChevronRight,
   ChevronDown,
+  Menu,
+  X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { isAdminCryptoPath } from '@/app/(dashboard)/admin/_components/AdminCryptoTabs'
@@ -170,5 +172,81 @@ export function AdminNav() {
         </div>
       ))}
     </nav>
+  )
+}
+
+export function AdminMobileNav() {
+  const pathname = usePathname()
+  const [open, setOpen] = useState(false)
+  const itemIsActive = (item: (typeof ADMIN_NAV_GROUPS)[number]['items'][number]) => (
+    isAdminCryptoPath(pathname) && item.href === '/admin/operations/orders'
+  ) || isActive(pathname, item.href, 'exact' in item ? item.exact : false)
+  const allItems = ADMIN_NAV_GROUPS.flatMap(group => [...group.items]) as Array<(typeof ADMIN_NAV_GROUPS)[number]['items'][number]>
+  const currentItem = allItems.find(itemIsActive)
+  const CurrentIcon = currentItem?.icon ?? Home
+
+  return (
+    <div className="relative z-40 xl:hidden">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="admin-mobile-pages"
+        onClick={() => setOpen(value => !value)}
+        className="flex min-h-12 w-full items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--coal)] px-4 text-left shadow-sm"
+      >
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[rgba(202,165,96,.12)] text-[var(--gold2)]">
+          <CurrentIcon size={17} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[9px] font-bold uppercase tracking-[1.2px] text-[var(--muted)]">Admin pages</span>
+          <span className="block truncate text-sm font-semibold text-[var(--text)]">{currentItem?.label ?? 'Choose a page'}</span>
+        </span>
+        {open ? <X size={18} className="shrink-0 text-[var(--muted)]" /> : <Menu size={18} className="shrink-0 text-[var(--muted)]" />}
+      </button>
+
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close admin page navigation"
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-[-1] bg-black/50"
+          />
+          <nav
+            id="admin-mobile-pages"
+            aria-label="Admin pages"
+            className="absolute left-0 right-0 top-[calc(100%+0.5rem)] max-h-[min(68dvh,36rem)] overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-[var(--coal)] p-3 shadow-[0_20px_60px_-20px_rgba(0,0,0,.85)] [-webkit-overflow-scrolling:touch]"
+          >
+            {ADMIN_NAV_GROUPS.map(group => (
+              <section key={group.label} className="mb-3 last:mb-0">
+                <h2 className="px-2 pb-1.5 pt-2 text-[9px] font-bold uppercase tracking-[1.3px] text-[var(--muted)]">{group.label}</h2>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {group.items.map(item => {
+                    const Icon = item.icon
+                    const active = itemIsActive(item)
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={active ? 'page' : undefined}
+                        onClick={() => setOpen(false)}
+                        className={`flex min-h-10 items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${
+                          active
+                            ? 'bg-[var(--gold)] text-[var(--char)]'
+                            : 'text-[var(--text2)] hover:bg-[var(--clay)] hover:text-[var(--text)]'
+                        }`}
+                      >
+                        <Icon size={15} className="shrink-0" />
+                        <span className="min-w-0 truncate">{item.label}</span>
+                      </Link>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
+          </nav>
+        </>
+      )}
+    </div>
   )
 }
