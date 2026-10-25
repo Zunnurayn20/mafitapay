@@ -33,6 +33,7 @@ const DEFAULT_NETWORK_FEE_NGN_BY_PAIR: Partial<Record<string, NetworkFeePair>> =
 
   // Non-EVM rails
   TON_TON: { buy: 180, sell: 250 },
+  USDT_TON: { buy: 180, sell: 0 },
   SUI_SUI: { buy: 120, sell: 180 },
   NEAR_NEAR: { buy: 120, sell: 180 },
 }
@@ -66,6 +67,7 @@ const MINIMUM_BUY_NGN_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   SUI_SUI: 1000,
   NEAR_NEAR: 500,
   TON_TON: 500,
+  USDT_TON: 500,
 }
 
 const MAX_QUOTE_TTL_SECONDS = 30
@@ -78,6 +80,7 @@ const MAX_QUOTE_DRIFT_PERCENT_BY_PAIR: Partial<Record<CryptoPairId, number>> = {
   SUI_SUI: 1,
   NEAR_NEAR: 1,
   TON_TON: 1,
+  USDT_TON: 0.35,
 }
 
 export function getMinimumBuyNgn(pairId: CryptoPairId) {

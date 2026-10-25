@@ -5,7 +5,7 @@ export function getExecutionRailForPair(pairId: CryptoPairId): CryptoOrder['exec
   if (pairId === 'USDC_BASE' || pairId === 'ETH_BASE') return 'base_treasury'
   if (isRoutedTreasuryPairId(pairId)) return 'routed_treasury'
   if (pairId === 'SUI_SUI') return 'sui_treasury'
-  if (pairId === 'TON_TON') return 'ton_treasury'
+  if (pairId === 'TON_TON' || pairId === 'USDT_TON') return 'ton_treasury'
   if (pairId === 'NEAR_NEAR') return 'near_intents'
   return null
 }

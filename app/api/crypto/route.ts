@@ -77,8 +77,8 @@ async function assertTreasuryCanExecuteBuy(input: {
     await assertSuiTreasuryCanExecuteBuy({ amountNgn: input.amountNgn })
     return
   }
-  if (input.pairId === 'TON_TON') {
-    await assertTonTreasuryCanExecuteBuy({ amountNgn: input.amountNgn })
+  if (input.pairId === 'TON_TON' || input.pairId === 'USDT_TON') {
+    await assertTonTreasuryCanExecuteBuy({ amountNgn: input.amountNgn, pairId: input.pairId, cryptoAmount: input.cryptoAmount })
     return
   }
   if (input.pairId === 'NEAR_NEAR') {
@@ -203,7 +203,7 @@ export async function POST(req: Request) {
             return { cryptoAmount: result.cryptoAmount, unitRate: result.unitRate, providerPayload: result.providerPayload }
           }
           if (executionRail === 'ton_treasury') {
-            const result = await getTonQuotedReceiveForBuy({ amountNgn, toAddress: walletAddress })
+            const result = await getTonQuotedReceiveForBuy({ pairId: requestedAsset.id, amountNgn, toAddress: walletAddress, buyRate: requestedAsset.buyRate })
             return { cryptoAmount: result.cryptoAmount, unitRate: result.unitRate, providerPayload: result.providerPayload }
           }
           if (executionRail === 'near_intents') {
@@ -303,8 +303,10 @@ export async function POST(req: Request) {
       if (action === 'buy' && executionRail === 'ton_treasury') {
         assertMinimumBuyAmount(requestedAsset, amount)
         const tonQuote = await getTonQuotedReceiveForBuy({
+          pairId: requestedAsset.id,
           amountNgn: amount,
           toAddress: walletAddress,
+          buyRate: requestedAsset.buyRate,
         })
         const data = await createCryptoQuote({
           userId: user.id,
@@ -441,7 +443,7 @@ export async function POST(req: Request) {
       } else if (executionRail === 'near_intents') {
         await assertNearIntentsTreasuryCanExecuteBuy({ amountNgn: amount })
       } else if (executionRail === 'ton_treasury') {
-        await assertTonTreasuryCanExecuteBuy({ amountNgn: amount })
+        await assertTonTreasuryCanExecuteBuy({ amountNgn: amount, pairId: asset.id, cryptoAmount: amount / asset.buyRate })
       } else {
         await assertTreasuryCanExecuteBuy({
           asset,
@@ -581,7 +583,7 @@ export async function POST(req: Request) {
       } else if (executionRail === 'sui_treasury') {
         await assertSuiTreasuryCanExecuteBuy({ amountNgn: quotedAmount })
       } else if (executionRail === 'ton_treasury') {
-        await assertTonTreasuryCanExecuteBuy({ amountNgn: quotedAmount })
+        await assertTonTreasuryCanExecuteBuy({ amountNgn: quotedAmount, pairId: asset.id, cryptoAmount })
       } else if (executionRail === 'near_intents') {
         await assertNearIntentsTreasuryCanExecuteBuy({ amountNgn: quotedAmount })
       } else {

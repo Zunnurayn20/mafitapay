@@ -1,6 +1,6 @@
 import { settleCryptoOrderTerminalState } from '@/lib/server/crypto-order-reconciliation'
 import { getCryptoOrderById, listCryptoOrders, updateCryptoOrderExecution, updateCryptoOrderProviderState } from '@/lib/server/data'
-import { getTonSwapStatus, queryTonSubmittedTransaction } from '@/lib/server/ton-executor'
+import { getTonSwapStatus, getTonUsdtTransferReceipt, queryTonSubmittedTransaction } from '@/lib/server/ton-executor'
 
 const AUTO_SYNC_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000]
 const WATCHDOG_INTERVAL_MS = 20_000
@@ -100,6 +100,44 @@ export async function syncTonReceiptForCryptoOrder(orderId: string, actorUserId:
   const queryId = typeof providerPayload.queryId === 'string' ? providerPayload.queryId : ''
   if (!ownerAddress || !routerAddress || !queryId) {
     throw new Error('TON swap metadata is incomplete for receipt sync.')
+  }
+
+  if (providerPayload.transferType === 'jetton') {
+    const recipientJettonWallet = typeof providerPayload.recipientJettonWallet === 'string' ? providerPayload.recipientJettonWallet : ''
+    const treasuryJettonWallet = typeof providerPayload.treasuryJettonWallet === 'string' ? providerPayload.treasuryJettonWallet : ''
+    if (!recipientJettonWallet || !treasuryJettonWallet) throw new Error('TON USDT transfer metadata is incomplete for receipt sync.')
+    const receipt = await getTonUsdtTransferReceipt({ recipientJettonWallet, treasuryJettonWallet, queryId })
+    if (!receipt.delivered && !receipt.failed) {
+      await updateCryptoOrderProviderState({ id: order.id, providerStatus: 'JETTON_TRANSFER_PENDING', providerPayload })
+      return { settled: false, status: { delivered: false }, order: (await getCryptoOrderById(order.id)) ?? order }
+    }
+
+    providerPayload.transferStatus = receipt.delivered ? 'delivered' : 'failed'
+    if (receipt.txHash) providerPayload.jettonTxHash = receipt.txHash
+    if (receipt.failed) {
+      await updateCryptoOrderProviderState({ id: order.id, providerStatus: 'JETTON_TRANSFER_FAILED', providerPayload })
+      const failed = await settleCryptoOrderTerminalState({
+        order,
+        outcome: 'failed',
+        actorUserId,
+        source: 'chain_receipt',
+        metadata: { txHash: receipt.txHash, queryId, pairId: order.pairId },
+      })
+      clearScheduledTonReceiptAutoSync(orderId)
+      return { settled: true, status: { delivered: false, failed: true }, ...failed }
+    }
+
+    await updateCryptoOrderExecution({ id: order.id, destinationTxHash: receipt.txHash ?? undefined })
+    await updateCryptoOrderProviderState({ id: order.id, providerStatus: 'JETTON_TRANSFER_COMPLETED', providerPayload })
+    const fulfilled = await settleCryptoOrderTerminalState({
+      order,
+      outcome: 'fulfilled',
+      actorUserId,
+      source: 'chain_receipt',
+      metadata: { txHash: receipt.txHash, queryId, pairId: order.pairId },
+    })
+    clearScheduledTonReceiptAutoSync(orderId)
+    return { settled: true, status: { delivered: true }, ...fulfilled }
   }
 
   let status

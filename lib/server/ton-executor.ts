@@ -1,6 +1,6 @@
 import { StonApiClient } from '@ston-fi/api'
 import { dexFactory } from '@ston-fi/sdk'
-import { Address, internal, toNano } from '@ton/ton'
+import { Address, beginCell, internal, JettonMaster, toNano } from '@ton/ton'
 import { mnemonicToPrivateKey } from '@ton/crypto'
 import { TonClient, WalletContractV4 } from '@ton/ton'
 import { getCryptoAssetById } from '@/lib/server/data'
@@ -15,6 +15,7 @@ const TON_MAINNET_WORKCHAIN = 0
 const TON_QUOTE_SLIPPAGE_TOLERANCE = '0.01'
 const MIN_TON_PREFLIGHT_GAS_BUFFER = toNano('0.2')
 const MIN_TON_POST_SUBMIT_RESERVE = toNano('0.02')
+const TON_JETTON_TRANSFER_GAS = toNano('0.1')
 const TON_TREASURY_BALANCE_CACHE_MS = 15_000
 
 type TonQuotePayload = {
@@ -328,6 +329,8 @@ export async function getTonTreasuryBalances() {
 
 export async function assertTonTreasuryCanExecuteBuy(input: {
   amountNgn: number
+  pairId?: string
+  cryptoAmount?: number
 }) {
   const health = await getTonExecutorHealth()
   if (!health.ready) {
@@ -337,8 +340,13 @@ export async function assertTonTreasuryCanExecuteBuy(input: {
   const balances = await getTonTreasuryBalances()
   const tonNano = BigInt(balances.tonNano)
   const usdtUnits = BigInt(balances.usdtUnits)
-  const stableAmount = await getStableTreasuryAmount(input.amountNgn)
-  const requiredUsdtUnits = amountToUnits(stableAmount, 6)
+  const stableAmount = input.pairId === 'USDT_TON'
+    ? input.cryptoAmount
+    : await getStableTreasuryAmount(input.amountNgn)
+  if (!Number.isFinite(stableAmount) || Number(stableAmount) <= 0) {
+    throw new Error('Unable to calculate the required TON treasury USDT inventory.')
+  }
+  const requiredUsdtUnits = amountToUnits(Number(stableAmount), 6)
   logTon('treasury.check', {
     amountNgn: input.amountNgn,
     availableTonNano: tonNano.toString(),
@@ -355,11 +363,31 @@ export async function assertTonTreasuryCanExecuteBuy(input: {
 }
 
 export async function getTonQuotedReceiveForBuy(input: {
+  pairId: string
   amountNgn: number
   toAddress: string
+  buyRate: number
 }) {
   try {
     const { stonApiClient, config } = await getTonClients()
+    if (input.pairId === 'USDT_TON') {
+      const receiverAddress = Address.parse(input.toAddress).toString()
+      const cryptoAmount = input.amountNgn / input.buyRate
+      if (!Number.isFinite(cryptoAmount) || cryptoAmount <= 0) throw new Error('TON USDT quote amount is invalid.')
+      const usdtUnits = amountToUnits(cryptoAmount, 6).toString()
+      return {
+        cryptoAmount: Number(usdtUnits) / 1_000_000,
+        unitRate: input.amountNgn / (Number(usdtUnits) / 1_000_000),
+        providerPayload: {
+          rail: 'ton_treasury',
+          transferType: 'jetton',
+          pairId: input.pairId,
+          jettonMasterAddress: config.usdtMasterAddress,
+          usdtUnits,
+          receiverAddress,
+        },
+      }
+    }
     const askAddress = await getTonNativeAssetAddress(stonApiClient)
     const treasuryStableAmount = await getStableTreasuryAmount(input.amountNgn)
     const offerUnits = amountToUnits(treasuryStableAmount, 6).toString()
@@ -442,6 +470,7 @@ function createOrderQueryId(order: CryptoOrder) {
 
 export async function buildTonSwapExecutionForOrder(order: CryptoOrder): Promise<TonSwapExecution> {
   try {
+    if (order.pairId === 'USDT_TON') return await executeTonUsdtJettonTransferForOrder(order)
     return await executeTonSwapForOrder(order)
   } catch (error) {
     const details = describeTonUpstreamError(error)
@@ -453,6 +482,137 @@ export async function buildTonSwapExecutionForOrder(order: CryptoOrder): Promise
     })
     throw new Error(TON_NETWORK_BUSY_MESSAGE)
   }
+}
+
+function createTonJettonQueryId(order: CryptoOrder) {
+  return BigInt(createOrderQueryId(order))
+}
+
+async function executeTonUsdtJettonTransferForOrder(order: CryptoOrder): Promise<TonSwapExecution> {
+  if (order.executionRail !== 'ton_treasury' || order.pairId !== 'USDT_TON') {
+    throw new Error('Only USDT_TON treasury orders can be executed through this transfer flow.')
+  }
+  if (!order.walletAddress) throw new Error('Destination wallet address is required for TON USDT execution.')
+
+  const payload = order.providerPayload ?? {}
+  const { contract, keyPair, wallet, tonClient, config, stonApiClient } = await getTonClients()
+  const receiverAddress = Address.parse(order.walletAddress)
+  const masterAddress = Address.parse(config.usdtMasterAddress)
+  const master = tonClient.open(JettonMaster.create(masterAddress))
+  const treasuryJettonWallet = await master.getWalletAddress(wallet.address)
+  const queryId = createTonJettonQueryId(order)
+  const transferUnits = amountToUnits(order.cryptoAmount, 6)
+  const availableUnits = BigInt((await getTonTreasuryBalances()).usdtUnits)
+  if (availableUnits < transferUnits) throw new Error('TON treasury USDT is too low to fulfill this order right now.')
+
+  const currentTonBalance = await tonClient.getBalance(wallet.address)
+  const requiredTonBalance = TON_JETTON_TRANSFER_GAS + MIN_TON_POST_SUBMIT_RESERVE
+  if (currentTonBalance < requiredTonBalance) throw new Error('TON treasury gas is too low to submit this USDT transfer right now.')
+
+  const body = beginCell()
+    .storeUint(0x0f8a7ea5, 32)
+    .storeUint(queryId, 64)
+    .storeCoins(transferUnits)
+    .storeAddress(receiverAddress)
+    .storeAddress(wallet.address)
+    .storeBit(false)
+    .storeCoins(BigInt(0))
+    .storeBit(false)
+    .endCell()
+
+  const seqno = await contract.getSeqno()
+  await contract.sendTransfer({
+    seqno,
+    secretKey: keyPair.secretKey,
+    messages: [internal({
+      to: treasuryJettonWallet,
+      value: TON_JETTON_TRANSFER_GAS,
+      body,
+      bounce: true,
+    })],
+  })
+
+  logTon('usdt.transfer.submitted', {
+    orderId: order.id,
+    receiverAddress: receiverAddress.toString(),
+    treasuryJettonWallet: treasuryJettonWallet.toString(),
+    usdtUnits: transferUnits.toString(),
+    queryId: queryId.toString(),
+    seqno,
+  })
+
+  const queryTx = await stonApiClient.queryTransactions({
+    walletAddress: wallet.address.toString(),
+    queryId: Number(queryId),
+    minTxTimestamp: new Date(Date.now() - 10 * 60_000),
+  }).catch(() => null)
+
+  return {
+    queryId: queryId.toString(),
+    routerAddress: treasuryJettonWallet.toString(),
+    providerPayload: {
+      ...payload,
+      rail: 'ton_treasury',
+      transferType: 'jetton',
+      ownerAddress: wallet.address.toString(),
+      routerAddress: treasuryJettonWallet.toString(),
+      receiverAddress: receiverAddress.toString(),
+      recipientJettonWallet: (await master.getWalletAddress(receiverAddress)).toString(),
+      treasuryJettonWallet: treasuryJettonWallet.toString(),
+      jettonMasterAddress: masterAddress.toString(),
+      queryId: queryId.toString(),
+      usdtUnits: transferUnits.toString(),
+      walletSeqno: seqno,
+      submittedAt: new Date().toISOString(),
+      externalMessageHash: queryTx?.txId?.hash ?? null,
+    },
+  }
+}
+
+export async function getTonUsdtTransferReceipt(input: {
+  recipientJettonWallet: string
+  treasuryJettonWallet: string
+  queryId: string
+}) {
+  const { tonClient } = await getTonClients()
+  const queryId = BigInt(input.queryId)
+  const isQuery = (body?: import('@ton/core').Cell) => {
+    if (!body) return false
+    try {
+      const slice = body.beginParse()
+      if (slice.remainingBits < 96 || slice.loadUint(32) !== 0x7362d09c) return false
+      return slice.loadUintBig(64) === queryId
+    } catch {
+      return false
+    }
+  }
+  const recipientTransactions = await tonClient.getTransactions(Address.parse(input.recipientJettonWallet), { limit: 30 })
+  const delivered = recipientTransactions.find(tx => tx.inMessage?.info.type === 'internal' && isQuery(tx.inMessage.body))
+  if (delivered) {
+    const description = delivered.description
+    const failed = description.type === 'generic'
+      && (description.aborted || (description.computePhase.type === 'vm' && !description.computePhase.success)
+        || (description.actionPhase != null && !description.actionPhase.success))
+    return { delivered: !failed, failed, txHash: delivered.hash().toString('hex') }
+  }
+
+  const treasuryTransactions = await tonClient.getTransactions(Address.parse(input.treasuryJettonWallet), { limit: 30 })
+  const transfer = treasuryTransactions.find(tx => {
+    const body = tx.inMessage?.body
+    if (!body) return false
+    try {
+      const slice = body.beginParse()
+      return slice.remainingBits >= 96 && slice.loadUint(32) === 0x0f8a7ea5 && slice.loadUintBig(64) === queryId
+    } catch {
+      return false
+    }
+  })
+  if (!transfer) return { delivered: false, failed: false, txHash: null }
+  const description = transfer.description
+  const failed = description.type === 'generic'
+    && (description.aborted || (description.computePhase.type === 'vm' && !description.computePhase.success)
+      || (description.actionPhase != null && !description.actionPhase.success))
+  return { delivered: false, failed, txHash: transfer.hash().toString('hex') }
 }
 
 async function executeTonSwapForOrder(order: CryptoOrder): Promise<TonSwapExecution> {

@@ -207,6 +207,7 @@ export type KnownCryptoPairId =
   | 'USDT_BSC'
   | 'USDC_BASE'
   | 'USDC_POLYGON'
+  | 'USDT_TON'
   | 'USDC_SOLANA'
   | 'ETH_BASE'
   | 'ETH_ETHEREUM'
@@ -309,7 +310,7 @@ export interface CryptoOrder {
   destinationLabel?: string
   walletAddress?: string
   exchange?: string
-  provider?: '0x' | 'lifi' | 'ston' | 'near_intents' | 'sui'
+  provider?: '0x' | 'lifi' | 'ston' | 'near_intents' | 'sui' | 'ton'
   providerOrderId?: string
   providerStatus?: string
   providerReference?: string

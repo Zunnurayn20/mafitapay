@@ -16,13 +16,13 @@ import { getZeroExBaseQuoteForOrder } from '@/lib/server/zerox'
 import type { CryptoOrder } from '@/types'
 
 type ExecutionSource = 'admin' | 'auto'
-type ExecutionMode = 'delivery' | 'zerox_swap' | 'lifi_route' | 'sui_inventory' | 'ton_swap' | 'near_swap'
+type ExecutionMode = 'delivery' | 'zerox_swap' | 'lifi_route' | 'sui_inventory' | 'ton_swap' | 'ton_transfer' | 'near_swap'
 
 function resolveExecutionMode(order: CryptoOrder): ExecutionMode {
   if (order.executionRail === 'routed_treasury') return 'lifi_route'
   if (order.executionRail === 'sui_treasury') return 'sui_inventory'
   if (order.executionRail === 'near_intents') return 'near_swap'
-  if (order.executionRail === 'ton_treasury') return 'ton_swap'
+  if (order.executionRail === 'ton_treasury') return order.pairId === 'USDT_TON' ? 'ton_transfer' : 'ton_swap'
   if (order.pairId === 'ETH_BASE') return 'zerox_swap'
   return 'delivery'
 }
@@ -246,7 +246,7 @@ export async function triggerCryptoOrderExecution(input: {
         ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
       },
     })
-  } else if (mode === 'ton_swap') {
+  } else if (mode === 'ton_swap' || mode === 'ton_transfer') {
     const tonExecution = await buildTonSwapExecutionForOrder(order)
     execution = {
       hash: typeof tonExecution.providerPayload.externalMessageHash === 'string' && tonExecution.providerPayload.externalMessageHash
@@ -256,9 +256,9 @@ export async function triggerCryptoOrderExecution(input: {
 
     await updateCryptoOrderProviderState({
       id: order.id,
-      provider: 'ston',
+      provider: mode === 'ton_transfer' ? 'ton' : 'ston',
       providerReference: tonExecution.routerAddress,
-      providerStatus: 'SWAP_SUBMITTED',
+      providerStatus: mode === 'ton_transfer' ? 'JETTON_TRANSFER_SUBMITTED' : 'SWAP_SUBMITTED',
       providerPayload: {
         ...tonExecution.providerPayload,
         ...(order.providerPayload?.platformCost ? { platformCost: order.providerPayload.platformCost } : {}),
@@ -292,7 +292,7 @@ export async function triggerCryptoOrderExecution(input: {
     executionRail: order.executionRail ?? 'base_treasury',
     executionStatus: 'broadcasted',
     executionReference: order.executionReference ?? `base_exec_${order.id}`,
-    destinationTxHash: mode === 'zerox_swap' || mode === 'lifi_route' || mode === 'ton_swap' || mode === 'near_swap' ? null : execution.hash,
+    destinationTxHash: mode === 'zerox_swap' || mode === 'lifi_route' || mode === 'ton_swap' || mode === 'ton_transfer' || mode === 'near_swap' ? null : execution.hash,
   })
 
   await insertAuditLog({

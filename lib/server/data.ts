@@ -243,7 +243,7 @@ function assertSupportedAssetExecutionRail(asset: CryptoAsset, executionRail: Cr
   if (executionRail === 'sui_treasury' && asset.id !== 'SUI_SUI') {
     throw new Error(`${asset.id} cannot use the SUI treasury rail.`)
   }
-  if (executionRail === 'ton_treasury' && asset.id !== 'TON_TON') {
+  if (executionRail === 'ton_treasury' && asset.id !== 'TON_TON' && asset.id !== 'USDT_TON') {
     throw new Error(`${asset.id} cannot use the TON treasury rail.`)
   }
   if (executionRail === 'near_intents' && asset.id !== 'NEAR_NEAR') {
