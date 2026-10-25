@@ -2,7 +2,7 @@ import type { CryptoAsset, CryptoNetwork, CryptoPairId, CryptoSymbol, KnownCrypt
 
 export type RoutedTreasuryPairId = Extract<
   KnownCryptoPairId,
-  'CNGN_BASE' | 'USDT_BSC' | 'BNB_BSC' | 'ETH_ARB' | 'ETH_OP' | 'POL_POLYGON' | 'ETH_LINEA' | 'ETH_ROBINHOOD' | 'USDC_SOLANA' | 'SOL_SOLANA'
+  'CNGN_BASE' | 'USDT_BSC' | 'BNB_BSC' | 'ETH_ARB' | 'ETH_OP' | 'POL_POLYGON' | 'USDC_POLYGON' | 'ETH_LINEA' | 'ETH_ROBINHOOD' | 'USDC_SOLANA' | 'SOL_SOLANA'
 >
 
 export type RoutedTreasuryAddressFamily = 'evm' | 'solana'
@@ -95,6 +95,18 @@ export const ROUTED_TREASURY_PAIR_CONFIG: Record<RoutedTreasuryPairId, RoutedTre
     addressFamily: 'evm',
     minimumBuyNgn: 500,
     maxQuoteDriftPercent: 1,
+  },
+  USDC_POLYGON: {
+    pairId: 'USDC_POLYGON',
+    symbol: 'USDC',
+    network: 'Polygon',
+    toChain: '137',
+    // Native Circle-issued Polygon USDC. Polygon USDC.e uses 0x2791... and is a different token.
+    toToken: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+    decimals: 6,
+    addressFamily: 'evm',
+    minimumBuyNgn: 500,
+    maxQuoteDriftPercent: 0.35,
   },
   ETH_LINEA: {
     pairId: 'ETH_LINEA',

@@ -206,6 +206,7 @@ export type KnownCryptoPairId =
   | 'CNGN_BASE'
   | 'USDT_BSC'
   | 'USDC_BASE'
+  | 'USDC_POLYGON'
   | 'USDC_SOLANA'
   | 'ETH_BASE'
   | 'ETH_ETHEREUM'
