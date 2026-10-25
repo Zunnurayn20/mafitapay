@@ -3385,6 +3385,8 @@ async function seedPostgresCatalogTables() {
     // Add new default pairs to existing databases without resetting admin-managed settings on conflict.
     const cngnAsset = CRYPTO_ASSETS.find(asset => asset.id === 'CNGN_BASE')
     if (cngnAsset) await insertSeedCryptoAssetPostgres(client, cngnAsset, now)
+    const tonUsdtAsset = CRYPTO_ASSETS.find(asset => asset.id === 'USDT_TON')
+    if (tonUsdtAsset) await insertSeedCryptoAssetPostgres(client, tonUsdtAsset, now)
 
     const billProviderCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM bill_providers')
     if (Number(billProviderCount.rows[0]?.count ?? 0) === 0) {
