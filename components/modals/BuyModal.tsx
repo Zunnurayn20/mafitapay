@@ -19,10 +19,13 @@ type AmountMode = 'ngn' | 'usd' | 'asset'
 const QUICK_NGN_AMOUNTS = [1000, 2000, 5000, 10000]
 const LAST_USED_BUY_ADDRESS_KEY = 'mafitapay:last-buy-addresses'
 
-function getApproxUsdNgnRate(asset?: CryptoAsset) {
+function getCustomerUsdNgnRate(asset?: CryptoAsset) {
   if (!asset) return 0
   if (asset.marketPriceUsd && asset.marketPriceUsd > 0 && asset.marketRate > 0) {
-    return asset.marketRate / asset.marketPriceUsd
+    // The USD selector means the dollar value of crypto the customer wants to buy.
+    // Convert it at the customer buy rate (which includes MafitaPay's margin), so
+    // the NGN charge buys the full requested USD value after pricing the asset.
+    return asset.buyRate / asset.marketPriceUsd
   }
   return 0
 }
@@ -88,7 +91,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
     ?? (modalAsset?.id === pairId && modalAsset.buyEnabled !== false ? modalAsset : undefined)
     ?? buyableAssets[0]
   const rawAmount = parseFloat(amount) || 0
-  const usdNgnRate = getApproxUsdNgnRate(asset)
+  const usdNgnRate = getCustomerUsdNgnRate(asset)
   const amt = !asset ? 0 : amountMode === 'asset'
     ? rawAmount * asset.buyRate
     : amountMode === 'usd'
@@ -433,7 +436,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
               {amountMode === 'asset'
                 ? `NGN required for requested amount: ${formatNGN(orderNgn)}`
                 : amountMode === 'usd'
-                  ? `Approximate NGN conversion: ${formatNGN(amt)}`
+                  ? `NGN charge at customer buy rate: ${formatNGN(amt)}`
                   : `Rate includes platform margin. Network fee covers on-chain gas.`}
             </div>
             {belowMinimum && (
