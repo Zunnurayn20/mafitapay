@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, Check, Copy, Shield } from 'lucide-react'
+import { ArrowRight, Building2, Check, Copy, Shield } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
@@ -333,13 +333,13 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           <button
             type="button"
             onClick={depositFromExchange}
-            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[rgba(202,165,96,.26)] bg-[rgba(202,165,96,.07)] px-4 py-3 text-left transition-colors hover:border-[var(--gold2)] hover:bg-[rgba(202,165,96,.11)] active:scale-[0.99]"
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--gold)] bg-[var(--gold)] px-4 py-3.5 text-left text-[var(--char)] shadow-[0_8px_22px_rgba(202,165,96,.22)] transition-all hover:brightness-105 active:scale-[0.99]"
           >
             <span className="min-w-0">
-              <span className="block text-[12px] font-bold text-[var(--gold2)]">From Exchanges?</span>
-              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--text2)]">Deposit USDT from Bybit with an internal transfer.</span>
+              <span className="block text-[13px] font-bold">From Exchanges?</span>
+              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Deposit USDT from Bybit with an internal transfer.</span>
             </span>
-            <span aria-hidden="true" className="shrink-0 text-base font-bold text-[var(--gold2)]">→</span>
+            <ArrowRight size={18} aria-hidden="true" className="shrink-0" />
           </button>
         )}
 
