@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { syncCryptoDepositEventsOnce } from '@/lib/server/crypto-deposit-scanner'
+import { syncCexInternalDepositsOnce } from '@/lib/server/cex-deposits'
 
 export const runtime = 'nodejs'
 // A scanner pass is capped at 45 seconds. Leave a small response margin above that limit.
@@ -33,8 +34,21 @@ export async function POST(req: Request) {
   }
 
   console.log('[crypto-deposit-scanner] job sync triggered (via /api/jobs/crypto-deposits/sync)')
-  const result = await syncCryptoDepositEventsOnce()
-  console.log('[crypto-deposit-scanner] job sync result:', result)
+  const [onchainResult, cexResult] = await Promise.allSettled([
+    syncCryptoDepositEventsOnce(),
+    syncCexInternalDepositsOnce(),
+  ])
+  if (onchainResult.status === 'rejected') {
+    console.error('[crypto-deposit-scanner] on-chain sync failed:', onchainResult.reason instanceof Error ? onchainResult.reason.message : 'unknown error')
+  }
+  if (cexResult.status === 'rejected') {
+    console.error('[crypto-cex-deposits] sync failed:', cexResult.reason instanceof Error ? cexResult.reason.message : 'unknown error')
+  }
+  const result = {
+    onchain: onchainResult.status === 'fulfilled' ? onchainResult.value : { error: 'on-chain sync failed' },
+    cex: cexResult.status === 'fulfilled' ? cexResult.value : { error: 'CEX sync failed' },
+  }
+  console.log('[crypto-deposit-sync] job result:', result)
   return NextResponse.json({
     data: result,
     success: true,

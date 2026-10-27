@@ -15,7 +15,14 @@ import {
   isDepositableCryptoAsset,
   type CryptoDepositAssetGroup,
 } from '@/lib/crypto-deposit-assets'
-import { CryptoAsset, CryptoPairId } from '@/types'
+import { CexDepositAccount, CryptoAsset, CryptoPairId } from '@/types'
+
+type CexDepositSetup = {
+  exchange: 'bybit'
+  enabled: boolean
+  receivingUid: string | null
+  account: CexDepositAccount | null
+}
 
 export function SellModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { showToast, modalData, cryptoDepositAddresses } = useAppStore()
@@ -31,15 +38,19 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [pickerSymbol, setPickerSymbol] = useState<string | null>(null)
   const [qrRenderKey, setQrRenderKey] = useState(0)
   const qrCodeCacheRef = useRef<Record<string, string>>({})
-  // Quick win: support Binance internal (CEX) deposit method for crypto-to-NGN
-  const [depositMethod, setDepositMethod] = useState<'wallet' | 'binance'>('wallet')
-  const [cexInstructions, setCexInstructions] = useState<{ uid: string; memo: string; instructions: string } | null>(null)
-  const [creatingCexIntent, setCreatingCexIntent] = useState(false)
+  const [depositMethod, setDepositMethod] = useState<'wallet' | 'exchange'>('wallet')
+  const [cexSetup, setCexSetup] = useState<CexDepositSetup | null>(null)
+  const [cexSenderUid, setCexSenderUid] = useState('')
+  const [savingCexAccount, setSavingCexAccount] = useState(false)
+  const [cexSetupError, setCexSetupError] = useState('')
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = sellableAssets.find(a => a.id === pairId)
     ?? (modalAsset?.id === pairId && modalAsset.sellEnabled !== false ? modalAsset : undefined)
     ?? sellableAssets[0]
+  const exchangeRateAsset = assets.find(item => item.id === 'USDT_BSC' && item.isActive !== false && item.sellEnabled !== false)
+    ?? assets.find(item => item.symbol.toUpperCase() === 'USDT' && item.isActive !== false && item.sellEnabled !== false)
+  const displayedSellAsset = depositMethod === 'exchange' && exchangeRateAsset ? exchangeRateAsset : asset
   const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
   const depositAddress = cryptoDepositAddresses.find(item => item.addressFamily === addressFamily && item.isActive)
   const pickerGroup = pickerSymbol
@@ -78,6 +89,42 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     if (sellableAssets.some(item => item.id === pairId)) return
     setPairId(sellableAssets[0].id)
   }, [open, pairId, sellableAssets])
+
+  useEffect(() => {
+    if (!open) {
+      setDepositMethod('wallet')
+      setCexSetup(null)
+      setCexSetupError('')
+      return
+    }
+    let cancelled = false
+    void fetch('/api/crypto/cex-deposit-account', { cache: 'no-store' })
+      .then(response => response.json())
+      .then(payload => {
+        if (!cancelled && payload?.success && payload.data) setCexSetup(payload.data as CexDepositSetup)
+      })
+      .catch(() => {
+        if (!cancelled) setCexSetup(null)
+      })
+    return () => { cancelled = true }
+  }, [open])
+
+  useEffect(() => {
+    if (!open || depositMethod !== 'exchange' || cexSetup?.account?.status !== 'pending_verification') return
+    const timer = window.setInterval(() => {
+      void fetch('/api/crypto/cex-deposit-account', { cache: 'no-store' })
+        .then(response => response.json())
+        .then(payload => {
+          if (payload?.success && payload.data) setCexSetup(payload.data as CexDepositSetup)
+        })
+        .catch(() => {})
+    }, 10_000)
+    return () => window.clearInterval(timer)
+  }, [cexSetup?.account?.status, depositMethod, open])
+
+  useEffect(() => {
+    if (asset?.symbol.toUpperCase() !== 'USDT') setDepositMethod('wallet')
+  }, [asset?.symbol])
 
   useEffect(() => {
     let cancelled = false
@@ -150,14 +197,43 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     showToast('Deposit address copied.')
   }
 
-  // createBinanceCexIntent temporarily parked (CEX feature skipped while focusing on on-chain)
-  // async function createBinanceCexIntent() { ... }
+  async function copyCexUid() {
+    if (!cexSetup?.receivingUid) return
+    await navigator.clipboard?.writeText(cexSetup.receivingUid)
+    showToast('Bybit UID copied.')
+  }
 
-  function copyCex(field: 'uid' | 'memo') {
-    const val = field === 'uid' ? cexInstructions?.uid : cexInstructions?.memo
-    if (val) {
-      navigator.clipboard?.writeText(val).then(() => showToast(`${field === 'uid' ? 'UID' : 'Memo'} copied`))
+  async function linkBybitUid() {
+    setSavingCexAccount(true)
+    setCexSetupError('')
+    try {
+      const response = await fetch('/api/crypto/cex-deposit-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exchange: 'bybit', senderUid: cexSetup?.account?.externalUid ?? cexSenderUid.trim() }),
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Could not link your Bybit UID.')
+      setCexSetup(current => current ? { ...current, account: payload.data.account } : current)
+      setCexSenderUid('')
+      showToast('Bybit UID linked. Send the exact verification amount to complete setup.')
+    } catch (error) {
+      setCexSetupError(error instanceof Error ? error.message : 'Could not link your Bybit UID.')
+    } finally {
+      setSavingCexAccount(false)
     }
+  }
+
+  async function unlinkBybitUid() {
+    if (!window.confirm('Stop auto-crediting transfers from this Bybit UID? Future exchange transfers will stay unmatched until you link a UID again.')) return
+    const response = await fetch('/api/crypto/cex-deposit-account', { method: 'DELETE' })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok || !payload?.success) {
+      setCexSetupError(payload?.error || 'Could not unlink this Bybit UID.')
+      return
+    }
+    setCexSetup(current => current ? { ...current, account: null } : current)
+    setCexSetupError('')
   }
 
   return (
@@ -174,7 +250,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
           <div className="relative flex items-center justify-between gap-3 border border-[rgba(202,165,96,.28)] bg-[var(--clay)] p-3">
             <div>
               <div className="text-[7px] uppercase tracking-[1px] text-[var(--text2)]">Auto-credit sell rate</div>
-              <div className="font-mono text-[15px] font-bold text-[var(--gold)]">{formatNGN(asset.sellRate)} / {asset.symbol}</div>
+              <div className="font-mono text-[15px] font-bold text-[var(--gold)]">{formatNGN(displayedSellAsset?.sellRate ?? asset.sellRate)} / {asset.symbol}</div>
               <div className="mt-1 text-[9px] text-[var(--muted)]">
                 Rate includes platform margin. No network fee is deducted from your credit.
               </div>
@@ -269,23 +345,24 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             )}
           </div>
 
-          {/* CEX Binance internal temporarily parked while focusing on on-chain deposit testing.
-              Only on-chain wallet deposits are active for now. */}
-          {/* <div className="flex gap-2 text-[9px]">
-            <button
-              onClick={() => { setDepositMethod('wallet'); setCexInstructions(null) }}
-              className={`flex-1 py-1 border ${depositMethod === 'wallet' ? 'border-[var(--gold2)] bg-[var(--clay2)]' : 'border-[var(--border)]'}`}
-            >
-              From Wallet (on-chain)
-            </button>
-            <button
-              onClick={() => setDepositMethod('binance')}
-              className={`flex-1 py-1 border ${depositMethod === 'binance' ? 'border-[var(--gold2)] bg-[var(--clay2)]' : 'border-[var(--border)]'}`}
-            >
-              From Binance (internal)
-            </button>
-          </div> */}
-          <div className="text-[8px] text-[var(--muted)]">Using on-chain wallet deposit (CEX internal parked for focused testing).</div>
+          {asset.symbol.toUpperCase() === 'USDT' && cexSetup?.enabled && (
+            <div className="flex gap-2 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setDepositMethod('wallet')}
+                className={`flex-1 rounded-lg border px-3 py-2 ${depositMethod === 'wallet' ? 'border-[var(--gold2)] bg-[var(--clay2)] text-[var(--text)]' : 'border-[var(--border)] text-[var(--muted)]'}`}
+              >
+                On-chain wallet
+              </button>
+              <button
+                type="button"
+                onClick={() => setDepositMethod('exchange')}
+                className={`flex-1 rounded-lg border px-3 py-2 ${depositMethod === 'exchange' ? 'border-[var(--gold2)] bg-[var(--clay2)] text-[var(--text)]' : 'border-[var(--border)] text-[var(--muted)]'}`}
+              >
+                Bybit transfer
+              </button>
+            </div>
+          )}
 
           {depositMethod === 'wallet' && (
             <>
@@ -318,24 +395,93 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             </>
           )}
 
-          {/* Binance CEX internal UI parked (see comment above). Only on-chain path active. */}
-          {/* {depositMethod === 'binance' && ( ... full block ... )} */}
-
-          <div className="border border-[rgba(196,52,26,.2)] border-l-4 border-l-[var(--red2)] bg-[rgba(196,52,26,.06)] p-3">
-            <div className="mb-1 text-[10px] font-bold text-[var(--red2)]">Send on the correct network</div>
-            <div className="text-[10px] leading-relaxed text-[var(--muted)]">
-              Select {asset.network} in the sender app. Sending another token or using the wrong network can permanently lose funds.
+          {depositMethod === 'exchange' && cexSetup?.enabled && (
+            <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] p-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Bybit · USDT internal transfer</div>
+                <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
+                  Send USDT from your Bybit account to MafitaPay’s Bybit UID. No blockchain network or gas fee is involved.
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3">
+                <div className="text-[8px] uppercase tracking-[1px] text-[var(--muted)]">MafitaPay Bybit UID</div>
+                <button type="button" onClick={() => void copyCexUid()} className="mt-1 break-all text-left font-mono text-[13px] font-bold text-[var(--gold2)]">
+                  {cexSetup.receivingUid}
+                </button>
+              </div>
+              {!cexSetup.account && (
+                <>
+                  <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="bybit-sender-uid">Your Bybit UID</label>
+                  <input
+                    id="bybit-sender-uid"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={cexSenderUid}
+                    onChange={event => setCexSenderUid(event.target.value.replace(/\D/g, '').slice(0, 24))}
+                    placeholder="Enter your Bybit UID"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]"
+                  />
+                  <div className="text-[9px] leading-relaxed text-[var(--muted)]">
+                    We’ll verify ownership with a one-time exact transfer. After verification, deposits from this UID will credit automatically.
+                  </div>
+                  {cexSetupError && <div className="text-[10px] text-[var(--red2)]">{cexSetupError}</div>}
+                  <Button variant="green" onClick={() => void linkBybitUid()} disabled={savingCexAccount || cexSenderUid.length < 4} className="w-full py-3">
+                    {savingCexAccount ? 'Linking Bybit UID…' : 'Link Bybit UID'}
+                  </Button>
+                </>
+              )}
+              {cexSetup.account?.status === 'pending_verification' && (
+                <div className="rounded-lg border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.08)] p-3">
+                  <div className="text-[10px] font-bold text-[var(--gold2)]">Verify your Bybit UID</div>
+                  <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
+                    From UID <span className="font-mono font-bold">{cexSetup.account.externalUid}</span>, transfer exactly{' '}
+                    <span className="font-mono font-bold">{cexSetup.account.challengeAmount.toFixed(2)} USDT</span> to MafitaPay’s UID above.
+                    This verification transfer is credited at the current sell rate. Expires {new Date(cexSetup.account.challengeExpiresAt).toLocaleString()}.
+                  </div>
+                  {new Date(cexSetup.account.challengeExpiresAt).getTime() > Date.now() ? (
+                    <div className="mt-2 text-[9px] text-[var(--muted)]">Waiting for the exchange record… this panel refreshes automatically.</div>
+                  ) : (
+                    <div className="mt-2 flex flex-col gap-2">
+                      <div className="text-[9px] text-[var(--muted)]">This verification amount expired. Generate a new amount if you have not sent the old one.</div>
+                      <Button variant="secondary" onClick={() => void linkBybitUid()} disabled={savingCexAccount} className="w-full py-2">
+                        {savingCexAccount ? 'Refreshing amount…' : 'Generate new amount'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {cexSetup.account?.status === 'verified' && (
+                <div className="rounded-lg border border-[rgba(58,155,110,.3)] bg-[rgba(58,155,110,.08)] p-3">
+                  <div className="text-[10px] font-bold text-[var(--green2)]">Bybit UID verified</div>
+                  <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
+                    Send USDT from UID <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the sell rate when detected. Other sender UIDs are not auto-credited.
+                  </div>
+                  <button type="button" onClick={() => void unlinkBybitUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked UID</button>
+                </div>
+              )}
+              <Button variant="secondary" onClick={handleClose} className="w-full py-3">Done</Button>
             </div>
-          </div>
+          )}
 
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => void copyAddress()} disabled={!depositAddress?.address} className="flex-1 py-3">
-              Copy Address
-            </Button>
-            <Button variant="green" onClick={handleClose} className="flex-1 py-3">
-              Done
-            </Button>
-          </div>
+          {depositMethod === 'wallet' && (
+            <>
+              <div className="border border-[rgba(196,52,26,.2)] border-l-4 border-l-[var(--red2)] bg-[rgba(196,52,26,.06)] p-3">
+                <div className="mb-1 text-[10px] font-bold text-[var(--red2)]">Send on the correct network</div>
+                <div className="text-[10px] leading-relaxed text-[var(--muted)]">
+                  Select {asset.network} in the sender app. Sending another token or using the wrong network can permanently lose funds.
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => void copyAddress()} disabled={!depositAddress?.address} className="flex-1 py-3">
+                  Copy Address
+                </Button>
+                <Button variant="green" onClick={handleClose} className="flex-1 py-3">
+                  Done
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </Modal>

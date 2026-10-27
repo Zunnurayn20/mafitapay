@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { getCryptoDisplaySymbol, getCryptoDisplaySymbolFromPairId } from '@/lib/crypto-symbols'
 import { AdminCryptoDepositReconciler } from './AdminCryptoDepositReconciler'
+import { AdminCexInboundTransfers } from './AdminCexInboundTransfers'
 import type { AdminSubmodule } from '../admin-config'
 import type { AdminWorkspaceState } from '../useAdminWorkspace'
 
@@ -327,6 +328,7 @@ export function AdminOperationsSection({ workspace, submodule }: { workspace: Ad
   const RichCryptoDepositsView = showCryptoDeposits ? (
     <div className="space-y-4">
       <AdminCryptoDepositReconciler />
+      <AdminCexInboundTransfers />
       {/* Header + Stats */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>

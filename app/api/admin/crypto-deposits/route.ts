@@ -14,7 +14,7 @@ import {
   recordBinanceInternalDeposit,
   getCexDepositIntentByReference,
   syncBinanceCexDeposits,
-  listCexDepositIntents,
+  listCexInboundTransfers,
 } from '@/lib/server/data'
 
 export async function GET(req: Request) {
@@ -34,9 +34,12 @@ export async function GET(req: Request) {
 
   // Include pending CEX intents for visibility into outstanding user deposit instructions (memos)
   // This helps admins see what references have been issued via SellModal but not yet matched by the poller.
-  const pendingCexIntents = await listCexDepositIntents({ status: 'pending', limit: 100 })
+  const cexEnabled = process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED === '1'
+  const cexTransfers = cexEnabled
+    ? await listCexInboundTransfers({ limit: 50 })
+    : []
 
-  return NextResponse.json({ data: events, recentGasStats, pendingCexIntents, success: true })
+  return NextResponse.json({ data: events, recentGasStats, pendingCexIntents: [], cexTransfers, cexEnabled, success: true })
 }
 
 export async function POST(req: Request) {

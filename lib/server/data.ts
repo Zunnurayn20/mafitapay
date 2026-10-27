@@ -21,7 +21,7 @@ import { BILL_SERVICE_TYPES } from '../bill-config'
 import { DATA_PLAN_CATEGORY_TYPES, getDataPlanCategoryKey, type DataPlanCategoryType } from '../data-plan-categories'
 import { hydrateCryptoAssetPricing, isCryptoMarketSnapshotFresh } from './crypto-market'
 import { isPostgresEnabled, queryPostgres, queryPostgresClient, withPostgresTransaction } from './postgres'
-import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositIntent, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
+import type { AuditLog, BankDirectoryEntry, Beneficiary, BeneficiaryVerification, BillProvider, CryptoAsset, CryptoDepositAddress, CryptoDepositEvent, CexDepositAccount, CexDepositAccountStatus, CexDepositIntent, CexExchange, CexInboundTransfer, CexInboundTransferStatus, CryptoOrder, CryptoPairId, CryptoQuote, DepositIntent, KycSubmission, LedgerEntry, NetworkProvider, PayoutRequest, ProviderDiagnosticsReport, ProviderEvent, ProviderHealthSummary, ReferralEntry, ReferralOverview, RewardAwardRecord, RewardAwardRequest, RewardRule, RewardRuleReport, RewardRuleSummary, Transaction, User, Wallet } from '../../types'
 import {
   settleDirectCryptoDeposit,
   settleCryptoSellDeposit,
@@ -1482,6 +1482,85 @@ type CexDepositIntentRow = {
   updated_at: string
 }
 
+type CexDepositAccountRow = {
+  id: string
+  user_id: string
+  exchange: string
+  external_uid: string
+  status: string
+  challenge_amount: number | string
+  challenge_asset: string
+  challenge_expires_at: string
+  verified_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+type CexInboundTransferRow = {
+  id: string
+  exchange: string
+  external_transfer_id: string
+  sender_uid: string
+  receiver_uid: string
+  asset_symbol: string
+  amount: number | string
+  provider_status: string
+  attribution_status: string
+  credited_user_id?: string | null
+  crypto_event_id?: string | null
+  transaction_id?: string | null
+  received_at: string
+  provider_payload?: string | Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export type CexDepositSyncState = {
+  exchange: CexExchange
+  windowStartMs: number
+  windowEndMs: number
+  nextCursor?: string
+}
+
+function mapCexDepositAccountRow(row: CexDepositAccountRow): CexDepositAccount {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    exchange: row.exchange as CexExchange,
+    externalUid: row.external_uid,
+    status: row.status as CexDepositAccountStatus,
+    challengeAmount: Number(row.challenge_amount),
+    challengeAsset: 'USDT',
+    challengeExpiresAt: row.challenge_expires_at,
+    verifiedAt: row.verified_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapCexInboundTransferRow(row: CexInboundTransferRow): CexInboundTransfer {
+  return {
+    id: row.id,
+    exchange: row.exchange as CexExchange,
+    externalTransferId: row.external_transfer_id,
+    senderUid: row.sender_uid,
+    receiverUid: row.receiver_uid,
+    assetSymbol: row.asset_symbol,
+    amount: Number(row.amount),
+    providerStatus: row.provider_status,
+    attributionStatus: row.attribution_status as CexInboundTransferStatus,
+    creditedUserId: row.credited_user_id ?? undefined,
+    cryptoEventId: row.crypto_event_id ?? undefined,
+    transactionId: row.transaction_id ?? undefined,
+    receivedAt: row.received_at,
+    providerPayload: typeof row.provider_payload === 'string'
+      ? parseJson(row.provider_payload, undefined)
+      : row.provider_payload ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function mapCexDepositIntentRow(row: CexDepositIntentRow): CexDepositIntent {
   return {
     id: row.id,
@@ -2273,6 +2352,58 @@ function initSchema(db: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS idx_cex_deposit_intents_reference
       ON cex_deposit_intents(reference);
+
+    CREATE TABLE IF NOT EXISTS cex_deposit_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      exchange TEXT NOT NULL,
+      external_uid TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending_verification', 'verified', 'disabled')),
+      challenge_amount NUMERIC NOT NULL,
+      challenge_asset TEXT NOT NULL DEFAULT 'USDT' CHECK (challenge_asset = 'USDT'),
+      challenge_expires_at TEXT NOT NULL,
+      verified_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (user_id, exchange),
+      UNIQUE (exchange, external_uid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cex_deposit_accounts_user_status
+      ON cex_deposit_accounts(user_id, status);
+
+    CREATE TABLE IF NOT EXISTS cex_inbound_transfers (
+      id TEXT PRIMARY KEY,
+      exchange TEXT NOT NULL,
+      external_transfer_id TEXT NOT NULL,
+      sender_uid TEXT NOT NULL,
+      receiver_uid TEXT NOT NULL,
+      asset_symbol TEXT NOT NULL,
+      amount NUMERIC NOT NULL CHECK (amount > 0),
+      provider_status TEXT NOT NULL,
+      attribution_status TEXT NOT NULL CHECK (attribution_status IN ('unmatched', 'pending_verification', 'processing', 'credited', 'ignored')),
+      credited_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      crypto_event_id TEXT REFERENCES crypto_deposit_events(id) ON DELETE SET NULL,
+      transaction_id TEXT,
+      received_at TEXT NOT NULL,
+      provider_payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (exchange, external_transfer_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cex_inbound_transfers_status_received
+      ON cex_inbound_transfers(attribution_status, received_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cex_inbound_transfers_sender
+      ON cex_inbound_transfers(exchange, sender_uid, received_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cex_inbound_transfers_user
+      ON cex_inbound_transfers(credited_user_id, received_at DESC);
+
+    CREATE TABLE IF NOT EXISTS cex_deposit_sync_state (
+      exchange TEXT PRIMARY KEY,
+      window_start_ms INTEGER NOT NULL,
+      window_end_ms INTEGER NOT NULL,
+      next_cursor TEXT,
+      updated_at TEXT NOT NULL
+    );
 
     -- Persisted incremental scan state for the on-chain deposit scanner (so restarts don't cause
     -- large historical re-scans or delays in picking up recent deposits).
@@ -6725,7 +6856,7 @@ export async function listCryptoDepositEvents(input: {
   pairId?: string
   status?: CryptoDepositEvent['status']
   sweepStatus?: string
-  source?: 'onchain' | 'binance_internal'
+  source?: 'onchain' | 'binance_internal' | 'cex_internal'
 } = {}): Promise<CryptoDepositEvent[]> {
   await ensureDbReady()
   let sql = `SELECT * FROM crypto_deposit_events WHERE 1=1`
@@ -6809,11 +6940,12 @@ export async function createCryptoDepositEvent(input: {
   blockNumber?: string
   logIndex?: number
   status: CryptoDepositEvent['status']
+  sweepStatus?: CryptoDepositEvent['sweepStatus']
   cryptoOrderId?: string
   transactionId?: string
   payload?: Record<string, unknown>
   // CEX fields (Binance internal first). source defaults to onchain for backward compat.
-  source?: 'onchain' | 'binance_internal'
+  source?: 'onchain' | 'binance_internal' | 'cex_internal'
   cexExchange?: string
   cexUid?: string
   cexTxId?: string
@@ -6834,7 +6966,7 @@ export async function createCryptoDepositEvent(input: {
       ON CONFLICT(external_event_id) DO NOTHING
     `, [id, input.externalEventId, input.userId, input.addressId ?? null, input.addressFamily ?? null,
       input.pairId, input.network ?? null, input.assetSymbol, input.amountCrypto, input.amountUnits,
-      input.txHash ?? null, input.blockNumber ?? null, input.logIndex ?? null, input.status, 'pending',
+      input.txHash ?? null, input.blockNumber ?? null, input.logIndex ?? null, input.status, input.sweepStatus ?? 'pending',
       input.cryptoOrderId ?? null, input.transactionId ?? null, input.payload ? JSON.stringify(input.payload) : null,
       source, input.cexExchange ?? null, input.cexUid ?? null, input.cexTxId ?? null, input.memo ?? null, now, now])
     const event = await getCryptoDepositEventByExternalId(input.externalEventId)
@@ -6865,7 +6997,7 @@ export async function createCryptoDepositEvent(input: {
     input.blockNumber ?? null,
     input.logIndex ?? null,
     input.status,
-    'pending',
+    input.sweepStatus ?? 'pending',
     input.cryptoOrderId ?? null,
     input.transactionId ?? null,
     input.payload ? JSON.stringify(input.payload) : null,
@@ -6883,7 +7015,192 @@ export async function createCryptoDepositEvent(input: {
   return event
 }
 
-// === CEX Deposit Intents (Binance internal transfers etc.) ===
+// === CEX sender ownership and transfer records ===
+export async function createCexDepositAccount(input: {
+  userId: string
+  exchange: CexExchange
+  externalUid: string
+  challengeAmount: number
+  challengeExpiresAt: string
+}): Promise<CexDepositAccount> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const id = `cda_${randomBytes(8).toString('hex')}`
+  const params = [id, input.userId, input.exchange, input.externalUid, 'pending_verification', input.challengeAmount, 'USDT', input.challengeExpiresAt, null, now, now]
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositAccountRow>(`
+      INSERT INTO cex_deposit_accounts (id, user_id, exchange, external_uid, status, challenge_amount, challenge_asset, challenge_expires_at, verified_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      RETURNING *
+    `, params)
+    return mapCexDepositAccountRow(result.rows[0])
+  }
+  getDb().prepare(`
+    INSERT INTO cex_deposit_accounts (id, user_id, exchange, external_uid, status, challenge_amount, challenge_asset, challenge_expires_at, verified_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(...params)
+  const row = getDb().prepare('SELECT * FROM cex_deposit_accounts WHERE id = ?').get(id) as CexDepositAccountRow
+  return mapCexDepositAccountRow(row)
+}
+
+export async function getCexDepositAccountByUser(userId: string, exchange: CexExchange): Promise<CexDepositAccount | null> {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositAccountRow>('SELECT * FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ? LIMIT 1', [userId, exchange])
+    return result.rows[0] ? mapCexDepositAccountRow(result.rows[0]) : null
+  }
+  const row = getDb().prepare('SELECT * FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ? LIMIT 1').get(userId, exchange) as CexDepositAccountRow | undefined
+  return row ? mapCexDepositAccountRow(row) : null
+}
+
+export async function deleteCexDepositAccount(userId: string, exchange: CexExchange): Promise<void> {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    await queryPostgres('DELETE FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ?', [userId, exchange])
+    return
+  }
+  getDb().prepare('DELETE FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ?').run(userId, exchange)
+}
+
+export async function getCexDepositAccountByExternalUid(exchange: CexExchange, externalUid: string): Promise<CexDepositAccount | null> {
+  await ensureDbReady()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositAccountRow>("SELECT * FROM cex_deposit_accounts WHERE exchange = ? AND external_uid = ? AND status <> 'disabled' LIMIT 1", [exchange, externalUid])
+    return result.rows[0] ? mapCexDepositAccountRow(result.rows[0]) : null
+  }
+  const row = getDb().prepare("SELECT * FROM cex_deposit_accounts WHERE exchange = ? AND external_uid = ? AND status <> 'disabled' LIMIT 1").get(exchange, externalUid) as CexDepositAccountRow | undefined
+  return row ? mapCexDepositAccountRow(row) : null
+}
+
+export async function markCexDepositAccountVerified(id: string): Promise<CexDepositAccount | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositAccountRow>(`UPDATE cex_deposit_accounts SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_verification' RETURNING *`, [now, now, id])
+    return result.rows[0] ? mapCexDepositAccountRow(result.rows[0]) : null
+  }
+  getDb().prepare("UPDATE cex_deposit_accounts SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_verification'").run(now, now, id)
+  const row = getDb().prepare('SELECT * FROM cex_deposit_accounts WHERE id = ?').get(id) as CexDepositAccountRow | undefined
+  return row ? mapCexDepositAccountRow(row) : null
+}
+
+export async function refreshExpiredCexDepositChallenge(input: {
+  userId: string
+  exchange: CexExchange
+  externalUid: string
+  challengeAmount: number
+  challengeExpiresAt: string
+}): Promise<CexDepositAccount | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexDepositAccountRow>(`
+      UPDATE cex_deposit_accounts
+      SET challenge_amount = ?, challenge_expires_at = ?, updated_at = ?
+      WHERE user_id = ? AND exchange = ? AND external_uid = ?
+        AND status = 'pending_verification' AND challenge_expires_at <= ?
+      RETURNING *
+    `, [input.challengeAmount, input.challengeExpiresAt, now, input.userId, input.exchange, input.externalUid, now])
+    return result.rows[0] ? mapCexDepositAccountRow(result.rows[0]) : null
+  }
+  getDb().prepare(`
+    UPDATE cex_deposit_accounts
+    SET challenge_amount = ?, challenge_expires_at = ?, updated_at = ?
+    WHERE user_id = ? AND exchange = ? AND external_uid = ?
+      AND status = 'pending_verification' AND challenge_expires_at <= ?
+  `).run(input.challengeAmount, input.challengeExpiresAt, now, input.userId, input.exchange, input.externalUid, now)
+  const row = getDb().prepare('SELECT * FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ? LIMIT 1').get(input.userId, input.exchange) as CexDepositAccountRow | undefined
+  return row ? mapCexDepositAccountRow(row) : null
+}
+
+export async function getCexDepositSyncState(exchange: CexExchange): Promise<CexDepositSyncState | null> {
+  await ensureDbReady()
+  const sql = 'SELECT exchange, window_start_ms, window_end_ms, next_cursor FROM cex_deposit_sync_state WHERE exchange = ? LIMIT 1'
+  const result = isPostgresEnabled()
+    ? await queryPostgres<{ exchange: string; window_start_ms: string | number; window_end_ms: string | number; next_cursor: string | null }>(sql, [exchange])
+    : { rows: [getDb().prepare(sql).get(exchange) as { exchange: string; window_start_ms: number; window_end_ms: number; next_cursor: string | null } | undefined].filter(Boolean) as Array<{ exchange: string; window_start_ms: number; window_end_ms: number; next_cursor: string | null }> }
+  const row = result.rows[0]
+  if (!row) return null
+  return { exchange: row.exchange as CexExchange, windowStartMs: Number(row.window_start_ms), windowEndMs: Number(row.window_end_ms), nextCursor: row.next_cursor ?? undefined }
+}
+
+export async function saveCexDepositSyncState(state: CexDepositSyncState): Promise<void> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const sql = `INSERT INTO cex_deposit_sync_state (exchange, window_start_ms, window_end_ms, next_cursor, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(exchange) DO UPDATE SET window_start_ms = excluded.window_start_ms, window_end_ms = excluded.window_end_ms, next_cursor = excluded.next_cursor, updated_at = excluded.updated_at`
+  const params = [state.exchange, state.windowStartMs, state.windowEndMs, state.nextCursor ?? null, now]
+  if (isPostgresEnabled()) await queryPostgres(sql, params)
+  else getDb().prepare(sql).run(...params)
+}
+
+export async function upsertCexInboundTransfer(input: Omit<CexInboundTransfer, 'id' | 'createdAt' | 'updatedAt'>): Promise<CexInboundTransfer> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  const id = `cit_${randomBytes(8).toString('hex')}`
+  const payload = input.providerPayload ? JSON.stringify(input.providerPayload) : '{}'
+  const params = [id, input.exchange, input.externalTransferId, input.senderUid, input.receiverUid, input.assetSymbol, input.amount, input.providerStatus, input.attributionStatus, input.creditedUserId ?? null, input.cryptoEventId ?? null, input.transactionId ?? null, input.receivedAt, payload, now, now]
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexInboundTransferRow>(`
+      INSERT INTO cex_inbound_transfers (id, exchange, external_transfer_id, sender_uid, receiver_uid, asset_symbol, amount, provider_status, attribution_status, credited_user_id, crypto_event_id, transaction_id, received_at, provider_payload, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+      ON CONFLICT (exchange, external_transfer_id) DO UPDATE
+      SET provider_status = EXCLUDED.provider_status, updated_at = EXCLUDED.updated_at
+      RETURNING *
+    `, params)
+    return mapCexInboundTransferRow(result.rows[0])
+  }
+  getDb().prepare(`
+    INSERT INTO cex_inbound_transfers (id, exchange, external_transfer_id, sender_uid, receiver_uid, asset_symbol, amount, provider_status, attribution_status, credited_user_id, crypto_event_id, transaction_id, received_at, provider_payload, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(exchange, external_transfer_id) DO UPDATE SET provider_status = excluded.provider_status, updated_at = excluded.updated_at
+  `).run(...params)
+  const row = getDb().prepare('SELECT * FROM cex_inbound_transfers WHERE exchange = ? AND external_transfer_id = ?').get(input.exchange, input.externalTransferId) as CexInboundTransferRow
+  return mapCexInboundTransferRow(row)
+}
+
+export async function updateCexInboundTransfer(input: {
+  id: string
+  attributionStatus: CexInboundTransferStatus
+  creditedUserId?: string
+  cryptoEventId?: string
+  transactionId?: string
+}): Promise<CexInboundTransfer | null> {
+  await ensureDbReady()
+  const now = new Date().toISOString()
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexInboundTransferRow>(`UPDATE cex_inbound_transfers SET attribution_status = ?, credited_user_id = COALESCE(?, credited_user_id), crypto_event_id = COALESCE(?, crypto_event_id), transaction_id = COALESCE(?, transaction_id), updated_at = ? WHERE id = ? RETURNING *`, [input.attributionStatus, input.creditedUserId ?? null, input.cryptoEventId ?? null, input.transactionId ?? null, now, input.id])
+    return result.rows[0] ? mapCexInboundTransferRow(result.rows[0]) : null
+  }
+  getDb().prepare(`UPDATE cex_inbound_transfers SET attribution_status = ?, credited_user_id = COALESCE(?, credited_user_id), crypto_event_id = COALESCE(?, crypto_event_id), transaction_id = COALESCE(?, transaction_id), updated_at = ? WHERE id = ?`).run(input.attributionStatus, input.creditedUserId ?? null, input.cryptoEventId ?? null, input.transactionId ?? null, now, input.id)
+  const row = getDb().prepare('SELECT * FROM cex_inbound_transfers WHERE id = ?').get(input.id) as CexInboundTransferRow | undefined
+  return row ? mapCexInboundTransferRow(row) : null
+}
+
+export async function listCexInboundTransfers(input: { limit?: number; status?: CexInboundTransferStatus; providerStatus?: string } = {}): Promise<CexInboundTransfer[]> {
+  await ensureDbReady()
+  const limit = Math.min(100, Math.max(1, input.limit ?? 50))
+  const params: Array<string | number> = []
+  let sql = 'SELECT * FROM cex_inbound_transfers'
+  if (input.status) {
+    sql += ' WHERE attribution_status = ?'
+    params.push(input.status)
+  }
+  if (input.providerStatus) {
+    sql += input.status ? ' AND provider_status = ?' : ' WHERE provider_status = ?'
+    params.push(input.providerStatus)
+  }
+  sql += ' ORDER BY received_at DESC LIMIT ?'
+  params.push(limit)
+  if (isPostgresEnabled()) {
+    const result = await queryPostgres<CexInboundTransferRow>(sql, params)
+    return result.rows.map(mapCexInboundTransferRow)
+  }
+  return (getDb().prepare(sql).all(...params) as CexInboundTransferRow[]).map(mapCexInboundTransferRow)
+}
+
+// === Legacy CEX Deposit Intents (Binance memo matching) ===
 
 export async function createCexDepositIntent(input: {
   userId: string
@@ -7328,7 +7645,7 @@ export async function markCryptoDepositEventMatched(input: {
   if (isPostgresEnabled()) {
     await queryPostgres(`
       UPDATE crypto_deposit_events SET status = 'matched',
-      sweep_status = CASE WHEN sweep_status = 'skipped' THEN 'pending' ELSE sweep_status END,
+      sweep_status = CASE WHEN sweep_status = 'skipped' AND source = 'onchain' THEN 'pending' ELSE sweep_status END,
       crypto_order_id = ?, transaction_id = ?, updated_at = ?
       WHERE external_event_id = ? AND status = 'unmatched'
     `, [input.cryptoOrderId ?? null, input.transactionId, now, input.externalEventId])
@@ -7337,7 +7654,7 @@ export async function markCryptoDepositEventMatched(input: {
   getDb().prepare(`
     UPDATE crypto_deposit_events
     SET status = 'matched',
-        sweep_status = CASE WHEN sweep_status = 'skipped' THEN 'pending' ELSE sweep_status END,
+        sweep_status = CASE WHEN sweep_status = 'skipped' AND source = 'onchain' THEN 'pending' ELSE sweep_status END,
         crypto_order_id = ?,
         transaction_id = ?,
         updated_at = ?

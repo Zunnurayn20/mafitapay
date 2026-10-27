@@ -366,7 +366,7 @@ export interface CryptoDepositEvent {
   createdAt: string
   updatedAt: string
   // CEX support (Binance internal transfers first). No auto-sweep; manual funds control on exchange.
-  source?: 'onchain' | 'binance_internal'
+  source?: 'onchain' | 'binance_internal' | 'cex_internal'
   cexExchange?: string
   cexUid?: string
   cexTxId?: string
@@ -386,6 +386,44 @@ export interface CexDepositIntent {
   matchedEventId?: string
   expiresAt?: string
   note?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type CexExchange = 'bybit'
+export type CexDepositAccountStatus = 'pending_verification' | 'verified' | 'disabled'
+
+export interface CexDepositAccount {
+  id: string
+  userId: string
+  exchange: CexExchange
+  externalUid: string
+  status: CexDepositAccountStatus
+  challengeAmount: number
+  challengeAsset: 'USDT'
+  challengeExpiresAt: string
+  verifiedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type CexInboundTransferStatus = 'unmatched' | 'pending_verification' | 'processing' | 'credited' | 'ignored'
+
+export interface CexInboundTransfer {
+  id: string
+  exchange: CexExchange
+  externalTransferId: string
+  senderUid: string
+  receiverUid: string
+  assetSymbol: string
+  amount: number
+  providerStatus: string
+  attributionStatus: CexInboundTransferStatus
+  creditedUserId?: string
+  cryptoEventId?: string
+  transactionId?: string
+  receivedAt: string
+  providerPayload?: Record<string, unknown>
   createdAt: string
   updatedAt: string
 }
