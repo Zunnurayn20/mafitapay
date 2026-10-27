@@ -25,7 +25,7 @@ type CexDepositSetup = {
 }
 
 export function SellModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { showToast, modalData, cryptoDepositAddresses } = useAppStore()
+  const { showToast, modalData, setModalData, cryptoDepositAddresses } = useAppStore()
   const assets = useCryptoAssets()
   const sellableAssets = useMemo(
     () => assets.filter(item => item.sellEnabled !== false && isDepositableCryptoAsset(item)),
@@ -68,6 +68,11 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     const presetPairId = typeof modalData.cryptoPairId === 'string' ? modalData.cryptoPairId : ''
     if (presetPairId) {
       setPairId(presetPairId as CryptoPairId)
+      if (modalData.cryptoDepositMethod === 'exchange') {
+        setDepositMethod('exchange')
+        // Consume the one-time handoff so a later, ordinary open starts on-chain.
+        setModalData({ cryptoAsset: modalAsset, cryptoPairId: presetPairId })
+      }
       initializedPairRef.current = true
       return
     }
@@ -82,7 +87,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setPairId(sellableAssets[0].id)
       initializedPairRef.current = true
     }
-  }, [modalAsset?.id, modalData.cryptoPairId, open, sellableAssets])
+  }, [modalAsset?.id, modalData.cryptoDepositMethod, modalData.cryptoPairId, open, sellableAssets, setModalData])
 
   useEffect(() => {
     if (!open || sellableAssets.length === 0) return
@@ -178,6 +183,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   function selectPair(nextPairId: CryptoPairId) {
     setPairId(nextPairId)
+    const nextAsset = sellableAssets.find(item => item.id === nextPairId)
+    if (nextAsset?.symbol.toUpperCase() !== 'USDT') setDepositMethod('wallet')
     setShowAssetPicker(false)
     setPickerSymbol(null)
   }

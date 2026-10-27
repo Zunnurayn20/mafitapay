@@ -37,6 +37,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null)
   const [selectedProvider, setSelectedProvider] = useState<FundingProvider>('palmpay')
   const [networkPickerSymbol, setNetworkPickerSymbol] = useState<string | null>(null)
+  const [exchangeDepositsEnabled, setExchangeDepositsEnabled] = useState(false)
   const hasSubmittedFundingIdentity = Boolean(
     kycSubmission
     && kycSubmission.status !== 'rejected'
@@ -54,6 +55,8 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   )
   const depositAssetGroups = useMemo(() => groupCryptoAssetsBySymbol(sellableAssets), [sellableAssets])
   const networkPickerGroup = depositAssetGroups.find(group => group.symbol === networkPickerSymbol) ?? null
+  const exchangeDepositAsset = sellableAssets.find(item => item.id === 'USDT_BSC')
+    ?? sellableAssets.find(item => item.symbol.toUpperCase() === 'USDT')
 
   useEffect(() => {
     if (!open) {
@@ -68,6 +71,23 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       setSelectedProvider('flutterwave')
     }
   }, [open, palmpayAccount, flutterwaveAccount])
+
+  useEffect(() => {
+    if (!open) {
+      setExchangeDepositsEnabled(false)
+      return
+    }
+    let cancelled = false
+    void fetch('/api/crypto/cex-deposit-account', { cache: 'no-store' })
+      .then(response => response.json())
+      .then(payload => {
+        if (!cancelled) setExchangeDepositsEnabled(payload?.success === true && payload?.data?.enabled === true)
+      })
+      .catch(() => {
+        if (!cancelled) setExchangeDepositsEnabled(false)
+      })
+    return () => { cancelled = true }
+  }, [open])
 
   const selectedAccount = selectedProvider === 'palmpay' ? palmpayAccount : flutterwaveAccount
   const hasAnyAccount = Boolean(palmpayAccount || flutterwaveAccount)
@@ -122,6 +142,19 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     closeModal()
     onClose()
     setModalData({ cryptoAsset: asset, cryptoPairId: asset.id })
+    openModal('sell')
+  }
+
+  function depositFromExchange() {
+    if (!exchangeDepositAsset) return
+    setNetworkPickerSymbol(null)
+    closeModal()
+    onClose()
+    setModalData({
+      cryptoAsset: exchangeDepositAsset,
+      cryptoPairId: exchangeDepositAsset.id,
+      cryptoDepositMethod: 'exchange',
+    })
     openModal('sell')
   }
 
@@ -275,11 +308,6 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
         {selectedAccount ? (
           <>
             {renderAccountCard(selectedAccount)}
-            {selectedProvider === 'flutterwave' && (
-              <div className="rounded-xl border border-[rgba(202,165,96,0.18)] bg-[rgba(202,165,96,0.06)] px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--text2)]">
-                Flutterwave deposit fees are capped at ₦50. MafitaPay covers any provider fee above that amount.
-              </div>
-            )}
           </>
         ) : selectedProvider === 'palmpay' ? (
           renderGeneratePanel({
@@ -299,6 +327,20 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             eligible: fundingAccountEligibility.eligible,
             blockedMessage: fundingAccountEligibility.message,
           })
+        )}
+
+        {exchangeDepositsEnabled && exchangeDepositAsset && (
+          <button
+            type="button"
+            onClick={depositFromExchange}
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[rgba(202,165,96,.26)] bg-[rgba(202,165,96,.07)] px-4 py-3 text-left transition-colors hover:border-[var(--gold2)] hover:bg-[rgba(202,165,96,.11)] active:scale-[0.99]"
+          >
+            <span className="min-w-0">
+              <span className="block text-[12px] font-bold text-[var(--gold2)]">From Exchanges?</span>
+              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--text2)]">Deposit USDT from Bybit with an internal transfer.</span>
+            </span>
+            <span aria-hidden="true" className="shrink-0 text-base font-bold text-[var(--gold2)]">→</span>
+          </button>
         )}
 
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4 shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]">
