@@ -32,7 +32,7 @@ type BybitResponse = {
 
 type BitgetInternalDeposit = {
   orderId?: string
-  recordId?: string
+  tradeId?: string
   coin?: string
   type?: string
   dest?: string
@@ -40,8 +40,8 @@ type BitgetInternalDeposit = {
   status?: string
   fromAddress?: string
   toAddress?: string
-  createdTime?: string
-  updatedTime?: string
+  cTime?: string
+  uTime?: string
 }
 
 type BitgetResponse = {
@@ -124,14 +124,14 @@ async function fetchBybitPage(input: {
 }
 
 function signBitget(timestamp: string, apiSecret: string, query: string) {
-  const content = `${timestamp}GET/api/v3/account/deposit-records${query ? `?${query}` : ''}`
+  const content = `${timestamp}GET/api/v2/spot/wallet/deposit-records${query ? `?${query}` : ''}`
   return createHmac('sha256', apiSecret).update(content).digest('base64')
 }
 
 async function fetchBitgetPage(input: {
   startTime: number
   endTime: number
-  cursor?: string
+  idLessThan?: string
   orderId?: string
 }) {
   const config = bitgetConfig()
@@ -143,11 +143,11 @@ async function fetchBitgetPage(input: {
   if (input.orderId) {
     params.set('orderId', input.orderId)
   } else {
-    if (input.cursor) params.set('cursor', input.cursor)
+    if (input.idLessThan) params.set('idLessThan', input.idLessThan)
   }
   const query = params.toString()
   const timestamp = String(Date.now())
-  const response = await fetch(`https://api.bitget.com/api/v3/account/deposit-records?${query}`, {
+  const response = await fetch(`https://api.bitget.com/api/v2/spot/wallet/deposit-records?${query}`, {
     method: 'GET',
     headers: {
       'ACCESS-KEY': config.apiKey,
@@ -321,9 +321,9 @@ async function acceptBitgetTransfer(row: BitgetInternalDeposit, receiverUid: str
   if (row.type?.toLowerCase() !== 'deposit' || row.dest?.toLowerCase() !== 'internal_transfer' || (assetSymbol !== 'USDT' && assetSymbol !== 'USDC')) return false
   // Deposit history can also contain on-chain records. Only accept internal transfers addressed to the configured MafitaPay UID.
   if (normalizeIdentifier(row.toAddress) !== normalizeIdentifier(receiverUid)) return false
-  const transferId = row.recordId?.trim() || row.orderId?.trim() || ''
+  const transferId = row.orderId?.trim() || row.tradeId?.trim() || ''
   const amount = getAmount(row.size)
-  const receivedAtMs = Number(row.createdTime)
+  const receivedAtMs = Number(row.cTime || row.uTime)
   const senderUid = row.fromAddress?.trim() || ''
   if (!transferId || !amount || !Number.isFinite(receivedAtMs)) return false
   return acceptCexTransfer({
@@ -405,13 +405,13 @@ async function syncBitgetInternalDeposits() {
   let credited = 0
   let pages = 0
   do {
-    const rows = await fetchBitgetPage({ startTime: windowStartMs, endTime: windowEndMs, cursor })
+    const rows = await fetchBitgetPage({ startTime: windowStartMs, endTime: windowEndMs, idLessThan: cursor })
     for (const row of rows) {
       checked += 1
       if (await acceptBitgetTransfer(row, config.receiverUid)) credited += 1
     }
     const nextCursor = rows.length >= PAGE_LIMIT
-      ? rows.map(row => row.orderId || row.recordId).filter((id): id is string => Boolean(id)).sort((a, b) => {
+      ? rows.map(row => row.orderId).filter((id): id is string => Boolean(id)).sort((a, b) => {
         if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
           const left = BigInt(a)
           const right = BigInt(b)
