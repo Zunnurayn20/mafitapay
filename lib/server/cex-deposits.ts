@@ -77,7 +77,10 @@ async function fetchBybitPage(input: {
     signal: AbortSignal.timeout(9_000),
     cache: 'no-store',
   })
-  if (!response.ok) throw new Error(`Bybit deposit history returned HTTP ${response.status}.`)
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300)
+    throw new Error(`Bybit deposit history returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`)
+  }
   const payload = await response.json() as BybitResponse
   if (payload.retCode !== 0) throw new Error(`Bybit deposit history failed with code ${payload.retCode ?? 'unknown'}.`)
   return {
@@ -101,8 +104,9 @@ async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
   const transferId = getBybitTransferId(row)
   const amount = getAmount(row.amount)
   const senderUid = row.fromMemberId?.trim()
-  const receivedAt = Number(row.createdTime)
-  if (!transferId || !amount || !senderUid || !/^\d{4,24}$/.test(senderUid) || !Number.isFinite(receivedAt)) return false
+  const createdTime = Number(row.createdTime)
+  const receivedAtMs = createdTime < 1_000_000_000_000 ? createdTime * 1000 : createdTime
+  if (!transferId || !amount || !senderUid || !/^\d{4,24}$/.test(senderUid) || !Number.isFinite(receivedAtMs)) return false
 
   const transfer = await upsertCexInboundTransfer({
     exchange: EXCHANGE,
@@ -113,7 +117,7 @@ async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
     amount,
     providerStatus: String(row.status ?? 'unknown'),
     attributionStatus: 'unmatched',
-    receivedAt: new Date(receivedAt).toISOString(),
+    receivedAt: new Date(receivedAtMs).toISOString(),
     // Deliberately persist only the fields needed to audit a credit; Bybit also returns masked contact data.
     providerPayload: { type: row.type, coin: 'USDT', status: row.status ?? null },
   })
