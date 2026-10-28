@@ -49,7 +49,11 @@ export async function inspectRecentBinanceUsdtDeposits() {
     cache: 'no-store',
     signal: AbortSignal.timeout(8_000),
   })
-  if (!timeResponse.ok) throw new Error(`Binance time endpoint returned HTTP ${timeResponse.status}.`)
+  if (!timeResponse.ok) {
+    const detail = (await timeResponse.text().catch(() => '')).slice(0, 240)
+    const regionalHint = timeResponse.status === 451 ? ' Binance may be blocking the server region or network.' : ''
+    throw new Error(`Binance time endpoint returned HTTP ${timeResponse.status}.${regionalHint}${detail ? ` ${detail}` : ''}`)
+  }
   const timePayload = await timeResponse.json() as { serverTime?: number }
   const timestamp = Number.isSafeInteger(timePayload.serverTime) ? timePayload.serverTime! : Date.now()
   const params = new URLSearchParams({

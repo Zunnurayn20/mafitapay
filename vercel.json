@@ -5,6 +5,9 @@
   "functions": {
     "app/api/jobs/crypto-deposits/sync/route.ts": {
       "regions": ["fra1"]
+    },
+    "app/api/admin/crypto-deposits/route.ts": {
+      "regions": ["fra1"]
     }
   }
 }
