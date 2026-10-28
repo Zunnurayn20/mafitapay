@@ -16,7 +16,7 @@ export function AdminCexInboundTransfers() {
   const [loading, setLoading] = useState(false)
   const [diagnosticLoading, setDiagnosticLoading] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
-  const [diagnostic, setDiagnostic] = useState<{ checkedAt: string; windowHours: number; records: Array<{ asset: string; amount: string | null; status: string | null; network: string | null; transferType: string | null; transferId: string | null; receivedAt: string | null; completedAt: string | null; memo: string | null }> } | null>(null)
+  const [diagnostic, setDiagnostic] = useState<{ checkedAt: string; windowHours: number; records: Array<{ asset: string; amount: string | null; status: string | null; network: string | null; transferType: string | null; transferId: string | null; receivedAt: string | null; completedAt: string | null; memo: string | null; senderUid: string | null; senderEmail: string | null }> } | null>(null)
 
   async function load() {
     setLoading(true)
@@ -105,8 +105,8 @@ export function AdminCexInboundTransfers() {
           <div className="text-xs text-[var(--muted)]">Checked {new Date(diagnostic.checkedAt).toLocaleString()} · last {diagnostic.windowHours} hours · {diagnostic.records.length} USDT records</div>
           {diagnostic.records.length === 0 ? <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3 text-xs text-[var(--muted)]">Binance returned no USDT deposit-history records in this window. This endpoint may not include UID internal transfers.</div> :
             <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-              <table className="w-full min-w-[720px] text-left text-xs">
-                <thead className="bg-[var(--clay2)] text-[var(--muted)]"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Network</th><th className="px-3 py-2">Transfer type</th><th className="px-3 py-2">Transfer ID</th><th className="px-3 py-2">Memo / remark</th></tr></thead>
+              <table className="w-full min-w-[900px] text-left text-xs">
+                <thead className="bg-[var(--clay2)] text-[var(--muted)]"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Network</th><th className="px-3 py-2">Transfer type</th><th className="px-3 py-2">Transfer ID</th><th className="px-3 py-2">Sender UID</th><th className="px-3 py-2">Sender email</th><th className="px-3 py-2">Memo / remark</th></tr></thead>
                 <tbody>{diagnostic.records.map((record, index) => <tr key={`${record.transferId ?? 'no-id'}-${index}`} className="border-t border-[var(--border)]">
                   <td className="px-3 py-2 text-[var(--text2)]">{record.receivedAt ? new Date(Number(record.receivedAt)).toLocaleString() : '—'}</td>
                   <td className="px-3 py-2 font-mono text-[var(--text)]">{record.amount ?? '—'} {record.asset}</td>
@@ -114,6 +114,8 @@ export function AdminCexInboundTransfers() {
                   <td className="px-3 py-2 text-[var(--text2)]">{record.network ?? '—'}</td>
                   <td className="px-3 py-2 text-[var(--text2)]">{record.transferType ?? '—'}</td>
                   <td className="max-w-48 truncate px-3 py-2 font-mono text-[var(--muted)]" title={record.transferId ?? undefined}>{record.transferId ?? '—'}</td>
+                  <td className="px-3 py-2 font-mono text-[var(--text2)]">{record.senderUid ?? '—'}</td>
+                  <td className="px-3 py-2 text-[var(--text2)]">{record.senderEmail ?? '—'}</td>
                   <td className="max-w-48 truncate px-3 py-2 text-[var(--text2)]" title={record.memo ?? undefined}>{record.memo ?? '—'}</td>
                 </tr>)}</tbody>
               </table>

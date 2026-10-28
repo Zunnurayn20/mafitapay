@@ -12,6 +12,12 @@ type BinanceDeposit = {
   completeTime?: unknown
   memo?: unknown
   remark?: unknown
+  senderUid?: unknown
+  fromUid?: unknown
+  fromId?: unknown
+  senderId?: unknown
+  senderEmail?: unknown
+  fromEmail?: unknown
 }
 
 function getConfig() {
@@ -81,6 +87,8 @@ export async function inspectRecentBinanceUsdtDeposits() {
       receivedAt: stringOrNull(row.insertTime),
       completedAt: stringOrNull(row.completeTime),
       memo: stringOrNull(row.memo) ?? stringOrNull(row.remark),
+      senderUid: stringOrNull(row.senderUid) ?? stringOrNull(row.fromUid) ?? stringOrNull(row.fromId) ?? stringOrNull(row.senderId),
+      senderEmail: stringOrNull(row.senderEmail) ?? stringOrNull(row.fromEmail),
     }))
 
   return { checkedAt: new Date().toISOString(), windowHours: 24, records }
