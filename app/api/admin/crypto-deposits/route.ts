@@ -7,6 +7,7 @@ import {
   syncCryptoDepositEventsOnce,
 } from '@/lib/server/crypto-deposit-scanner'
 import { getRecentSweepGasStats, runEvmTreasuryBatchConversion, sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
+import { inspectRecentBinanceUsdtDeposits, isBinanceDepositDiagnosticConfigured } from '@/lib/server/binance-cex-diagnostics'
 import {
   listCryptoDepositEvents,
   getCryptoDepositEventByExternalId,
@@ -39,7 +40,7 @@ export async function GET(req: Request) {
     ? await listCexInboundTransfers({ limit: 50 })
     : []
 
-  return NextResponse.json({ data: events, recentGasStats, pendingCexIntents: [], cexTransfers, cexEnabled, success: true })
+  return NextResponse.json({ data: events, recentGasStats, pendingCexIntents: [], cexTransfers, cexEnabled, binanceDiagnosticAvailable: isBinanceDepositDiagnosticConfigured(), success: true })
 }
 
 export async function POST(req: Request) {
@@ -48,6 +49,15 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}))
   const intent = body.intent || body.action || 'list'
+
+  if (intent === 'diagnose-binance-inbound') {
+    try {
+      const data = await inspectRecentBinanceUsdtDeposits()
+      return NextResponse.json({ data, success: true })
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not inspect Binance deposits.', success: false }, { status: 502 })
+    }
+  }
 
   if (intent === 'force-scan' || intent === 'forceScan') {
     const address = typeof body.address === 'string' ? body.address.trim() : ''

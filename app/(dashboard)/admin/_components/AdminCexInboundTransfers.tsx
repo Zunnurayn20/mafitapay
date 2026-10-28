@@ -11,8 +11,12 @@ function compact(value: string) {
 
 export function AdminCexInboundTransfers() {
   const [enabled, setEnabled] = useState(false)
+  const [binanceDiagnosticAvailable, setBinanceDiagnosticAvailable] = useState(false)
   const [items, setItems] = useState<CexInboundTransfer[]>([])
   const [loading, setLoading] = useState(false)
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false)
+  const [diagnosticError, setDiagnosticError] = useState('')
+  const [diagnostic, setDiagnostic] = useState<{ checkedAt: string; windowHours: number; records: Array<{ asset: string; amount: string | null; status: string | null; network: string | null; transferType: string | null; transferId: string | null; receivedAt: string | null; completedAt: string | null; memo: string | null }> } | null>(null)
 
   async function load() {
     setLoading(true)
@@ -21,6 +25,7 @@ export function AdminCexInboundTransfers() {
       const payload = await response.json()
       if (!response.ok || !payload?.success) throw new Error('Could not load exchange deposits.')
       setEnabled(Boolean(payload.cexEnabled))
+      setBinanceDiagnosticAvailable(Boolean(payload.binanceDiagnosticAvailable))
       setItems(Array.isArray(payload.cexTransfers) ? payload.cexTransfers : [])
     } catch {
       setItems([])
@@ -29,11 +34,33 @@ export function AdminCexInboundTransfers() {
     }
   }
 
+  async function inspectBinance() {
+    setDiagnosticLoading(true)
+    setDiagnosticError('')
+    try {
+      const response = await fetch('/api/admin/crypto-deposits', {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent: 'diagnose-binance-inbound' }),
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Could not inspect Binance deposits.')
+      setDiagnostic(payload.data)
+    } catch (error) {
+      setDiagnosticError(error instanceof Error ? error.message : 'Could not inspect Binance deposits.')
+    } finally {
+      setDiagnosticLoading(false)
+    }
+  }
+
   useEffect(() => { void load() }, [])
-  if (!enabled) return null
+  if (!enabled && !binanceDiagnosticAvailable) return null
 
   return (
     <Card className="space-y-3 p-4">
+      {enabled && <>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-bold text-[var(--text)]">Exchange transfers</div>
@@ -64,6 +91,35 @@ export function AdminCexInboundTransfers() {
           </table>
         </div>
       )}
+      </>}
+      {binanceDiagnosticAvailable && <div className="space-y-3 border-t border-[var(--border)] pt-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-bold text-[var(--text)]">Binance USDT diagnostic</div>
+            <div className="mt-1 text-xs text-[var(--muted)]">Read only. Checks Binance records from the last 24 hours and never credits a customer balance.</div>
+          </div>
+          <Button variant="secondary" onClick={() => void inspectBinance()} disabled={diagnosticLoading}>{diagnosticLoading ? 'Checking…' : 'Inspect Binance deposits'}</Button>
+        </div>
+        {diagnosticError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{diagnosticError}</div>}
+        {diagnostic && <>
+          <div className="text-xs text-[var(--muted)]">Checked {new Date(diagnostic.checkedAt).toLocaleString()} · last {diagnostic.windowHours} hours · {diagnostic.records.length} USDT records</div>
+          {diagnostic.records.length === 0 ? <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3 text-xs text-[var(--muted)]">Binance returned no USDT deposit-history records in this window. This endpoint may not include UID internal transfers.</div> :
+            <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+              <table className="w-full min-w-[720px] text-left text-xs">
+                <thead className="bg-[var(--clay2)] text-[var(--muted)]"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Network</th><th className="px-3 py-2">Transfer type</th><th className="px-3 py-2">Transfer ID</th><th className="px-3 py-2">Memo / remark</th></tr></thead>
+                <tbody>{diagnostic.records.map((record, index) => <tr key={`${record.transferId ?? 'no-id'}-${index}`} className="border-t border-[var(--border)]">
+                  <td className="px-3 py-2 text-[var(--text2)]">{record.receivedAt ? new Date(Number(record.receivedAt)).toLocaleString() : '—'}</td>
+                  <td className="px-3 py-2 font-mono text-[var(--text)]">{record.amount ?? '—'} {record.asset}</td>
+                  <td className="px-3 py-2 text-[var(--text2)]">{record.status ?? '—'}</td>
+                  <td className="px-3 py-2 text-[var(--text2)]">{record.network ?? '—'}</td>
+                  <td className="px-3 py-2 text-[var(--text2)]">{record.transferType ?? '—'}</td>
+                  <td className="max-w-48 truncate px-3 py-2 font-mono text-[var(--muted)]" title={record.transferId ?? undefined}>{record.transferId ?? '—'}</td>
+                  <td className="max-w-48 truncate px-3 py-2 text-[var(--text2)]" title={record.memo ?? undefined}>{record.memo ?? '—'}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>}
+        </>}
+      </div>}
     </Card>
   )
 }
