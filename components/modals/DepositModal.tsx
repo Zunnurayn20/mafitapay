@@ -337,7 +337,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           >
             <span className="min-w-0">
               <span className="block text-[13px] font-bold">From Exchanges?</span>
-              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Deposit USDT from Bybit with an internal transfer.</span>
+              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Deposit USDT or USDC from Bybit with an internal transfer.</span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
               <span className="flex -space-x-2" aria-label="Accepted exchange: Bybit">

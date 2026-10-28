@@ -55,7 +55,8 @@ async function fetchBybitPage(input: {
   const config = bybitConfig()
   if (!config) throw new Error('Bybit internal deposit credentials are not configured.')
 
-  const params = new URLSearchParams({ coin: 'USDT', limit: input.txId ? '1' : '50' })
+  // Omit `coin` so one Bybit poll can discover every supported stablecoin transfer.
+  const params = new URLSearchParams({ limit: input.txId ? '1' : '50' })
   if (input.txId) params.set('txID', input.txId)
   else {
     params.set('startTime', String(input.startTime))
@@ -100,7 +101,8 @@ function getBybitTransferId(row: BybitInternalDeposit) {
 }
 
 async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
-  if (row.type !== 1 || row.coin?.toUpperCase() !== 'USDT') return false
+  const assetSymbol = row.coin?.toUpperCase()
+  if (row.type !== 1 || (assetSymbol !== 'USDT' && assetSymbol !== 'USDC')) return false
   const transferId = getBybitTransferId(row)
   const amount = getAmount(row.amount)
   const senderUid = row.fromMemberId?.trim()
@@ -113,13 +115,13 @@ async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
     externalTransferId: transferId,
     senderUid,
     receiverUid,
-    assetSymbol: 'USDT',
+    assetSymbol,
     amount,
     providerStatus: String(row.status ?? 'unknown'),
     attributionStatus: 'unmatched',
     receivedAt: new Date(receivedAtMs).toISOString(),
     // Deliberately persist only the fields needed to audit a credit; Bybit also returns masked contact data.
-    providerPayload: { type: row.type, coin: 'USDT', status: row.status ?? null },
+    providerPayload: { type: row.type, coin: assetSymbol, status: row.status ?? null },
   })
 
   if (Number(row.status) !== 2 || transfer.attributionStatus === 'credited' || transfer.attributionStatus === 'ignored') return false
@@ -147,8 +149,9 @@ async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
 
   const externalEventId = `cex_${EXCHANGE}_${transfer.externalTransferId}`
   const assets = await getCryptoAssets()
-  const enabledUsdtAssets = assets.filter(item => item.symbol.toUpperCase() === 'USDT' && item.isActive !== false && item.sellEnabled !== false)
-  const asset = enabledUsdtAssets.find(item => item.id === 'USDT_BSC') ?? enabledUsdtAssets[0]
+  const enabledAssets = assets.filter(item => item.symbol.toUpperCase() === assetSymbol && item.isActive !== false && item.sellEnabled !== false)
+  const preferredPairId = assetSymbol === 'USDT' ? 'USDT_BSC' : 'USDC_BASE'
+  const asset = enabledAssets.find(item => item.id === preferredPairId) ?? enabledAssets[0]
   if (!asset) {
     await updateCexInboundTransfer({ id: transfer.id, attributionStatus: 'processing', creditedUserId: account.userId })
     return false
@@ -160,7 +163,7 @@ async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
     addressId: null,
     pairId: asset.id,
     network: 'Bybit internal transfer',
-    assetSymbol: 'USDT',
+    assetSymbol,
     amountCrypto: amount,
     amountUnits: row.amount!,
     txHash: null,

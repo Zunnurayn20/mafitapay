@@ -37,7 +37,7 @@ export function AdminCexInboundTransfers() {
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-bold text-[var(--text)]">Exchange transfers</div>
-          <div className="mt-1 text-xs text-[var(--muted)]">USDT transfers reported by connected exchanges. Unmatched or pending records were not credited automatically.</div>
+          <div className="mt-1 text-xs text-[var(--muted)]">USDT and USDC transfers reported by connected exchanges. Unmatched or pending records were not credited automatically.</div>
         </div>
         <Button variant="secondary" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</Button>
       </div>

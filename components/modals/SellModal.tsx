@@ -48,8 +48,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const asset = sellableAssets.find(a => a.id === pairId)
     ?? (modalAsset?.id === pairId && modalAsset.sellEnabled !== false ? modalAsset : undefined)
     ?? sellableAssets[0]
-  const exchangeRateAsset = assets.find(item => item.id === 'USDT_BSC' && item.isActive !== false && item.sellEnabled !== false)
-    ?? assets.find(item => item.symbol.toUpperCase() === 'USDT' && item.isActive !== false && item.sellEnabled !== false)
+  const exchangeRateAsset = assets.find(item => item.id === (asset?.symbol.toUpperCase() === 'USDC' ? 'USDC_BASE' : 'USDT_BSC') && item.isActive !== false && item.sellEnabled !== false)
+    ?? assets.find(item => item.symbol.toUpperCase() === asset?.symbol.toUpperCase() && item.isActive !== false && item.sellEnabled !== false)
   const displayedSellAsset = depositMethod === 'exchange' && exchangeRateAsset ? exchangeRateAsset : asset
   const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
   const depositAddress = cryptoDepositAddresses.find(item => item.addressFamily === addressFamily && item.isActive)
@@ -128,7 +128,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   }, [cexSetup?.account?.status, depositMethod, open])
 
   useEffect(() => {
-    if (asset?.symbol.toUpperCase() !== 'USDT') setDepositMethod('wallet')
+    if (!['USDT', 'USDC'].includes(asset?.symbol.toUpperCase() ?? '')) setDepositMethod('wallet')
   }, [asset?.symbol])
 
   useEffect(() => {
@@ -184,7 +184,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   function selectPair(nextPairId: CryptoPairId) {
     setPairId(nextPairId)
     const nextAsset = sellableAssets.find(item => item.id === nextPairId)
-    if (nextAsset?.symbol.toUpperCase() !== 'USDT') setDepositMethod('wallet')
+    if (!['USDT', 'USDC'].includes(nextAsset?.symbol.toUpperCase() ?? '')) setDepositMethod('wallet')
     setShowAssetPicker(false)
     setPickerSymbol(null)
   }
@@ -352,7 +352,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             )}
           </div>
 
-          {asset.symbol.toUpperCase() === 'USDT' && cexSetup?.enabled && (
+          {['USDT', 'USDC'].includes(asset.symbol.toUpperCase()) && cexSetup?.enabled && (
             <div className="flex gap-2 text-[10px]">
               <button
                 type="button"
@@ -405,9 +405,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
           {depositMethod === 'exchange' && cexSetup?.enabled && (
             <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] p-4">
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Bybit · USDT internal transfer</div>
+                <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">Bybit · {asset.symbol} internal transfer</div>
                 <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
-                  Send USDT from your Bybit account to MafitaPay’s Bybit UID. No blockchain network or gas fee is involved.
+                  Send {asset.symbol} from your Bybit account to MafitaPay’s Bybit UID. No blockchain network or gas fee is involved.
                 </div>
               </div>
               <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3">
@@ -461,7 +461,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                 <div className="rounded-lg border border-[rgba(58,155,110,.3)] bg-[rgba(58,155,110,.08)] p-3">
                   <div className="text-[10px] font-bold text-[var(--green2)]">Bybit UID verified</div>
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
-                    Send USDT from UID <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the sell rate when detected. Other sender UIDs are not auto-credited.
+                  Send USDT or USDC from UID <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender UIDs are not auto-credited.
                   </div>
                   <button type="button" onClick={() => void unlinkBybitUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked UID</button>
                 </div>
