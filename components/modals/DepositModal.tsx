@@ -38,6 +38,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const [selectedProvider, setSelectedProvider] = useState<FundingProvider>('palmpay')
   const [networkPickerSymbol, setNetworkPickerSymbol] = useState<string | null>(null)
   const [exchangeDepositsEnabled, setExchangeDepositsEnabled] = useState(false)
+  const [exchangeDepositNames, setExchangeDepositNames] = useState<string[]>([])
   const hasSubmittedFundingIdentity = Boolean(
     kycSubmission
     && kycSubmission.status !== 'rejected'
@@ -75,16 +76,25 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   useEffect(() => {
     if (!open) {
       setExchangeDepositsEnabled(false)
+      setExchangeDepositNames([])
       return
     }
     let cancelled = false
     void fetch('/api/crypto/cex-deposit-account', { cache: 'no-store' })
       .then(response => response.json())
       .then(payload => {
-        if (!cancelled) setExchangeDepositsEnabled(payload?.success === true && payload?.data?.enabled === true)
+        if (!cancelled) {
+          const exchanges = Object.values(payload?.data?.exchanges ?? {}) as Array<{ enabled?: boolean; exchange?: string }>
+          const names = exchanges.filter(item => item.enabled).map(item => item.exchange === 'bitget' ? 'Bitget' : 'Bybit')
+          setExchangeDepositNames(names)
+          setExchangeDepositsEnabled(payload?.success === true && names.length > 0)
+        }
       })
       .catch(() => {
-        if (!cancelled) setExchangeDepositsEnabled(false)
+        if (!cancelled) {
+          setExchangeDepositsEnabled(false)
+          setExchangeDepositNames([])
+        }
       })
     return () => { cancelled = true }
   }, [open])
@@ -337,16 +347,17 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           >
             <span className="min-w-0">
               <span className="block text-[13px] font-bold">From Exchanges?</span>
-              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Deposit USDT or USDC from Bybit with an internal transfer.</span>
+              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Deposit USDT or USDC from {exchangeDepositNames.join(' or ')} with an internal transfer.</span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
-              <span className="flex -space-x-2" aria-label="Accepted exchange: Bybit">
-                <span
-                  title="Bybit"
-                  className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#17181b] text-[9px] font-black tracking-[-0.08em] text-white shadow-sm"
-                >
-                  <span><span className="text-[#f7a600]">B</span>Y</span>
-                </span>
+              <span className="flex -space-x-2" aria-label={`Accepted exchanges: ${exchangeDepositNames.join(' and ')}`}>
+                {exchangeDepositNames.map(exchange => exchange === 'Bybit' ? (
+                  <span key={exchange} title="Bybit" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#17181b] text-[9px] font-black tracking-[-0.08em] text-white shadow-sm">
+                    <span><span className="text-[#f7a600]">B</span>Y</span>
+                  </span>
+                ) : (
+                  <span key={exchange} title="Bitget" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#101821] text-[9px] font-black tracking-[-0.08em] text-[#00d6a3] shadow-sm">BG</span>
+                ))}
               </span>
               <ArrowRight size={18} aria-hidden="true" />
             </span>

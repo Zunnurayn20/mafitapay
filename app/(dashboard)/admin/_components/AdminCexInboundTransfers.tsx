@@ -14,6 +14,8 @@ export function AdminCexInboundTransfers() {
   const [binanceDiagnosticAvailable, setBinanceDiagnosticAvailable] = useState(false)
   const [items, setItems] = useState<CexInboundTransfer[]>([])
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState('')
   const [diagnosticLoading, setDiagnosticLoading] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
   const [diagnostic, setDiagnostic] = useState<{ checkedAt: string; windowHours: number; records: Array<{ asset: string; amount: string | null; status: string | null; network: string | null; transferType: string | null; transferId: string | null; receivedAt: string | null; completedAt: string | null; memo: string | null; senderUid: string | null; senderEmail: string | null }> } | null>(null)
@@ -55,6 +57,27 @@ export function AdminCexInboundTransfers() {
     }
   }
 
+  async function syncExchanges() {
+    setSyncing(true)
+    setSyncError('')
+    try {
+      const response = await fetch('/api/admin/crypto-deposits', {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent: 'sync-cex-internal' }),
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Could not sync exchange transfers.')
+      await load()
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : 'Could not sync exchange transfers.')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   useEffect(() => { void load() }, [])
   if (!enabled && !binanceDiagnosticAvailable) return null
 
@@ -66,8 +89,12 @@ export function AdminCexInboundTransfers() {
           <div className="text-sm font-bold text-[var(--text)]">Exchange transfers</div>
           <div className="mt-1 text-xs text-[var(--muted)]">USDT and USDC transfers reported by connected exchanges. Unmatched or pending records were not credited automatically.</div>
         </div>
-        <Button variant="secondary" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => void syncExchanges()} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync now'}</Button>
+          <Button variant="secondary" onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</Button>
+        </div>
       </div>
+      {syncError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{syncError}</div>}
       {items.length === 0 ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3 text-xs text-[var(--muted)]">No exchange transfers have been reported yet.</div>
       ) : (

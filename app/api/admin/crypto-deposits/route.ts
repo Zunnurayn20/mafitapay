@@ -8,6 +8,7 @@ import {
 } from '@/lib/server/crypto-deposit-scanner'
 import { getRecentSweepGasStats, runEvmTreasuryBatchConversion, sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
 import { inspectRecentBinanceUsdtDeposits, isBinanceDepositDiagnosticConfigured } from '@/lib/server/binance-cex-diagnostics'
+import { syncCexInternalDepositsOnce } from '@/lib/server/cex-deposits'
 import {
   listCryptoDepositEvents,
   getCryptoDepositEventByExternalId,
@@ -57,6 +58,11 @@ export async function POST(req: Request) {
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Could not inspect Binance deposits.', success: false }, { status: 502 })
     }
+  }
+
+  if (intent === 'sync-cex-internal') {
+    const data = await syncCexInternalDepositsOnce()
+    return NextResponse.json({ data, success: true })
   }
 
   if (intent === 'force-scan' || intent === 'forceScan') {
