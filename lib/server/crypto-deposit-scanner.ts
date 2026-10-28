@@ -1013,7 +1013,7 @@ export async function reconcileErc20DepositTransaction(input: {
 
 export async function settleDirectCryptoDeposit(input: {
   event: CryptoDepositEvent
-  asset: SupportedDepositAsset
+  asset: Pick<SupportedDepositAsset, 'pairId' | 'network' | 'symbol'> & { sellRate?: number }
 }) {
   if (VERBOSE_DEPOSIT_SCANNER || input.asset.pairId !== 'TON_TON') {
     console.log(`[crypto-deposit-scanner] settleDirectCryptoDeposit for event=${input.event.externalEventId} pair=${input.asset.pairId} cryptoAmount=${input.event.amountCrypto}`)
@@ -1034,8 +1034,6 @@ export async function settleDirectCryptoDeposit(input: {
   let sellRate = typeof assetForRate?.sellRate === 'number' ? assetForRate.sellRate : 0
 
   if (!Number.isFinite(sellRate) || sellRate <= 0) {
-    // Last resort: try the asset's own configured rate if present on the SupportedDepositAsset (some paths carry it)
-    // @ts-expect-error - optional on the local asset type
     sellRate = typeof input.asset.sellRate === 'number' ? input.asset.sellRate : sellRate
   }
 

@@ -182,7 +182,15 @@ async function acceptTransfer(row: BybitInternalDeposit, receiverUid: string) {
   })
   if (event.status === 'matched') return true
 
-  const settled = await settleDirectCryptoDeposit({ event, asset: { ...asset, network: 'Bybit internal transfer' } as any })
+  const settled = await settleDirectCryptoDeposit({
+    event,
+    asset: {
+      pairId: asset.id,
+      network: 'Bybit internal transfer',
+      symbol: asset.symbol,
+      sellRate: asset.sellRate,
+    },
+  })
   const transactionId = settled.transactionId
   await updateCexInboundTransfer({
     id: transfer.id,
