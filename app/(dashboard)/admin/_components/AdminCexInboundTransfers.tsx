@@ -5,6 +5,16 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import type { CexInboundTransfer } from '@/types'
 
+type CexSyncResult = {
+  exchange: string
+  configured?: boolean
+  checked?: number
+  credited?: number
+  pages?: number
+  morePages?: boolean
+  error?: string
+}
+
 function compact(value: string) {
   return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value
 }
@@ -16,6 +26,7 @@ export function AdminCexInboundTransfers() {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState('')
+  const [syncResults, setSyncResults] = useState<CexSyncResult[] | null>(null)
   const [diagnosticLoading, setDiagnosticLoading] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
   const [diagnostic, setDiagnostic] = useState<{ checkedAt: string; windowHours: number; records: Array<{ asset: string; amount: string | null; status: string | null; network: string | null; transferType: string | null; transferId: string | null; receivedAt: string | null; completedAt: string | null; memo: string | null; senderUid: string | null; senderEmail: string | null }> } | null>(null)
@@ -60,6 +71,7 @@ export function AdminCexInboundTransfers() {
   async function syncExchanges() {
     setSyncing(true)
     setSyncError('')
+    setSyncResults(null)
     try {
       const response = await fetch('/api/admin/crypto-deposits', {
         method: 'POST',
@@ -70,6 +82,9 @@ export function AdminCexInboundTransfers() {
       })
       const payload = await response.json()
       if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Could not sync exchange transfers.')
+      const results = payload?.data?.exchanges
+      if (!Array.isArray(results)) throw new Error('Exchange sync completed without returning provider results.')
+      setSyncResults(results as CexSyncResult[])
       await load()
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : 'Could not sync exchange transfers.')
@@ -95,6 +110,27 @@ export function AdminCexInboundTransfers() {
         </div>
       </div>
       {syncError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{syncError}</div>}
+      {syncResults && <div className="space-y-2" aria-live="polite">
+        {syncResults.map(result => {
+          const name = result.exchange === 'bitget' ? 'Bitget' : result.exchange === 'bybit' ? 'Bybit' : result.exchange
+          const failed = Boolean(result.error)
+          const notConfigured = result.configured === false
+          const style = failed
+            ? 'border-red-500/30 bg-red-500/10 text-red-300'
+            : notConfigured
+              ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+          const message = failed
+            ? result.error
+            : notConfigured
+              ? 'Not configured for automatic deposits.'
+              : `Connected · checked ${result.checked ?? 0} records · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+          return <div key={result.exchange} className={`rounded-lg border p-3 text-xs ${style}`}>
+            <span className="font-bold">{name}:</span> {message}
+          </div>
+        })}
+        <div className="text-[10px] text-[var(--muted)]">This reads the exchange’s deposit history and automatically credits any successful transfer that matches a verified user UID.</div>
+      </div>}
       {items.length === 0 ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3 text-xs text-[var(--muted)]">No exchange transfers have been reported yet.</div>
       ) : (
