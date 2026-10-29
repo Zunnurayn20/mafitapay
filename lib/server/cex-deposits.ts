@@ -199,6 +199,11 @@ function bitgetSenderIdentifierKind(value: string | undefined) {
   return 'other'
 }
 
+function isBitgetInternalDestination(value: string | undefined) {
+  const destination = normalizeIdentifier(value).replace(/[ -]/g, '_')
+  return destination === 'internal' || destination === 'internal_transfer'
+}
+
 async function acceptCexTransfer(input: {
   exchange: CexExchange
   externalTransferId: string
@@ -338,7 +343,7 @@ async function acceptBybitTransfer(row: BybitInternalDeposit, receiverUid: strin
 
 async function acceptBitgetTransfer(row: BitgetInternalDeposit, receiverUid: string) {
   const assetSymbol = row.coin?.toUpperCase()
-  if (row.type?.toLowerCase() !== 'deposit' || row.dest?.toLowerCase() !== 'internal_transfer' || (assetSymbol !== 'USDT' && assetSymbol !== 'USDC')) return false
+  if (row.type?.toLowerCase() !== 'deposit' || !isBitgetInternalDestination(row.dest) || (assetSymbol !== 'USDT' && assetSymbol !== 'USDC')) return false
   // Deposit history can also contain on-chain records. Only accept internal transfers addressed to the configured MafitaPay UID.
   if (normalizeIdentifier(row.toAddress) !== normalizeIdentifier(receiverUid)) return false
   const transferId = row.orderId?.trim() || row.tradeId?.trim() || ''
@@ -440,7 +445,7 @@ async function syncBitgetInternalDeposits() {
     const rows = await fetchBitgetPage({ startTime: windowStartMs, endTime: windowEndMs, idLessThan: cursor })
     for (const row of rows) {
       checked += 1
-      if (row.type?.toLowerCase() === 'deposit' && row.dest?.toLowerCase() === 'internal_transfer') {
+      if (row.type?.toLowerCase() === 'deposit' && isBitgetInternalDestination(row.dest)) {
         internalTransfers += 1
         if (normalizeIdentifier(row.toAddress) === normalizeIdentifier(config.receiverUid)) recipientMatches += 1
       }
@@ -488,7 +493,7 @@ async function syncBitgetInternalDeposits() {
     const rows = await fetchBitgetPage({ startTime: Math.max(0, receivedAt - 60_000), endTime: receivedAt + 60_000, orderId: transfer.externalTransferId })
     for (const row of rows) {
       checked += 1
-      if (row.type?.toLowerCase() === 'deposit' && row.dest?.toLowerCase() === 'internal_transfer') {
+      if (row.type?.toLowerCase() === 'deposit' && isBitgetInternalDestination(row.dest)) {
         internalTransfers += 1
         if (normalizeIdentifier(row.toAddress) === normalizeIdentifier(config.receiverUid)) recipientMatches += 1
       }
