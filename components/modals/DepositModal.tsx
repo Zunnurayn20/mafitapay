@@ -355,8 +355,12 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
                   <span key={exchange} title="Bybit" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#17181b] text-[9px] font-black tracking-[-0.08em] text-white shadow-sm">
                     <span><span className="text-[#f7a600]">B</span>Y</span>
                   </span>
-                ) : (
+                ) : exchange === 'Bitget' ? (
                   <span key={exchange} title="Bitget" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#101821] text-[9px] font-black tracking-[-0.08em] text-[#00d6a3] shadow-sm">BG</span>
+                ) : (
+                  <span key={exchange} title="OKX" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#17181b] shadow-sm">
+                    <img src="/exchange-icons/okx.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 brightness-0 invert" />
+                  </span>
                 ))}
               </span>
               <ArrowRight size={18} aria-hidden="true" />

@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, Copy } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
@@ -452,9 +452,18 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               </div>
               <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3">
                 <div className="text-[8px] uppercase tracking-[1px] text-[var(--muted)]">MafitaPay {exchangeLabel} UID</div>
-                <button type="button" onClick={() => void copyCexUid()} className="mt-1 break-all text-left font-mono text-[13px] font-bold text-[var(--gold2)]">
-                  {cexSetup.receivingUid}
-                </button>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 break-all font-mono text-[13px] font-bold text-[var(--gold2)]">{cexSetup.receivingUid}</span>
+                  <button
+                    type="button"
+                    onClick={() => void copyCexUid()}
+                    aria-label={`Copy MafitaPay ${exchangeLabel} UID`}
+                    title="Copy UID"
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--coal)] text-[var(--text2)] transition hover:border-[var(--gold2)] hover:text-[var(--gold2)]"
+                  >
+                    <Copy size={14} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
               {!cexSetup.account && (
                 <>
