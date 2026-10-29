@@ -5,11 +5,12 @@ import { ArrowRight, Building2, Check, Copy, Shield } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
+import { CexLogo } from '@/components/ui/CexLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { getNetworkFallbackLabel, getNetworkIconUrl } from '@/lib/crypto-networks'
 import { groupCryptoAssetsBySymbol, isDepositableCryptoAsset } from '@/lib/crypto-deposit-assets'
-import type { CryptoAsset, Wallet } from '@/types'
+import type { CexExchange, CryptoAsset, Wallet } from '@/types'
 
 type FundingAccount = Wallet['virtualAccounts'][number]
 type FundingProvider = 'palmpay' | 'flutterwave'
@@ -351,17 +352,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             </span>
             <span className="flex shrink-0 items-center gap-2">
               <span className="flex -space-x-2" aria-label={`Accepted exchanges: ${exchangeDepositNames.join(' and ')}`}>
-                {exchangeDepositNames.map(exchange => exchange === 'Bybit' ? (
-                  <span key={exchange} title="Bybit" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#17181b] text-[9px] font-black tracking-[-0.08em] text-white shadow-sm">
-                    <span><span className="text-[#f7a600]">B</span>Y</span>
-                  </span>
-                ) : exchange === 'Bitget' ? (
-                  <span key={exchange} title="Bitget" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#101821] text-[9px] font-black tracking-[-0.08em] text-[#00d6a3] shadow-sm">BG</span>
-                ) : (
-                  <span key={exchange} title="OKX" className="grid h-7 w-7 place-items-center rounded-full border-2 border-[var(--gold)] bg-[#17181b] shadow-sm">
-                    <img src="/exchange-icons/okx.svg" alt="" aria-hidden="true" className="h-3.5 w-3.5 brightness-0 invert" />
-                  </span>
-                ))}
+                {exchangeDepositNames.map(exchange => {
+                  const exchangeId = exchange.toLowerCase() as CexExchange
+                  return <span key={exchange} title={exchange}><CexLogo exchange={exchangeId} /></span>
+                })}
               </span>
               <ArrowRight size={18} aria-hidden="true" />
             </span>

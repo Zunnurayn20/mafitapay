@@ -5,6 +5,7 @@ import { ChevronLeft, Copy } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
+import { CexLogo } from '@/components/ui/CexLogo'
 import { useCryptoAssets } from '@/lib/client/catalogs'
 import { useAppStore } from '@/store'
 import { formatNGN } from '@/lib/utils'
@@ -437,8 +438,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     key={exchange.exchange}
                     type="button"
                     onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSenderEmail(''); setCexSenderPhone(''); setCexSetupError('') }}
-                    className={`flex-1 rounded-lg border px-3 py-2 text-[10px] font-bold ${selectedExchange === exchange.exchange ? 'border-[var(--gold2)] bg-[var(--clay2)] text-[var(--text)]' : 'border-[var(--border)] text-[var(--muted)]'}`}
+                    className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold ${selectedExchange === exchange.exchange ? 'border-[var(--gold2)] bg-[var(--clay2)] text-[var(--text)]' : 'border-[var(--border)] text-[var(--muted)]'}`}
                   >
+                    <CexLogo exchange={exchange.exchange} size="sm" />
                     {exchange.exchange === 'bybit' ? 'Bybit' : exchange.exchange === 'bitget' ? 'Bitget' : 'OKX'}
                   </button>
                 ))}
@@ -472,6 +474,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     <input id="cex-sender-email" type="email" inputMode="email" autoComplete="email" value={cexSenderEmail} maxLength={254} onChange={event => setCexSenderEmail(event.target.value.slice(0, 254))} placeholder="name@example.com" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
                     <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-phone">Phone number on your OKX account</label>
                     <input id="cex-sender-phone" type="tel" inputMode="tel" autoComplete="tel" value={cexSenderPhone} maxLength={20} onChange={event => setCexSenderPhone(event.target.value.slice(0, 20))} placeholder="+2348012345678" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
+                    <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[9px] leading-relaxed text-amber-200">
+                      Include the + country code. For Nigeria, enter +234 and drop the leading 0 (for example, 08012345678 becomes +2348012345678).
+                    </div>
                   </> : <>
                     <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">
                       {selectedExchange === 'bybit' ? 'Your Bybit UID' : 'Your Bitget UID, email, or phone number'}
