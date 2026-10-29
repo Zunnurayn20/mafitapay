@@ -190,6 +190,15 @@ function normalizeSenderIdentifier(exchange: CexExchange, value: string | undefi
   return ''
 }
 
+function bitgetSenderIdentifierKind(value: string | undefined) {
+  const identifier = value?.trim() ?? ''
+  if (!identifier) return 'missing'
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return 'email'
+  if (/^\+?[0-9][0-9 ()-]{5,23}$/.test(identifier)) return 'phone'
+  if (/^\d{4,24}$/.test(identifier)) return 'UID'
+  return 'other'
+}
+
 async function acceptCexTransfer(input: {
   exchange: CexExchange
   externalTransferId: string
@@ -416,6 +425,16 @@ async function syncBitgetInternalDeposits() {
   let credited = 0
   let internalTransfers = 0
   let recipientMatches = 0
+  const recordSamples: Array<{
+    asset: string | null
+    amount: string | null
+    status: string | null
+    type: string | null
+    destination: string | null
+    senderIdentifierKind: string
+    recipientMatches: boolean
+    referenceSuffix: string | null
+  }> = []
   let pages = 0
   do {
     const rows = await fetchBitgetPage({ startTime: windowStartMs, endTime: windowEndMs, idLessThan: cursor })
@@ -424,6 +443,19 @@ async function syncBitgetInternalDeposits() {
       if (row.type?.toLowerCase() === 'deposit' && row.dest?.toLowerCase() === 'internal_transfer') {
         internalTransfers += 1
         if (normalizeIdentifier(row.toAddress) === normalizeIdentifier(config.receiverUid)) recipientMatches += 1
+      }
+      if (recordSamples.length < 10) {
+        const orderId = row.orderId?.trim() || row.tradeId?.trim() || ''
+        recordSamples.push({
+          asset: row.coin?.toUpperCase() || null,
+          amount: row.size || null,
+          status: row.status?.toLowerCase() || null,
+          type: row.type || null,
+          destination: row.dest || null,
+          senderIdentifierKind: bitgetSenderIdentifierKind(row.fromAddress),
+          recipientMatches: normalizeIdentifier(row.toAddress) === normalizeIdentifier(config.receiverUid),
+          referenceSuffix: orderId ? orderId.slice(-8) : null,
+        })
       }
       if (await acceptBitgetTransfer(row, config.receiverUid)) credited += 1
     }
@@ -464,7 +496,7 @@ async function syncBitgetInternalDeposits() {
     }
   }
 
-  return { configured: true, exchange: BITGET, checked, internalTransfers, recipientMatches, credited, pages, morePages: Boolean(cursor) }
+  return { configured: true, exchange: BITGET, checked, internalTransfers, recipientMatches, credited, recordSamples, pages, morePages: Boolean(cursor) }
 }
 
 export async function syncCexInternalDepositsOnce() {

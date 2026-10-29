@@ -12,6 +12,16 @@ type CexSyncResult = {
   internalTransfers?: number
   recipientMatches?: number
   credited?: number
+  recordSamples?: Array<{
+    asset: string | null
+    amount: string | null
+    status: string | null
+    type: string | null
+    destination: string | null
+    senderIdentifierKind: string
+    recipientMatches: boolean
+    referenceSuffix: string | null
+  }>
   pages?: number
   morePages?: boolean
   error?: string
@@ -133,6 +143,24 @@ export function AdminCexInboundTransfers() {
             <span className="font-bold">{name}:</span> {message}
           </div>
         })}
+        {syncResults.find(result => result.exchange === 'bitget')?.recordSamples?.length ? (
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[var(--text2)]">Bitget records returned</div>
+            <div className="space-y-1.5">
+              {syncResults.find(result => result.exchange === 'bitget')!.recordSamples!.map((record, index) => (
+                <div key={`${record.referenceSuffix ?? 'record'}-${index}`} className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[var(--muted)]">
+                  <span className="font-semibold text-[var(--text)]">{record.amount ?? '—'} {record.asset ?? ''}</span>
+                  <span>type: {record.type ?? '—'}</span>
+                  <span>destination: {record.destination ?? '—'}</span>
+                  <span>sender ID: {record.senderIdentifierKind}</span>
+                  <span>to MafitaPay UID: {record.recipientMatches ? 'yes' : 'no'}</span>
+                  <span>status: {record.status ?? '—'}</span>
+                  {record.referenceSuffix && <span>ref …{record.referenceSuffix}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="text-[10px] text-[var(--muted)]">This reads the exchange’s deposit history and automatically credits any successful transfer that matches a verified user UID.</div>
       </div>}
       {items.length === 0 ? (
