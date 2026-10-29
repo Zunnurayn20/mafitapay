@@ -441,15 +441,15 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSenderEmail(''); setCexSenderPhone(''); setCexSetupError('') }}
                     className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold transition-colors ${exchange.exchange === 'bybit'
                       ? selectedExchange === exchange.exchange
-                        ? 'border-[#f7a600] bg-[#f7a600]/15 text-[#ffd27a] shadow-[inset_0_0_0_1px_rgba(247,166,0,.14)]'
-                        : 'border-[#f7a600]/30 bg-[#f7a600]/5 text-[#e6b84f] hover:bg-[#f7a600]/10'
+                        ? 'border-[#f7a600] bg-[#202124] text-[#ffd27a] shadow-[inset_0_0_0_1px_rgba(247,166,0,.14)]'
+                        : 'border-[#f7a600]/40 bg-[#17181b] text-[#e6b84f] hover:bg-[#242528]'
                       : exchange.exchange === 'bitget'
                         ? selectedExchange === exchange.exchange
-                          ? 'border-[#00d6a3] bg-[#00d6a3]/15 text-[#70f0cc] shadow-[inset_0_0_0_1px_rgba(0,214,163,.14)]'
-                          : 'border-[#00d6a3]/30 bg-[#00d6a3]/5 text-[#63cdb0] hover:bg-[#00d6a3]/10'
+                          ? 'border-[#00d6a3] bg-[#202124] text-[#70f0cc] shadow-[inset_0_0_0_1px_rgba(0,214,163,.14)]'
+                          : 'border-[#00d6a3]/40 bg-[#17181b] text-[#63cdb0] hover:bg-[#242528]'
                         : selectedExchange === exchange.exchange
-                          ? 'border-white/70 bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.12)]'
-                          : 'border-white/25 bg-white/[0.03] text-white/70 hover:bg-white/[0.07]'}`}
+                          ? 'border-white/70 bg-[#202124] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.12)]'
+                          : 'border-white/30 bg-[#17181b] text-white/70 hover:bg-[#242528]'}`}
                   >
                     <CexLogo exchange={exchange.exchange} size="sm" />
                     {exchange.exchange === 'bybit' ? 'Bybit' : exchange.exchange === 'bitget' ? 'Bitget' : 'OKX'}
