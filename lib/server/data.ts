@@ -2377,6 +2377,13 @@ function initSchema(db: DatabaseSync) {
       created_at TEXT NOT NULL,
       PRIMARY KEY (exchange, external_identifier)
     );
+    CREATE TABLE IF NOT EXISTS cex_deposit_account_active_identifiers (
+      exchange TEXT NOT NULL,
+      external_identifier TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (exchange, external_identifier)
+    );
 
     CREATE TABLE IF NOT EXISTS cex_inbound_transfers (
       id TEXT PRIMARY KEY,
@@ -7027,6 +7034,7 @@ export async function createCexDepositAccount(input: {
   userId: string
   exchange: CexExchange
   externalUid: string
+  externalIdentifiers?: string[]
   challengeAmount: number
   challengeExpiresAt: string
 }): Promise<CexDepositAccount> {
@@ -7034,76 +7042,110 @@ export async function createCexDepositAccount(input: {
   const now = new Date().toISOString()
   const id = `cda_${randomBytes(8).toString('hex')}`
   const params = [id, input.userId, input.exchange, input.externalUid, 'pending_verification', input.challengeAmount, 'USDT', input.challengeExpiresAt, null, now, now]
+  const externalIdentifiers = [...new Set([input.externalUid, ...(input.externalIdentifiers ?? [])].map(value => value.trim()).filter(Boolean))]
   if (isPostgresEnabled()) {
-    const result = await queryPostgres<CexDepositAccountRow>(`
-      INSERT INTO cex_deposit_accounts (id, user_id, exchange, external_uid, status, challenge_amount, challenge_asset, challenge_expires_at, verified_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING *
-    `, params)
-    try {
-      await queryPostgres(`
+    const row = await withPostgresTransaction(async client => {
+      const result = await queryPostgresClient<CexDepositAccountRow>(client, `
+        INSERT INTO cex_deposit_accounts (id, user_id, exchange, external_uid, status, challenge_amount, challenge_asset, challenge_expires_at, verified_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING *
+      `, params)
+      for (const externalIdentifier of externalIdentifiers) {
+        await queryPostgresClient(client, `
         INSERT INTO cex_deposit_account_identifiers (exchange, external_identifier, user_id, created_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT (exchange, external_identifier) DO UPDATE SET created_at = EXCLUDED.created_at
         WHERE cex_deposit_account_identifiers.user_id = EXCLUDED.user_id
-      `, [input.exchange, input.externalUid, input.userId, now])
-      const ownership = await queryPostgres<{ user_id: string }>(
+        `, [input.exchange, externalIdentifier, input.userId, now])
+        const ownership = await queryPostgresClient<{ user_id: string }>(client,
         'SELECT user_id FROM cex_deposit_account_identifiers WHERE exchange = ? AND external_identifier = ? LIMIT 1',
-        [input.exchange, input.externalUid],
-      )
-      if (ownership.rows[0]?.user_id !== input.userId) throw new Error('Exchange identifier is already reserved.')
-    } catch (error) {
-      await queryPostgres('DELETE FROM cex_deposit_accounts WHERE id = ?', [id])
-      throw error
-    }
-    return mapCexDepositAccountRow(result.rows[0])
+        [input.exchange, externalIdentifier])
+        if (ownership.rows[0]?.user_id !== input.userId) throw new Error('Exchange identifier is already reserved.')
+        await queryPostgresClient(client, `
+          INSERT INTO cex_deposit_account_active_identifiers (exchange, external_identifier, user_id, created_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT (exchange, external_identifier) DO NOTHING
+        `, [input.exchange, externalIdentifier, input.userId, now])
+        const activeOwner = await queryPostgresClient<{ user_id: string }>(client,
+          'SELECT user_id FROM cex_deposit_account_active_identifiers WHERE exchange = ? AND external_identifier = ? LIMIT 1',
+          [input.exchange, externalIdentifier])
+        if (activeOwner.rows[0]?.user_id !== input.userId) throw new Error('Exchange identifier is already actively linked.')
+      }
+      return result.rows[0]
+    })
+    return mapCexDepositAccountRow(row)
   }
-  getDb().prepare(`
-    INSERT INTO cex_deposit_accounts (id, user_id, exchange, external_uid, status, challenge_amount, challenge_asset, challenge_expires_at, verified_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(...params)
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
   try {
-    getDb().prepare(`
-      INSERT INTO cex_deposit_account_identifiers (exchange, external_identifier, user_id, created_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(exchange, external_identifier) DO UPDATE SET created_at = excluded.created_at
-      WHERE cex_deposit_account_identifiers.user_id = excluded.user_id
-    `).run(input.exchange, input.externalUid, input.userId, now)
-    const ownership = getDb().prepare(
-      'SELECT user_id FROM cex_deposit_account_identifiers WHERE exchange = ? AND external_identifier = ? LIMIT 1',
-    ).get(input.exchange, input.externalUid) as { user_id: string } | undefined
-    if (ownership?.user_id !== input.userId) throw new Error('Exchange identifier is already reserved.')
+    db.prepare(`
+      INSERT INTO cex_deposit_accounts (id, user_id, exchange, external_uid, status, challenge_amount, challenge_asset, challenge_expires_at, verified_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(...params)
+    for (const externalIdentifier of externalIdentifiers) {
+      db.prepare(`
+        INSERT INTO cex_deposit_account_identifiers (exchange, external_identifier, user_id, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(exchange, external_identifier) DO UPDATE SET created_at = excluded.created_at
+        WHERE cex_deposit_account_identifiers.user_id = excluded.user_id
+      `).run(input.exchange, externalIdentifier, input.userId, now)
+      const owner = db.prepare('SELECT user_id FROM cex_deposit_account_identifiers WHERE exchange = ? AND external_identifier = ? LIMIT 1').get(input.exchange, externalIdentifier) as { user_id: string } | undefined
+      if (owner?.user_id !== input.userId) throw new Error('Exchange identifier is already reserved.')
+      db.prepare(`
+        INSERT INTO cex_deposit_account_active_identifiers (exchange, external_identifier, user_id, created_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(exchange, external_identifier) DO NOTHING
+      `).run(input.exchange, externalIdentifier, input.userId, now)
+      const activeOwner = db.prepare('SELECT user_id FROM cex_deposit_account_active_identifiers WHERE exchange = ? AND external_identifier = ? LIMIT 1').get(input.exchange, externalIdentifier) as { user_id: string } | undefined
+      if (activeOwner?.user_id !== input.userId) throw new Error('Exchange identifier is already actively linked.')
+    }
+    db.exec('COMMIT')
   } catch (error) {
-    getDb().prepare('DELETE FROM cex_deposit_accounts WHERE id = ?').run(id)
+    db.exec('ROLLBACK')
     throw error
   }
-  const row = getDb().prepare('SELECT * FROM cex_deposit_accounts WHERE id = ?').get(id) as CexDepositAccountRow
+  const row = db.prepare('SELECT * FROM cex_deposit_accounts WHERE id = ?').get(id) as CexDepositAccountRow
   return mapCexDepositAccountRow(row)
 }
 
 export type CexDepositAccountIdentifierMatch = {
   externalUid: string
   userId: string
+  accountExternalUid: string | null
   accountStatus: CexDepositAccountStatus | null
+  isActive: boolean
 }
 
 export async function listCexDepositAccountIdentifiers(exchange: CexExchange): Promise<CexDepositAccountIdentifierMatch[]> {
   await ensureDbReady()
   const sql = `
-    SELECT i.external_identifier AS external_uid, i.user_id, a.status AS account_status
+    SELECT i.external_identifier AS external_uid, i.user_id, a.external_uid AS account_external_uid,
+      a.status AS account_status, (active.external_identifier IS NOT NULL) AS is_active
     FROM cex_deposit_account_identifiers i
     LEFT JOIN cex_deposit_accounts a
-      ON a.exchange = i.exchange AND a.user_id = i.user_id AND a.external_uid = i.external_identifier
+      ON a.exchange = i.exchange AND a.user_id = i.user_id
+    LEFT JOIN cex_deposit_account_active_identifiers active
+      ON active.exchange = i.exchange AND active.external_identifier = i.external_identifier AND active.user_id = i.user_id
     WHERE i.exchange = ?
   `
   const result = isPostgresEnabled()
-    ? await queryPostgres<{ external_uid: string; user_id: string; account_status: string | null }>(sql, [exchange])
-    : { rows: getDb().prepare(sql).all(exchange) as Array<{ external_uid: string; user_id: string; account_status: string | null }> }
+    ? await queryPostgres<{ external_uid: string; user_id: string; account_external_uid: string | null; account_status: string | null; is_active: boolean }>(sql, [exchange])
+    : { rows: getDb().prepare(sql).all(exchange) as Array<{ external_uid: string; user_id: string; account_external_uid: string | null; account_status: string | null; is_active: boolean | number }> }
   return result.rows.map(row => ({
     externalUid: row.external_uid,
     userId: row.user_id,
+    accountExternalUid: row.account_external_uid ?? null,
     accountStatus: row.account_status as CexDepositAccountStatus | null,
+    isActive: Boolean(row.is_active),
   }))
+}
+
+export async function listCexDepositAccountActiveIdentifiers(userId: string, exchange: CexExchange): Promise<string[]> {
+  await ensureDbReady()
+  const sql = 'SELECT external_identifier FROM cex_deposit_account_active_identifiers WHERE user_id = ? AND exchange = ? ORDER BY created_at'
+  const result = isPostgresEnabled()
+    ? await queryPostgres<{ external_identifier: string }>(sql, [userId, exchange])
+    : { rows: getDb().prepare(sql).all(userId, exchange) as Array<{ external_identifier: string }> }
+  return result.rows.map(row => row.external_identifier)
 }
 
 export async function getCexDepositAccountByUser(userId: string, exchange: CexExchange): Promise<CexDepositAccount | null> {
@@ -7119,10 +7161,22 @@ export async function getCexDepositAccountByUser(userId: string, exchange: CexEx
 export async function deleteCexDepositAccount(userId: string, exchange: CexExchange): Promise<void> {
   await ensureDbReady()
   if (isPostgresEnabled()) {
-    await queryPostgres('DELETE FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ?', [userId, exchange])
+    await withPostgresTransaction(async client => {
+      await queryPostgresClient(client, 'DELETE FROM cex_deposit_account_active_identifiers WHERE user_id = ? AND exchange = ?', [userId, exchange])
+      await queryPostgresClient(client, 'DELETE FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ?', [userId, exchange])
+    })
     return
   }
-  getDb().prepare('DELETE FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ?').run(userId, exchange)
+  const db = getDb()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('DELETE FROM cex_deposit_account_active_identifiers WHERE user_id = ? AND exchange = ?').run(userId, exchange)
+    db.prepare('DELETE FROM cex_deposit_accounts WHERE user_id = ? AND exchange = ?').run(userId, exchange)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 export async function getCexDepositAccountByExternalUid(exchange: CexExchange, externalUid: string): Promise<CexDepositAccount | null> {

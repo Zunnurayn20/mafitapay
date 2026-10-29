@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
-import { createCexDepositAccount, deleteCexDepositAccount, getCexDepositAccountByUser, refreshExpiredCexDepositChallenge } from '@/lib/server/data'
+import { createCexDepositAccount, deleteCexDepositAccount, getCexDepositAccountByUser, listCexDepositAccountActiveIdentifiers, refreshExpiredCexDepositChallenge } from '@/lib/server/data'
 import type { CexExchange } from '@/types'
 
 const EXCHANGES: CexExchange[] = ['bybit', 'bitget', 'okx']
@@ -63,7 +63,9 @@ export async function GET() {
 
   const exchanges = Object.fromEntries(await Promise.all(EXCHANGES.map(async exchange => {
     const enabled = isExchangeConfigured(exchange)
-    const account = enabled ? await getCexDepositAccountByUser(user.id, exchange) : null
+    const storedAccount = enabled ? await getCexDepositAccountByUser(user.id, exchange) : null
+    const externalIdentifiers = storedAccount ? await listCexDepositAccountActiveIdentifiers(user.id, exchange) : []
+    const account = storedAccount ? { ...storedAccount, externalIdentifiers } : null
     return [exchange, { exchange, enabled, receivingUid: enabled ? receivingUid(exchange) : null, account }]
   }))) as Record<CexExchange, { exchange: CexExchange; enabled: boolean; receivingUid: string | null; account: Awaited<ReturnType<typeof getCexDepositAccountByUser>> }>
   return NextResponse.json({
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
   const user = await requireUser()
   if (!user) return unauthorized()
 
-  let body: { exchange?: unknown; senderUid?: unknown }
+  let body: { exchange?: unknown; senderUid?: unknown; senderEmail?: unknown; senderPhone?: unknown }
   try {
     body = await request.json()
   } catch {
@@ -88,18 +90,33 @@ export async function POST(request: Request) {
   if (!isExchangeConfigured(exchange)) {
     return NextResponse.json({ error: `${exchangeName(exchange)} deposits are not configured yet.`, success: false }, { status: 503 })
   }
-  const senderIdentifier = typeof body.senderUid === 'string' ? normalizeSenderIdentifier(exchange, body.senderUid) : ''
-  if (!senderIdentifier) {
-    const expected = exchange === 'bybit' ? 'UID' : exchange === 'bitget' ? 'UID, email, or phone number' : 'email address or phone number in international format (for example, +2348012345678)'
-    return NextResponse.json({ error: `Enter a valid ${exchangeName(exchange)} ${expected}.`, success: false }, { status: 400 })
+  let externalIdentifiers: string[]
+  if (exchange === 'okx') {
+    const senderEmail = typeof body.senderEmail === 'string' ? normalizeSenderIdentifier(exchange, body.senderEmail) : ''
+    const senderPhone = typeof body.senderPhone === 'string' ? normalizeSenderIdentifier(exchange, body.senderPhone) : ''
+    if (!senderEmail.includes('@') || !senderPhone.startsWith('+')) {
+      return NextResponse.json({ error: 'Enter the email and phone number associated with your OKX account. Use international phone format, such as +2348012345678.', success: false }, { status: 400 })
+    }
+    externalIdentifiers = [senderEmail, senderPhone]
+  } else {
+    const senderIdentifier = typeof body.senderUid === 'string' ? normalizeSenderIdentifier(exchange, body.senderUid) : ''
+    if (!senderIdentifier) {
+      const expected = exchange === 'bybit' ? 'UID' : 'UID, email, or phone number'
+      return NextResponse.json({ error: `Enter a valid ${exchangeName(exchange)} ${expected}.`, success: false }, { status: 400 })
+    }
+    externalIdentifiers = [senderIdentifier]
   }
-  const externalUid = senderIdentifier
+  const externalUid = externalIdentifiers[0]
 
   const existing = await getCexDepositAccountByUser(user.id, exchange)
   if (existing) {
-    if (existing.externalUid === externalUid && existing.status === 'pending_verification') {
+    const existingIdentifiers = await listCexDepositAccountActiveIdentifiers(user.id, exchange)
+    const sameIdentifiers = existing.externalUid === externalUid
+      && existingIdentifiers.length === externalIdentifiers.length
+      && existingIdentifiers.every(identifier => externalIdentifiers.includes(identifier))
+    if (sameIdentifiers && existing.status === 'pending_verification') {
       if (new Date(existing.challengeExpiresAt).getTime() > Date.now()) {
-        return NextResponse.json({ data: { account: existing }, success: true })
+        return NextResponse.json({ data: { account: { ...existing, externalIdentifiers: existingIdentifiers } }, success: true })
       }
       const refreshed = await refreshExpiredCexDepositChallenge({
         userId: user.id,
@@ -108,8 +125,10 @@ export async function POST(request: Request) {
         challengeAmount: Number((101 + randomInt(0, 99)) / 100),
         challengeExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })
-      if (refreshed) return NextResponse.json({ data: { account: refreshed }, success: true })
+      if (refreshed) return NextResponse.json({ data: { account: { ...refreshed, externalIdentifiers: existingIdentifiers } }, success: true })
     }
+    if (sameIdentifiers) return NextResponse.json({ data: { account: { ...existing, externalIdentifiers: existingIdentifiers } }, success: true })
+    if (exchange === 'okx') return NextResponse.json({ error: 'This OKX account is already linked. Unlink it first, then link again with both the email and phone number.', success: false }, { status: 409 })
     return NextResponse.json({ error: `A ${exchangeName(exchange)} account is already linked to this account.`, success: false }, { status: 409 })
   }
 
@@ -118,10 +137,11 @@ export async function POST(request: Request) {
       userId: user.id,
       exchange,
       externalUid,
+      externalIdentifiers,
       challengeAmount: Number((101 + randomInt(0, 99)) / 100),
       challengeExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     })
-    return NextResponse.json({ data: { account }, success: true })
+    return NextResponse.json({ data: { account: { ...account, externalIdentifiers } }, success: true })
   } catch {
     return NextResponse.json({ error: `That ${exchangeName(exchange)} account is already linked to a MafitaPay account, or could not be linked.`, success: false }, { status: 409 })
   }

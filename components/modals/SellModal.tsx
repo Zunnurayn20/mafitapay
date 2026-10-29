@@ -43,6 +43,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [cexSetups, setCexSetups] = useState<CexDepositSetups>({})
   const [selectedExchange, setSelectedExchange] = useState<CexExchange>('bybit')
   const [cexSenderUid, setCexSenderUid] = useState('')
+  const [cexSenderEmail, setCexSenderEmail] = useState('')
+  const [cexSenderPhone, setCexSenderPhone] = useState('')
   const [savingCexAccount, setSavingCexAccount] = useState(false)
   const [cexSetupError, setCexSetupError] = useState('')
 
@@ -55,6 +57,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const availableExchanges = Object.values(cexSetups).filter((item): item is CexDepositSetup => Boolean(item?.enabled))
   const cexSetup = cexSetups[selectedExchange] ?? null
   const exchangeLabel = selectedExchange === 'bybit' ? 'Bybit' : selectedExchange === 'bitget' ? 'Bitget' : 'OKX'
+  const canLinkCexAccount = selectedExchange === 'okx'
+    ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cexSenderEmail.trim()) && /^\+[1-9]\d{7,14}$/.test(cexSenderPhone.replace(/[ ()-]/g, ''))
+    : cexSenderUid.trim().length >= 4
   const hasPendingCexVerification = availableExchanges.some(item => item.account?.status === 'pending_verification')
   const displayedSellAsset = depositMethod === 'exchange' && exchangeRateAsset ? exchangeRateAsset : asset
   const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
@@ -107,6 +112,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setCexSetups({})
       setSelectedExchange('bybit')
       setCexSetupError('')
+      setCexSenderUid('')
+      setCexSenderEmail('')
+      setCexSenderPhone('')
       return
     }
     let cancelled = false
@@ -226,15 +234,22 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     setSavingCexAccount(true)
     setCexSetupError('')
     try {
+      const linkedOkxIdentifiers = cexSetup?.account?.externalIdentifiers ?? []
+      const linkedOkxEmail = linkedOkxIdentifiers.find(value => value.includes('@'))
+      const linkedOkxPhone = linkedOkxIdentifiers.find(value => value.startsWith('+'))
       const response = await fetch('/api/crypto/cex-deposit-account', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exchange: selectedExchange, senderUid: cexSetup?.account?.externalUid ?? cexSenderUid.trim() }),
+        body: JSON.stringify(selectedExchange === 'okx'
+          ? { exchange: selectedExchange, senderEmail: linkedOkxEmail ?? cexSenderEmail.trim(), senderPhone: linkedOkxPhone ?? cexSenderPhone.trim() }
+          : { exchange: selectedExchange, senderUid: cexSetup?.account?.externalUid ?? cexSenderUid.trim() }),
       })
       const payload = await response.json()
       if (!response.ok || !payload?.success) throw new Error(payload?.error || `Could not link your ${exchangeLabel} UID.`)
       setCexSetups(current => ({ ...current, [selectedExchange]: current[selectedExchange] ? { ...current[selectedExchange]!, account: payload.data.account } : current[selectedExchange] }))
       setCexSenderUid('')
+      setCexSenderEmail('')
+      setCexSenderPhone('')
       showToast(`${exchangeLabel} UID linked. Send the exact verification amount to complete setup.`)
     } catch (error) {
       setCexSetupError(error instanceof Error ? error.message : `Could not link your ${exchangeLabel} UID.`)
@@ -244,7 +259,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   }
 
   async function unlinkCexUid() {
-    if (!window.confirm(`Stop auto-crediting transfers from this ${exchangeLabel} UID? Future exchange transfers will stay unmatched until you link a UID again.`)) return
+    if (!window.confirm(`Stop automatic crediting from this ${exchangeLabel} account? Future transfers will stay unmatched until you link it again.`)) return
     const response = await fetch(`/api/crypto/cex-deposit-account?exchange=${selectedExchange}`, { method: 'DELETE' })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok || !payload?.success) {
@@ -421,7 +436,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                   <button
                     key={exchange.exchange}
                     type="button"
-                    onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSetupError('') }}
+                    onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSenderEmail(''); setCexSenderPhone(''); setCexSetupError('') }}
                     className={`flex-1 rounded-lg border px-3 py-2 text-[10px] font-bold ${selectedExchange === exchange.exchange ? 'border-[var(--gold2)] bg-[var(--clay2)] text-[var(--text)]' : 'border-[var(--border)] text-[var(--muted)]'}`}
                   >
                     {exchange.exchange === 'bybit' ? 'Bybit' : exchange.exchange === 'bitget' ? 'Bitget' : 'OKX'}
@@ -443,24 +458,33 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               </div>
               {!cexSetup.account && (
                 <>
-                  <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">
-                    {selectedExchange === 'bybit' ? 'Your Bybit UID' : selectedExchange === 'bitget' ? 'Your Bitget UID, email, or phone number' : 'Your OKX email or phone number'}
-                  </label>
-                  <input
-                    id="cex-sender-uid"
-                    inputMode={selectedExchange === 'bybit' ? 'numeric' : 'text'}
-                    autoComplete="off"
-                    value={cexSenderUid}
-                    maxLength={selectedExchange === 'bybit' ? 24 : 254}
-                    onChange={event => setCexSenderUid(selectedExchange === 'bybit' ? event.target.value.replace(/\D/g, '').slice(0, 24) : event.target.value.slice(0, 254))}
-                    placeholder={selectedExchange === 'bybit' ? 'Enter your Bybit UID' : selectedExchange === 'bitget' ? 'UID, email, or phone number' : 'OKX email or +234 phone number'}
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]"
-                  />
+                  {selectedExchange === 'okx' ? <>
+                    <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-email">Email on your OKX account</label>
+                    <input id="cex-sender-email" type="email" inputMode="email" autoComplete="email" value={cexSenderEmail} maxLength={254} onChange={event => setCexSenderEmail(event.target.value.slice(0, 254))} placeholder="name@example.com" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
+                    <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-phone">Phone number on your OKX account</label>
+                    <input id="cex-sender-phone" type="tel" inputMode="tel" autoComplete="tel" value={cexSenderPhone} maxLength={20} onChange={event => setCexSenderPhone(event.target.value.slice(0, 20))} placeholder="+2348012345678" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
+                  </> : <>
+                    <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">
+                      {selectedExchange === 'bybit' ? 'Your Bybit UID' : 'Your Bitget UID, email, or phone number'}
+                    </label>
+                    <input
+                      id="cex-sender-uid"
+                      inputMode={selectedExchange === 'bybit' ? 'numeric' : 'text'}
+                      autoComplete="off"
+                      value={cexSenderUid}
+                      maxLength={selectedExchange === 'bybit' ? 24 : 254}
+                      onChange={event => setCexSenderUid(selectedExchange === 'bybit' ? event.target.value.replace(/\D/g, '').slice(0, 24) : event.target.value.slice(0, 254))}
+                      placeholder={selectedExchange === 'bybit' ? 'Enter your Bybit UID' : 'UID, email, or phone number'}
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]"
+                    />
+                  </>}
                   <div className="text-[9px] leading-relaxed text-[var(--muted)]">
-                    We’ll verify ownership with a one-time exact transfer. OKX masks sender details, so deposits credit automatically only when the masked sender uniquely matches your linked email or phone.
+                    {selectedExchange === 'okx'
+                      ? 'Enter both contacts exactly as registered on the same OKX account. We’ll verify account ownership with a one-time exact transfer. Deposits credit only when the masked sender uniquely matches one of these contacts.'
+                      : `We’ll verify ownership with a one-time exact transfer. After verification, deposits from this ${selectedExchange === 'bitget' ? 'account' : 'UID'} will credit automatically.`}
                   </div>
                   {cexSetupError && <div className="text-[10px] text-[var(--red2)]">{cexSetupError}</div>}
-                  <Button variant="green" onClick={() => void linkCexUid()} disabled={savingCexAccount || cexSenderUid.length < 4} className="w-full py-3">
+                  <Button variant="green" onClick={() => void linkCexUid()} disabled={savingCexAccount || !canLinkCexAccount} className="w-full py-3">
                     {savingCexAccount ? `Linking ${exchangeLabel} account…` : `Link ${exchangeLabel} account`}
                   </Button>
                 </>
@@ -469,7 +493,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                 <div className="rounded-lg border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.08)] p-3">
                   <div className="text-[10px] font-bold text-[var(--gold2)]">Verify your {exchangeLabel} account</div>
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
-                    From your linked account <span className="font-mono font-bold">{cexSetup.account.externalUid}</span>, transfer exactly{' '}
+                    From your linked account <span className="font-mono font-bold">{(cexSetup.account.externalIdentifiers ?? [cexSetup.account.externalUid]).join(' · ')}</span>, transfer exactly{' '}
                     <span className="font-mono font-bold">{cexSetup.account.challengeAmount.toFixed(2)} USDT</span> to MafitaPay’s {exchangeLabel} UID above.
                     This verification transfer is credited at the current sell rate. Expires {new Date(cexSetup.account.challengeExpiresAt).toLocaleString()}.
                   </div>
@@ -483,13 +507,14 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                       </Button>
                     </div>
                   )}
+                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' ? 'email or phone' : 'UID'}</button>
                 </div>
               )}
               {cexSetup.account?.status === 'verified' && (
                 <div className="rounded-lg border border-[rgba(58,155,110,.3)] bg-[rgba(58,155,110,.08)] p-3">
                   <div className="text-[10px] font-bold text-[var(--green2)]">{exchangeLabel} account verified</div>
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
-                  Send USDT or USDC from <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender accounts are not auto-credited.
+                  Send USDT or USDC from <span className="font-mono font-bold">{(cexSetup.account.externalIdentifiers ?? [cexSetup.account.externalUid]).join(' · ')}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender accounts are not auto-credited.
                   </div>
                   <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' ? 'email or phone' : 'UID'}</button>
                 </div>

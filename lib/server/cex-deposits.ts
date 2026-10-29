@@ -328,10 +328,15 @@ async function resolveOkxLinkedAccount(row: OkxInternalDeposit, identifiers?: Ok
   const candidates = identifiers ?? await listCexDepositAccountIdentifiers(OKX)
   const matches = candidates
     .filter(item => okxSenderMatchesIdentifier(row, item.externalUid))
-  // Historical and disabled identifiers count as matches too: a masked sender
-  // that could belong to an unlinked account must not be credited elsewhere.
-  if (matches.length !== 1 || !matches[0].accountStatus || matches[0].accountStatus === 'disabled') return null
-  return matches[0].externalUid
+  // Historical contacts from both linked fields count toward ambiguity, even
+  // after unlinking. Only an active contact on a currently linked account can
+  // attribute the transfer.
+  const owners = new Set(matches.map(item => item.userId))
+  if (owners.size !== 1) return null
+  const active = matches.filter(item => item.isActive && item.accountExternalUid && item.accountStatus && item.accountStatus !== 'disabled')
+  if (active.length === 0) return null
+  const accountUids = new Set(active.map(item => item.accountExternalUid))
+  return accountUids.size === 1 ? active[0].accountExternalUid : null
 }
 
 async function acceptCexTransfer(input: {

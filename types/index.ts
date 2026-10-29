@@ -398,6 +398,7 @@ export interface CexDepositAccount {
   userId: string
   exchange: CexExchange
   externalUid: string
+  externalIdentifiers?: string[]
   status: CexDepositAccountStatus
   challengeAmount: number
   challengeAsset: 'USDT'
