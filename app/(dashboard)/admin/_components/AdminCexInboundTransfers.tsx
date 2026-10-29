@@ -11,6 +11,7 @@ type CexSyncResult = {
   checked?: number
   internalTransfers?: number
   recipientMatches?: number
+  matchedSenders?: number
   credited?: number
   recordSamples?: Array<{
     asset: string | null
@@ -24,6 +25,7 @@ type CexSyncResult = {
   }>
   pages?: number
   morePages?: boolean
+  limitReached?: boolean
   error?: string
 }
 
@@ -124,7 +126,7 @@ export function AdminCexInboundTransfers() {
       {syncError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{syncError}</div>}
       {syncResults && <div className="space-y-2" aria-live="polite">
         {syncResults.map(result => {
-          const name = result.exchange === 'bitget' ? 'Bitget' : result.exchange === 'bybit' ? 'Bybit' : result.exchange
+          const name = result.exchange === 'bitget' ? 'Bitget' : result.exchange === 'bybit' ? 'Bybit' : result.exchange === 'okx' ? 'OKX' : result.exchange
           const failed = Boolean(result.error)
           const notConfigured = result.configured === false
           const style = failed
@@ -136,6 +138,8 @@ export function AdminCexInboundTransfers() {
             ? result.error
             : notConfigured
               ? 'Not configured for automatic deposits.'
+              : result.exchange === 'okx'
+                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.matchedSenders ?? 0} uniquely matched senders · credited ${result.credited ?? 0}${result.limitReached ? ' · OKX returned the 100-record page limit; some older records may need a follow-up sync' : ''}.`
               : result.exchange === 'bitget'
                 ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
                 : `Connected · checked ${result.checked ?? 0} records · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
@@ -161,7 +165,7 @@ export function AdminCexInboundTransfers() {
             </div>
           </div>
         ) : null}
-        <div className="text-[10px] text-[var(--muted)]">This reads the exchange’s deposit history and automatically credits any successful transfer that matches a verified user UID.</div>
+        <div className="text-[10px] text-[var(--muted)]">Successful transfers credit automatically only when a verified sender account can be matched uniquely. OKX sender contacts are masked, so ambiguous matches stay unmatched.</div>
       </div>}
       {items.length === 0 ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3 text-xs text-[var(--muted)]">No exchange transfers have been reported yet.</div>
@@ -169,7 +173,7 @@ export function AdminCexInboundTransfers() {
         <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
           <table className="w-full min-w-[660px] text-left text-xs">
             <thead className="bg-[var(--clay2)] text-[var(--muted)]">
-              <tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Exchange</th><th className="px-3 py-2">Sender UID</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Transfer ID</th></tr>
+              <tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Exchange</th><th className="px-3 py-2">Sender UID / contact</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Transfer ID</th></tr>
             </thead>
             <tbody>
               {items.map(item => (

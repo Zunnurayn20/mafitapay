@@ -85,7 +85,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       .then(payload => {
         if (!cancelled) {
           const exchanges = Object.values(payload?.data?.exchanges ?? {}) as Array<{ enabled?: boolean; exchange?: string }>
-          const names = exchanges.filter(item => item.enabled).map(item => item.exchange === 'bitget' ? 'Bitget' : 'Bybit')
+          const names = exchanges.filter(item => item.enabled).map(item => item.exchange === 'bitget' ? 'Bitget' : item.exchange === 'okx' ? 'OKX' : 'Bybit')
           setExchangeDepositNames(names)
           setExchangeDepositsEnabled(payload?.success === true && names.length > 0)
         }

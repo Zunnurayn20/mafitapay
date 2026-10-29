@@ -3,6 +3,7 @@ import {
   createCryptoDepositEvent,
   getCryptoAssets,
   getCexDepositAccountByExternalUid,
+  listCexDepositAccountIdentifiers,
   getCexDepositSyncState,
   listCexInboundTransfers,
   markCexDepositAccountVerified,
@@ -50,13 +51,106 @@ type BitgetResponse = {
   data?: BitgetInternalDeposit[]
 }
 
+type OkxInternalDeposit = {
+  ccy?: string
+  amt?: string
+  from?: string
+  areaCodeFrom?: string
+  to?: string
+  state?: string
+  depId?: string
+  fromWdId?: string
+  ts?: string
+  type?: string
+}
+
+type OkxResponse = {
+  code?: string
+  msg?: string
+  data?: OkxInternalDeposit[]
+}
+
+type OkxAccountConfigResponse = {
+  code?: string
+  msg?: string
+  data?: Array<{ uid?: string }>
+}
+
 const BYBIT: CexExchange = 'bybit'
 const BITGET: CexExchange = 'bitget'
+const OKX: CexExchange = 'okx'
 const RECV_WINDOW = '10000'
 const MAX_PAGES_PER_PASS = 2
 const PAGE_LIMIT = 100
 const OVERLAP_MS = 5 * 60_000
 const BITGET_OVERLAP_MS = 24 * 60 * 60_000
+
+function okxConfig() {
+  if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return null
+  const apiKey = process.env.MAFITAPAY_OKX_API_KEY?.trim()
+  const apiSecret = process.env.MAFITAPAY_OKX_API_SECRET?.trim()
+  const apiPassphrase = process.env.MAFITAPAY_OKX_API_PASSPHRASE?.trim()
+  const receiverUid = process.env.MAFITAPAY_OKX_DEPOSIT_UID?.trim()
+  if (!apiKey || !apiSecret || !apiPassphrase || !receiverUid) return null
+  const apiBaseUrl = process.env.MAFITAPAY_OKX_API_BASE_URL?.trim().replace(/\/+$/, '') || 'https://www.okx.com'
+  if (!/^https:\/\/[a-z0-9.-]+$/i.test(apiBaseUrl)) return null
+  return { apiKey, apiSecret, apiPassphrase, receiverUid, apiBaseUrl }
+}
+
+function signOkx(timestamp: string, apiSecret: string, requestPath: string) {
+  return createHmac('sha256', apiSecret).update(`${timestamp}GET${requestPath}`).digest('base64')
+}
+
+async function fetchOkxInternalDeposits(afterMs: number, beforeMs: number) {
+  const config = okxConfig()
+  if (!config) throw new Error('OKX internal deposit credentials are not configured.')
+  const params = new URLSearchParams({ type: '3', after: String(afterMs), before: String(beforeMs), limit: '100' })
+  const requestPath = `/api/v5/asset/deposit-history?${params.toString()}`
+  const timestamp = new Date().toISOString()
+  const response = await fetch(`${config.apiBaseUrl}${requestPath}`, {
+    method: 'GET',
+    headers: {
+      'OK-ACCESS-KEY': config.apiKey,
+      'OK-ACCESS-SIGN': signOkx(timestamp, config.apiSecret, requestPath),
+      'OK-ACCESS-TIMESTAMP': timestamp,
+      'OK-ACCESS-PASSPHRASE': config.apiPassphrase,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(9_000),
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300)
+    throw new Error(`OKX deposit history returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`)
+  }
+  const payload = await response.json() as OkxResponse
+  if (payload.code !== '0') throw new Error(`OKX deposit history failed with code ${payload.code ?? 'unknown'}.`)
+  return payload.data ?? []
+}
+
+async function verifyOkxReceivingAccount() {
+  const config = okxConfig()
+  if (!config) throw new Error('OKX internal deposit credentials are not configured.')
+  const requestPath = '/api/v5/account/config'
+  const timestamp = new Date().toISOString()
+  const response = await fetch(`${config.apiBaseUrl}${requestPath}`, {
+    method: 'GET',
+    headers: {
+      'OK-ACCESS-KEY': config.apiKey,
+      'OK-ACCESS-SIGN': signOkx(timestamp, config.apiSecret, requestPath),
+      'OK-ACCESS-TIMESTAMP': timestamp,
+      'OK-ACCESS-PASSPHRASE': config.apiPassphrase,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(9_000),
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error(`OKX account verification returned HTTP ${response.status}.`)
+  const payload = await response.json() as OkxAccountConfigResponse
+  const accountUid = payload.data?.[0]?.uid?.trim()
+  if (payload.code !== '0' || !accountUid) throw new Error(`OKX account verification failed with code ${payload.code ?? 'unknown'}.`)
+  if (accountUid !== config.receiverUid) throw new Error('The configured MafitaPay OKX UID does not match the account behind the OKX API key.')
+}
 
 function bybitConfig() {
   if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return null
@@ -184,7 +278,8 @@ function normalizeIdentifier(value: string | undefined) {
 function normalizeSenderIdentifier(exchange: CexExchange, value: string | undefined) {
   const identifier = value?.trim() ?? ''
   if (/^\d{4,24}$/.test(identifier)) return identifier
-  if (exchange !== BITGET) return ''
+  if (exchange === OKX && identifier.includes('*') && identifier.length <= 254 && !/[\r\n]/.test(identifier)) return identifier.toLowerCase()
+  if (exchange !== BITGET && exchange !== OKX) return ''
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return identifier.toLowerCase()
   if (/^\+?[0-9][0-9 ()-]{5,23}$/.test(identifier)) return identifier.replace(/[ ()-]/g, '')
   return ''
@@ -204,6 +299,41 @@ function isBitgetInternalDestination(value: string | undefined) {
   return destination === 'internal' || destination === 'internal_transfer'
 }
 
+function wildcardMatch(mask: string, candidate: string) {
+  const expression = mask.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+  return new RegExp(`^${expression}$`, 'i').test(candidate)
+}
+
+function okxSenderMatchesIdentifier(row: OkxInternalDeposit, identifier: string) {
+  const sender = row.from?.trim() ?? ''
+  if (!sender || !sender.includes('*')) return false
+  if (sender.includes('@')) {
+    const [maskedLocal, maskedDomain, extra] = sender.toLowerCase().split('@')
+    const [local, domain, emailExtra] = identifier.toLowerCase().split('@')
+    if (!maskedLocal || !maskedDomain || extra || emailExtra || !maskedDomain.includes('.')) return false
+    return wildcardMatch(maskedLocal, local) && wildcardMatch(maskedDomain, domain)
+  }
+
+  const areaCode = row.areaCodeFrom?.replace(/\D/g, '') ?? ''
+  if (!areaCode) return false
+  const senderPhone = sender.replace(/[^\d*]/g, '')
+  const maskedPhone = senderPhone.startsWith(areaCode) ? senderPhone : `${areaCode}${senderPhone}`
+  const phoneDigits = identifier.replace(/\D/g, '')
+  return maskedPhone.includes('*') && wildcardMatch(maskedPhone, phoneDigits)
+}
+
+type OkxAccountIdentifier = Awaited<ReturnType<typeof listCexDepositAccountIdentifiers>>[number]
+
+async function resolveOkxLinkedAccount(row: OkxInternalDeposit, identifiers?: OkxAccountIdentifier[]) {
+  const candidates = identifiers ?? await listCexDepositAccountIdentifiers(OKX)
+  const matches = candidates
+    .filter(item => okxSenderMatchesIdentifier(row, item.externalUid))
+  // Historical and disabled identifiers count as matches too: a masked sender
+  // that could belong to an unlinked account must not be credited elsewhere.
+  if (matches.length !== 1 || !matches[0].accountStatus || matches[0].accountStatus === 'disabled') return null
+  return matches[0].externalUid
+}
+
 async function acceptCexTransfer(input: {
   exchange: CexExchange
   externalTransferId: string
@@ -216,6 +346,7 @@ async function acceptCexTransfer(input: {
   isSuccessful: boolean
   receivedAtMs: number
   providerPayload: Record<string, unknown>
+  linkedAccountExternalUid?: string
 }) {
   const {
     exchange, externalTransferId, senderUid, receiverUid, assetSymbol, amount,
@@ -239,7 +370,7 @@ async function acceptCexTransfer(input: {
 
   if (!isSuccessful || transfer.attributionStatus === 'credited' || transfer.attributionStatus === 'ignored') return false
 
-  let account = await getCexDepositAccountByExternalUid(exchange, normalizedSenderUid)
+  let account = await getCexDepositAccountByExternalUid(exchange, input.linkedAccountExternalUid ?? normalizedSenderUid)
   if (!account) {
     await updateCexInboundTransfer({ id: transfer.id, attributionStatus: 'unmatched' })
     return false
@@ -254,7 +385,7 @@ async function acceptCexTransfer(input: {
     }
     const verified = await markCexDepositAccountVerified(account.id)
     if (verified) account = verified
-    else account = await getCexDepositAccountByExternalUid(exchange, senderUid)
+    else account = await getCexDepositAccountByExternalUid(exchange, input.linkedAccountExternalUid ?? senderUid)
     if (!account || account.status !== 'verified') return false
   }
 
@@ -270,7 +401,7 @@ async function acceptCexTransfer(input: {
     return false
   }
 
-  const network = `${exchange === BYBIT ? 'Bybit' : 'Bitget'} internal transfer`
+  const network = `${exchange === BYBIT ? 'Bybit' : exchange === BITGET ? 'Bitget' : 'OKX'} internal transfer`
   const event = await createCryptoDepositEvent({
     externalEventId,
     userId: account.userId,
@@ -363,6 +494,32 @@ async function acceptBitgetTransfer(row: BitgetInternalDeposit, receiverUid: str
     isSuccessful: row.status?.toLowerCase() === 'success',
     receivedAtMs,
     providerPayload: { type: row.type, dest: row.dest, coin: assetSymbol, status: row.status ?? null },
+  })
+}
+
+async function acceptOkxTransfer(row: OkxInternalDeposit, receiverUid: string, matchedExternalUid: string | null, identifiers: OkxAccountIdentifier[]) {
+  const assetSymbol = row.ccy?.toUpperCase()
+  if (assetSymbol !== 'USDT' && assetSymbol !== 'USDC') return false
+  if (row.type && row.type !== '3') return false
+  const transferId = row.depId?.trim() || row.fromWdId?.trim() || ''
+  const amount = getAmount(row.amt)
+  const receivedAtMs = Number(row.ts)
+  const senderIdentifier = normalizeSenderIdentifier(OKX, row.from)
+  if (!transferId || !amount || !senderIdentifier || !Number.isFinite(receivedAtMs)) return false
+  const linkedAccountExternalUid = matchedExternalUid
+  return acceptCexTransfer({
+    exchange: OKX,
+    externalTransferId: transferId,
+    senderUid: senderIdentifier,
+    linkedAccountExternalUid: linkedAccountExternalUid ?? undefined,
+    receiverUid,
+    assetSymbol,
+    amount,
+    amountUnits: row.amt!,
+    providerStatus: String(row.state ?? 'unknown'),
+    isSuccessful: row.state === '1' || row.state === '2',
+    receivedAtMs,
+    providerPayload: { type: '3', state: row.state ?? null, senderMasked: senderIdentifier, areaCodeFrom: row.areaCodeFrom ?? null },
   })
 }
 
@@ -504,11 +661,34 @@ async function syncBitgetInternalDeposits() {
   return { configured: true, exchange: BITGET, checked, internalTransfers, recipientMatches, credited, recordSamples, pages, morePages: Boolean(cursor) }
 }
 
+async function syncOkxInternalDeposits() {
+  const config = okxConfig()
+  if (!config) return { configured: false, exchange: OKX, checked: 0, internalTransfers: 0, matchedSenders: 0, credited: 0 }
+
+  await verifyOkxReceivingAccount()
+  // OKX returns the newest 100 records in reverse chronological order.
+  // A rolling 24-hour overlap makes each poll idempotent while catching delayed history updates.
+  const now = Date.now()
+  const rows = await fetchOkxInternalDeposits(now - 24 * 60 * 60_000, now)
+  const identifiers = await listCexDepositAccountIdentifiers(OKX)
+  let internalTransfers = 0
+  let matchedSenders = 0
+  let credited = 0
+  for (const row of rows) {
+    if (row.type && row.type !== '3') continue
+    internalTransfers += 1
+    const matchedExternalUid = await resolveOkxLinkedAccount(row, identifiers)
+    if (matchedExternalUid) matchedSenders += 1
+    if (await acceptOkxTransfer(row, config.receiverUid, matchedExternalUid, identifiers)) credited += 1
+  }
+  return { configured: true, exchange: OKX, checked: rows.length, internalTransfers, matchedSenders, credited, limitReached: rows.length === 100 }
+}
+
 export async function syncCexInternalDepositsOnce() {
-  const results = await Promise.allSettled([syncBybitInternalDeposits(), syncBitgetInternalDeposits()])
+  const results = await Promise.allSettled([syncBybitInternalDeposits(), syncBitgetInternalDeposits(), syncOkxInternalDeposits()])
   return {
     exchanges: results.map((result, index) => result.status === 'fulfilled'
       ? result.value
-      : { exchange: index === 0 ? BYBIT : BITGET, error: result.reason instanceof Error ? result.reason.message : 'CEX sync failed' }),
+      : { exchange: index === 0 ? BYBIT : index === 1 ? BITGET : OKX, error: result.reason instanceof Error ? result.reason.message : 'CEX sync failed' }),
   }
 }

@@ -4,7 +4,11 @@ import { requireUser, unauthorized } from '@/lib/server/auth'
 import { createCexDepositAccount, deleteCexDepositAccount, getCexDepositAccountByUser, refreshExpiredCexDepositChallenge } from '@/lib/server/data'
 import type { CexExchange } from '@/types'
 
-const EXCHANGES: CexExchange[] = ['bybit', 'bitget']
+const EXCHANGES: CexExchange[] = ['bybit', 'bitget', 'okx']
+
+function exchangeName(exchange: CexExchange) {
+  return exchange === 'bybit' ? 'Bybit' : exchange === 'bitget' ? 'Bitget' : 'OKX'
+}
 
 function isExchangeConfigured(exchange: CexExchange) {
   if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return false
@@ -15,23 +19,34 @@ function isExchangeConfigured(exchange: CexExchange) {
       && process.env.MAFITAPAY_BYBIT_DEPOSIT_UID?.trim(),
     )
   }
-  return Boolean(
+  if (exchange === 'bitget') return Boolean(
     process.env.MAFITAPAY_BITGET_API_KEY?.trim()
     && process.env.MAFITAPAY_BITGET_API_SECRET?.trim()
     && process.env.MAFITAPAY_BITGET_API_PASSPHRASE?.trim()
     && process.env.MAFITAPAY_BITGET_DEPOSIT_UID?.trim(),
   )
+  return Boolean(
+    process.env.MAFITAPAY_OKX_API_KEY?.trim()
+    && process.env.MAFITAPAY_OKX_API_SECRET?.trim()
+    && process.env.MAFITAPAY_OKX_API_PASSPHRASE?.trim()
+    && process.env.MAFITAPAY_OKX_DEPOSIT_UID?.trim(),
+  )
 }
 
 function receivingUid(exchange: CexExchange) {
-  return exchange === 'bybit'
-    ? process.env.MAFITAPAY_BYBIT_DEPOSIT_UID?.trim() ?? null
-    : process.env.MAFITAPAY_BITGET_DEPOSIT_UID?.trim() ?? null
+  if (exchange === 'bybit') return process.env.MAFITAPAY_BYBIT_DEPOSIT_UID?.trim() ?? null
+  if (exchange === 'bitget') return process.env.MAFITAPAY_BITGET_DEPOSIT_UID?.trim() ?? null
+  return process.env.MAFITAPAY_OKX_DEPOSIT_UID?.trim() ?? null
 }
 
 function normalizeSenderIdentifier(exchange: CexExchange, value: string) {
   const identifier = value.trim()
   if (/^\d{4,24}$/.test(identifier)) return identifier
+  if (exchange === 'okx') {
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return identifier.toLowerCase()
+    const phone = identifier.replace(/[ ()-]/g, '')
+    return /^\+[1-9]\d{7,14}$/.test(phone) ? phone : ''
+  }
   if (exchange !== 'bitget') return ''
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return identifier.toLowerCase()
   if (/^\+?[0-9][0-9 ()-]{5,23}$/.test(identifier)) return identifier.replace(/[ ()-]/g, '')
@@ -39,7 +54,7 @@ function normalizeSenderIdentifier(exchange: CexExchange, value: string) {
 }
 
 function parseExchange(value: unknown): CexExchange | null {
-  return value === 'bybit' || value === 'bitget' ? value : null
+  return value === 'bybit' || value === 'bitget' || value === 'okx' ? value : null
 }
 
 export async function GET() {
@@ -71,12 +86,12 @@ export async function POST(request: Request) {
   const exchange = parseExchange(body.exchange)
   if (!exchange) return NextResponse.json({ error: 'Choose a supported exchange.', success: false }, { status: 400 })
   if (!isExchangeConfigured(exchange)) {
-    return NextResponse.json({ error: `${exchange === 'bybit' ? 'Bybit' : 'Bitget'} deposits are not configured yet.`, success: false }, { status: 503 })
+    return NextResponse.json({ error: `${exchangeName(exchange)} deposits are not configured yet.`, success: false }, { status: 503 })
   }
   const senderIdentifier = typeof body.senderUid === 'string' ? normalizeSenderIdentifier(exchange, body.senderUid) : ''
   if (!senderIdentifier) {
-    const expected = exchange === 'bybit' ? 'UID' : 'UID, email, or phone number'
-    return NextResponse.json({ error: `Enter a valid ${exchange === 'bybit' ? 'Bybit' : 'Bitget'} ${expected}.`, success: false }, { status: 400 })
+    const expected = exchange === 'bybit' ? 'UID' : exchange === 'bitget' ? 'UID, email, or phone number' : 'email address or phone number in international format (for example, +2348012345678)'
+    return NextResponse.json({ error: `Enter a valid ${exchangeName(exchange)} ${expected}.`, success: false }, { status: 400 })
   }
   const externalUid = senderIdentifier
 
@@ -95,7 +110,7 @@ export async function POST(request: Request) {
       })
       if (refreshed) return NextResponse.json({ data: { account: refreshed }, success: true })
     }
-    return NextResponse.json({ error: `A ${exchange === 'bybit' ? 'Bybit' : 'Bitget'} UID is already linked to this account.`, success: false }, { status: 409 })
+    return NextResponse.json({ error: `A ${exchangeName(exchange)} account is already linked to this account.`, success: false }, { status: 409 })
   }
 
   try {
@@ -108,7 +123,7 @@ export async function POST(request: Request) {
     })
     return NextResponse.json({ data: { account }, success: true })
   } catch {
-    return NextResponse.json({ error: `That ${exchange === 'bybit' ? 'Bybit' : 'Bitget'} UID is already linked to a MafitaPay account, or could not be linked.`, success: false }, { status: 409 })
+    return NextResponse.json({ error: `That ${exchangeName(exchange)} account is already linked to a MafitaPay account, or could not be linked.`, success: false }, { status: 409 })
   }
 }
 

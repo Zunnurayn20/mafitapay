@@ -54,7 +54,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     ?? assets.find(item => item.symbol.toUpperCase() === asset?.symbol.toUpperCase() && item.isActive !== false && item.sellEnabled !== false)
   const availableExchanges = Object.values(cexSetups).filter((item): item is CexDepositSetup => Boolean(item?.enabled))
   const cexSetup = cexSetups[selectedExchange] ?? null
-  const exchangeLabel = selectedExchange === 'bybit' ? 'Bybit' : 'Bitget'
+  const exchangeLabel = selectedExchange === 'bybit' ? 'Bybit' : selectedExchange === 'bitget' ? 'Bitget' : 'OKX'
   const hasPendingCexVerification = availableExchanges.some(item => item.account?.status === 'pending_verification')
   const displayedSellAsset = depositMethod === 'exchange' && exchangeRateAsset ? exchangeRateAsset : asset
   const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
@@ -116,7 +116,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
         if (!cancelled && payload?.success && payload.data?.exchanges) {
           const setups = payload.data.exchanges as CexDepositSetups
           setCexSetups(setups)
-          if (!setups.bybit?.enabled && setups.bitget?.enabled) setSelectedExchange('bitget')
+          const firstAvailable = Object.values(setups).find(item => item?.enabled)?.exchange
+          if (firstAvailable) setSelectedExchange(firstAvailable)
         }
       })
       .catch(() => {
@@ -423,7 +424,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSetupError('') }}
                     className={`flex-1 rounded-lg border px-3 py-2 text-[10px] font-bold ${selectedExchange === exchange.exchange ? 'border-[var(--gold2)] bg-[var(--clay2)] text-[var(--text)]' : 'border-[var(--border)] text-[var(--muted)]'}`}
                   >
-                    {exchange.exchange === 'bybit' ? 'Bybit' : 'Bitget'}
+                    {exchange.exchange === 'bybit' ? 'Bybit' : exchange.exchange === 'bitget' ? 'Bitget' : 'OKX'}
                   </button>
                 ))}
               </div>
@@ -443,20 +444,20 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               {!cexSetup.account && (
                 <>
                   <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">
-                    Your {selectedExchange === 'bitget' ? 'Bitget UID, email, or phone number' : 'Bybit UID'}
+                    {selectedExchange === 'bybit' ? 'Your Bybit UID' : selectedExchange === 'bitget' ? 'Your Bitget UID, email, or phone number' : 'Your OKX email or phone number'}
                   </label>
                   <input
                     id="cex-sender-uid"
-                    inputMode={selectedExchange === 'bitget' ? 'text' : 'numeric'}
+                    inputMode={selectedExchange === 'bybit' ? 'numeric' : 'text'}
                     autoComplete="off"
                     value={cexSenderUid}
-                    maxLength={selectedExchange === 'bitget' ? 254 : 24}
-                    onChange={event => setCexSenderUid(selectedExchange === 'bitget' ? event.target.value.slice(0, 254) : event.target.value.replace(/\D/g, '').slice(0, 24))}
-                    placeholder={selectedExchange === 'bitget' ? 'UID, email, or phone number' : 'Enter your Bybit UID'}
+                    maxLength={selectedExchange === 'bybit' ? 24 : 254}
+                    onChange={event => setCexSenderUid(selectedExchange === 'bybit' ? event.target.value.replace(/\D/g, '').slice(0, 24) : event.target.value.slice(0, 254))}
+                    placeholder={selectedExchange === 'bybit' ? 'Enter your Bybit UID' : selectedExchange === 'bitget' ? 'UID, email, or phone number' : 'OKX email or +234 phone number'}
                     className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]"
                   />
                   <div className="text-[9px] leading-relaxed text-[var(--muted)]">
-                    We’ll verify ownership with a one-time exact transfer. After verification, deposits from this {selectedExchange === 'bitget' ? 'account' : 'UID'} will credit automatically.
+                    We’ll verify ownership with a one-time exact transfer. OKX masks sender details, so deposits credit automatically only when the masked sender uniquely matches your linked email or phone.
                   </div>
                   {cexSetupError && <div className="text-[10px] text-[var(--red2)]">{cexSetupError}</div>}
                   <Button variant="green" onClick={() => void linkCexUid()} disabled={savingCexAccount || cexSenderUid.length < 4} className="w-full py-3">
@@ -490,7 +491,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
                   Send USDT or USDC from <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender accounts are not auto-credited.
                   </div>
-                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked UID</button>
+                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' ? 'email or phone' : 'UID'}</button>
                 </div>
               )}
               </>}
