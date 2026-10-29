@@ -9,6 +9,8 @@ type CexSyncResult = {
   exchange: string
   configured?: boolean
   checked?: number
+  internalTransfers?: number
+  recipientMatches?: number
   credited?: number
   pages?: number
   morePages?: boolean
@@ -124,7 +126,9 @@ export function AdminCexInboundTransfers() {
             ? result.error
             : notConfigured
               ? 'Not configured for automatic deposits.'
-              : `Connected · checked ${result.checked ?? 0} records · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+              : result.exchange === 'bitget'
+                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+                : `Connected · checked ${result.checked ?? 0} records · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
           return <div key={result.exchange} className={`rounded-lg border p-3 text-xs ${style}`}>
             <span className="font-bold">{name}:</span> {message}
           </div>

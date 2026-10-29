@@ -442,30 +442,33 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               </div>
               {!cexSetup.account && (
                 <>
-                  <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">Your {exchangeLabel} UID</label>
+                  <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">
+                    Your {selectedExchange === 'bitget' ? 'Bitget UID, email, or phone number' : 'Bybit UID'}
+                  </label>
                   <input
                     id="cex-sender-uid"
-                    inputMode="numeric"
+                    inputMode={selectedExchange === 'bitget' ? 'text' : 'numeric'}
                     autoComplete="off"
                     value={cexSenderUid}
-                    onChange={event => setCexSenderUid(event.target.value.replace(/\D/g, '').slice(0, 24))}
-                    placeholder={`Enter your ${exchangeLabel} UID`}
+                    maxLength={selectedExchange === 'bitget' ? 254 : 24}
+                    onChange={event => setCexSenderUid(selectedExchange === 'bitget' ? event.target.value.slice(0, 254) : event.target.value.replace(/\D/g, '').slice(0, 24))}
+                    placeholder={selectedExchange === 'bitget' ? 'UID, email, or phone number' : 'Enter your Bybit UID'}
                     className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]"
                   />
                   <div className="text-[9px] leading-relaxed text-[var(--muted)]">
-                    We’ll verify ownership with a one-time exact transfer. After verification, deposits from this UID will credit automatically.
+                    We’ll verify ownership with a one-time exact transfer. After verification, deposits from this {selectedExchange === 'bitget' ? 'account' : 'UID'} will credit automatically.
                   </div>
                   {cexSetupError && <div className="text-[10px] text-[var(--red2)]">{cexSetupError}</div>}
                   <Button variant="green" onClick={() => void linkCexUid()} disabled={savingCexAccount || cexSenderUid.length < 4} className="w-full py-3">
-                    {savingCexAccount ? `Linking ${exchangeLabel} UID…` : `Link ${exchangeLabel} UID`}
+                    {savingCexAccount ? `Linking ${exchangeLabel} account…` : `Link ${exchangeLabel} account`}
                   </Button>
                 </>
               )}
               {cexSetup.account?.status === 'pending_verification' && (
                 <div className="rounded-lg border border-[rgba(202,165,96,.28)] bg-[rgba(202,165,96,.08)] p-3">
-                  <div className="text-[10px] font-bold text-[var(--gold2)]">Verify your {exchangeLabel} UID</div>
+                  <div className="text-[10px] font-bold text-[var(--gold2)]">Verify your {exchangeLabel} account</div>
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
-                    From UID <span className="font-mono font-bold">{cexSetup.account.externalUid}</span>, transfer exactly{' '}
+                    From your linked account <span className="font-mono font-bold">{cexSetup.account.externalUid}</span>, transfer exactly{' '}
                     <span className="font-mono font-bold">{cexSetup.account.challengeAmount.toFixed(2)} USDT</span> to MafitaPay’s {exchangeLabel} UID above.
                     This verification transfer is credited at the current sell rate. Expires {new Date(cexSetup.account.challengeExpiresAt).toLocaleString()}.
                   </div>
@@ -483,9 +486,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
               )}
               {cexSetup.account?.status === 'verified' && (
                 <div className="rounded-lg border border-[rgba(58,155,110,.3)] bg-[rgba(58,155,110,.08)] p-3">
-                  <div className="text-[10px] font-bold text-[var(--green2)]">{exchangeLabel} UID verified</div>
+                  <div className="text-[10px] font-bold text-[var(--green2)]">{exchangeLabel} account verified</div>
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
-                  Send USDT or USDC from UID <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender UIDs are not auto-credited.
+                  Send USDT or USDC from <span className="font-mono font-bold">{cexSetup.account.externalUid}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender accounts are not auto-credited.
                   </div>
                   <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked UID</button>
                 </div>

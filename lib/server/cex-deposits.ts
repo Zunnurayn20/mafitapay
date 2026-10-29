@@ -56,6 +56,7 @@ const RECV_WINDOW = '10000'
 const MAX_PAGES_PER_PASS = 2
 const PAGE_LIMIT = 100
 const OVERLAP_MS = 5 * 60_000
+const BITGET_OVERLAP_MS = 24 * 60 * 60_000
 
 function bybitConfig() {
   if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return null
@@ -180,6 +181,15 @@ function normalizeIdentifier(value: string | undefined) {
   return value?.trim().toLowerCase() ?? ''
 }
 
+function normalizeSenderIdentifier(exchange: CexExchange, value: string | undefined) {
+  const identifier = value?.trim() ?? ''
+  if (/^\d{4,24}$/.test(identifier)) return identifier
+  if (exchange !== BITGET) return ''
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return identifier.toLowerCase()
+  if (/^\+?[0-9][0-9 ()-]{5,23}$/.test(identifier)) return identifier.replace(/[ ()-]/g, '')
+  return ''
+}
+
 async function acceptCexTransfer(input: {
   exchange: CexExchange
   externalTransferId: string
@@ -197,12 +207,13 @@ async function acceptCexTransfer(input: {
     exchange, externalTransferId, senderUid, receiverUid, assetSymbol, amount,
     amountUnits, providerStatus, isSuccessful, receivedAtMs, providerPayload,
   } = input
-  if (!externalTransferId || !amount || !senderUid || !/^\d{4,24}$/.test(senderUid) || !Number.isFinite(receivedAtMs)) return false
+  const normalizedSenderUid = normalizeSenderIdentifier(exchange, senderUid)
+  if (!externalTransferId || !amount || !normalizedSenderUid || !Number.isFinite(receivedAtMs)) return false
 
   const transfer = await upsertCexInboundTransfer({
     exchange,
     externalTransferId,
-    senderUid,
+    senderUid: normalizedSenderUid,
     receiverUid,
     assetSymbol,
     amount,
@@ -214,7 +225,7 @@ async function acceptCexTransfer(input: {
 
   if (!isSuccessful || transfer.attributionStatus === 'credited' || transfer.attributionStatus === 'ignored') return false
 
-  let account = await getCexDepositAccountByExternalUid(exchange, senderUid)
+  let account = await getCexDepositAccountByExternalUid(exchange, normalizedSenderUid)
   if (!account) {
     await updateCexInboundTransfer({ id: transfer.id, attributionStatus: 'unmatched' })
     return false
@@ -324,7 +335,7 @@ async function acceptBitgetTransfer(row: BitgetInternalDeposit, receiverUid: str
   const transferId = row.orderId?.trim() || row.tradeId?.trim() || ''
   const amount = getAmount(row.size)
   const receivedAtMs = Number(row.cTime || row.uTime)
-  const senderUid = row.fromAddress?.trim() || ''
+  const senderUid = normalizeSenderIdentifier(BITGET, row.fromAddress)
   if (!transferId || !amount || !Number.isFinite(receivedAtMs)) return false
   return acceptCexTransfer({
     exchange: BITGET,
@@ -399,15 +410,21 @@ async function syncBitgetInternalDeposits() {
   const windowEndMs = state?.nextCursor ? state.windowEndMs : Date.now()
   const windowStartMs = state?.nextCursor
     ? state.windowStartMs
-    : state ? Math.max(0, state.windowEndMs - OVERLAP_MS) : windowEndMs - 24 * 60 * 60_000
+    : state ? Math.max(0, state.windowEndMs - BITGET_OVERLAP_MS) : windowEndMs - BITGET_OVERLAP_MS
   let cursor = state?.nextCursor || undefined
   let checked = 0
   let credited = 0
+  let internalTransfers = 0
+  let recipientMatches = 0
   let pages = 0
   do {
     const rows = await fetchBitgetPage({ startTime: windowStartMs, endTime: windowEndMs, idLessThan: cursor })
     for (const row of rows) {
       checked += 1
+      if (row.type?.toLowerCase() === 'deposit' && row.dest?.toLowerCase() === 'internal_transfer') {
+        internalTransfers += 1
+        if (normalizeIdentifier(row.toAddress) === normalizeIdentifier(config.receiverUid)) recipientMatches += 1
+      }
       if (await acceptBitgetTransfer(row, config.receiverUid)) credited += 1
     }
     const nextCursor = rows.length >= PAGE_LIMIT
@@ -439,11 +456,15 @@ async function syncBitgetInternalDeposits() {
     const rows = await fetchBitgetPage({ startTime: Math.max(0, receivedAt - 60_000), endTime: receivedAt + 60_000, orderId: transfer.externalTransferId })
     for (const row of rows) {
       checked += 1
+      if (row.type?.toLowerCase() === 'deposit' && row.dest?.toLowerCase() === 'internal_transfer') {
+        internalTransfers += 1
+        if (normalizeIdentifier(row.toAddress) === normalizeIdentifier(config.receiverUid)) recipientMatches += 1
+      }
       if (await acceptBitgetTransfer(row, config.receiverUid)) credited += 1
     }
   }
 
-  return { configured: true, exchange: BITGET, checked, credited, pages, morePages: Boolean(cursor) }
+  return { configured: true, exchange: BITGET, checked, internalTransfers, recipientMatches, credited, pages, morePages: Boolean(cursor) }
 }
 
 export async function syncCexInternalDepositsOnce() {
