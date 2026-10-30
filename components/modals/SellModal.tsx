@@ -442,14 +442,14 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold transition-colors ${exchange.exchange === 'bybit'
                       ? selectedExchange === exchange.exchange
                         ? 'border-[#f7a600] bg-[#202124] text-[#ffd27a] shadow-[inset_0_0_0_1px_rgba(247,166,0,.14)]'
-                        : 'border-[#f7a600]/40 bg-[#17181b] text-[#e6b84f] hover:bg-[#242528]'
+                        : 'border-[#f7a600]/40 bg-transparent text-[#e6b84f]'
                       : exchange.exchange === 'bitget'
                         ? selectedExchange === exchange.exchange
                           ? 'border-[#00d6a3] bg-[#202124] text-[#70f0cc] shadow-[inset_0_0_0_1px_rgba(0,214,163,.14)]'
-                          : 'border-[#00d6a3]/40 bg-[#17181b] text-[#63cdb0] hover:bg-[#242528]'
+                          : 'border-[#00d6a3]/40 bg-transparent text-[#63cdb0]'
                         : selectedExchange === exchange.exchange
                           ? 'border-white/70 bg-[#202124] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.12)]'
-                          : 'border-white/30 bg-[#17181b] text-white/70 hover:bg-[#242528]'}`}
+                          : 'border-white/30 bg-transparent text-white/70'}`}
                   >
                     <CexLogo exchange={exchange.exchange} size="sm" />
                     {exchange.exchange === 'bybit' ? 'Bybit' : exchange.exchange === 'bitget' ? 'Bitget' : 'OKX'}

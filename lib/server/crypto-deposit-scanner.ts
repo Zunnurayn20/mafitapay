@@ -117,6 +117,10 @@ const CHAIN_SCAN_TIMEOUT_OVERRIDES_MS: Partial<Record<ScanChain, number>> = {
     10_000,
     Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_NEAR_TIMEOUT_MS ?? 25_000) || 25_000
   ),
+  solana: Math.max(
+    10_000,
+    Number(process.env.MAFITAPAY_CRYPTO_DEPOSIT_SOLANA_TIMEOUT_MS ?? 30_000) || 30_000
+  ),
 }
 
 function getAssetScanTimeoutMs(chain: ScanChain) {
@@ -1499,17 +1503,34 @@ async function scanSolanaDeposits(input: {
   const conn = input.connection
   const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
-  for (const addr of solAddrs) {
+  const scanAddress = async (addr: CryptoDepositAddress) => {
     try {
       const owner = new PublicKey(addr.address)
       const isNative = input.asset.pairId === 'SOL_SOLANA'
       const target = isNative ? owner : getAssociatedTokenAddressSync(USDC_MINT, owner)
+      const scanKey = `solana:${input.asset.pairId}:${addr.address}`
+      const lastScannedSlot = await getLastScannedBlock(scanKey)
+      // Scan the recent history once, then fetch only new activity on subsequent passes. The
+      // previous implementation fetched and reparsed the same 30 transactions on every pass.
+      const sigs = await conn.getSignaturesForAddress(target, { limit: lastScannedSlot === null ? 30 : 1000 })
+      const newestSlot = sigs.reduce<bigint | null>((latest, item) => {
+        const slot = BigInt(item.slot)
+        return latest === null || slot > latest ? slot : latest
+      }, null)
+      const newSigs = lastScannedSlot === null
+        ? sigs
+        : sigs.filter(item => BigInt(item.slot) > lastScannedSlot)
 
-      const sigs = await conn.getSignaturesForAddress(target, { limit: 30 })
-      for (const sigInfo of sigs) {
+      for (const sigInfo of newSigs) {
         if (sigInfo.err) continue
+        const txHash = sigInfo.signature
+        const externalEventId = `solana:${input.asset.pairId}:${txHash}:${isNative ? 'native' : 'spl'}`
+        const existingEvent = await getCryptoDepositEventByExternalId(externalEventId)
+        if (existingEvent && existingEvent.status !== 'unmatched') continue
+
         const tx = await conn.getParsedTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 })
-        if (!tx || tx.meta?.err) continue
+        if (!tx) throw new Error(`Solana transaction ${txHash} is not available from the RPC yet.`)
+        if (tx.meta?.err) continue
 
         let value = BigInt(0)
         let from = ''
@@ -1545,8 +1566,6 @@ async function scanSolanaDeposits(input: {
 
         if (value <= BigInt(0)) continue
 
-        const txHash = sigInfo.signature
-        const externalEventId = `solana:${input.asset.pairId}:${txHash}:${isNative ? 'native' : 'spl'}`
         if (VERBOSE_DEPOSIT_SCANNER) {
           console.log(`[crypto-deposit-scanner] ${input.asset.pairId} matched ${isNative ? 'native' : 'spl'} deposit: to=${addr.address} value=${value.toString()} tx=${txHash}`)
         }
@@ -1568,11 +1587,24 @@ async function scanSolanaDeposits(input: {
         if (!result.duplicate) detected += 1
         if (result.settled) settled += 1
       }
+      if (newestSlot !== null && (lastScannedSlot === null || newestSlot > lastScannedSlot)) {
+        // Keep the newest slot eligible on the next scan so another transfer in that same
+        // slot cannot be skipped. Known completed events are skipped before fetching the tx.
+        const cursorSlot = newestSlot > BigInt(0) ? newestSlot - BigInt(1) : newestSlot
+        await setLastScannedBlock(scanKey, cursorSlot)
+      }
     } catch (e) {
       failedAddresses += 1
       console.warn(`[crypto-deposit-scanner] Solana scan error for ${addr.address}:`, sanitizeErrorForLogs(e))
     }
   }
+
+  // Keep RPC latency bounded while avoiding one slow address blocking every other user's deposit.
+  const addressBatchSize = 5
+  for (let offset = 0; offset < solAddrs.length; offset += addressBatchSize) {
+    await Promise.all(solAddrs.slice(offset, offset + addressBatchSize).map(scanAddress))
+  }
+
   if (failedAddresses > 0) throw new Error(`${input.asset.pairId} Solana scan failed for ${failedAddresses} deposit address(es).`)
   return { detected, settled }
 }
