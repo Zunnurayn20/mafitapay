@@ -4,8 +4,8 @@ import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPh
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
-import { createAsbdataDataPayment, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
-import { createBardetechDataPayment, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
+import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
+import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { generateRef } from '@/lib/utils'
@@ -423,6 +423,73 @@ async function handleBillPayment(req: Request) {
       message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',
       success: true,
     }, { status: 202 })
+  }
+
+  // Airtime is routed through Flutterwave first. If Flutterwave explicitly rejects the request,
+  // try configured backup vendors in order. Never retry an indeterminate result: the first
+  // provider may already have delivered airtime, and a second purchase could double-credit.
+  if (
+    selectedProvider.type === 'airtime'
+    && providerResult.provider === 'flutterwave'
+    && providerResult.status === 'failed'
+    && !providerResult.indeterminate
+  ) {
+    const primaryFailure = providerResult
+    const fallbackProviders = [
+      ...(isBardetechBillsEnabled() ? ['bardetech'] as const : []),
+      ...(isAsbdataBillsEnabled() ? ['asbdata'] as const : []),
+    ]
+    const primaryFailureEventId = `bill:${ref}:flutterwave-fallback:${primaryFailure.rawStatus || 'FAILED'}`
+    await recordProviderEvent({
+      externalEventId: primaryFailureEventId,
+      provider: 'flutterwave_bills',
+      reference: ref,
+      status: primaryFailure.rawStatus || 'FAILED',
+      failureReason: primaryFailure.reason,
+      payload: primaryFailure.payload,
+    })
+    await markProviderEventProcessed(primaryFailureEventId)
+
+    for (const fallbackProvider of fallbackProviders) {
+      const networkId = fallbackProvider === 'bardetech'
+        ? getBardetechNetworkId(provider || '')
+        : getAsbdataNetworkId(provider || '')
+      if (networkId === undefined) continue
+
+      console.info('[bills] provider.fallback.start', JSON.stringify({ reference: ref, type: 'airtime', provider: fallbackProvider }))
+      let fallbackResult: BardetechPaymentResult | AsbdataPaymentResult
+      try {
+        fallbackResult = fallbackProvider === 'bardetech'
+          ? await createBardetechAirtimePayment({ networkId, mobileNumber: account, amount: chargeAmount, reference: ref })
+          : await createAsbdataAirtimePayment({ networkId, mobileNumber: account, amount: chargeAmount, reference: ref })
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Fallback provider request ended without a confirmed response.'
+        fallbackResult = fallbackProvider === 'bardetech'
+          ? { provider: 'bardetech', reference: ref, status: 'failed', rawStatus: 'INDETERMINATE', reason, networkId, indeterminate: true }
+          : { provider: 'asbdata', reference: ref, status: 'failed', rawStatus: 'INDETERMINATE', reason, networkId, indeterminate: true }
+      }
+      providerResult = fallbackResult
+      console.info('[bills] provider.fallback.completed', JSON.stringify({
+        reference: ref,
+        type: 'airtime',
+        provider: fallbackResult.provider,
+        status: fallbackResult.status,
+        providerStatus: fallbackResult.rawStatus ?? null,
+      }))
+
+      if (fallbackResult.status !== 'failed' || fallbackResult.indeterminate) break
+
+      const fallbackFailureEventId = `bill:${ref}:${fallbackResult.provider}:fallback:${fallbackResult.rawStatus || 'FAILED'}`
+      await recordProviderEvent({
+        externalEventId: fallbackFailureEventId,
+        provider: fallbackResult.provider === 'bardetech' ? 'bardetech_airtime' : 'asbdata_airtime',
+        reference: ref,
+        status: fallbackResult.rawStatus || 'FAILED',
+        failureReason: fallbackResult.reason,
+        payload: fallbackResult.payload,
+      })
+      await markProviderEventProcessed(fallbackFailureEventId)
+    }
   }
 
   console.info('[bills] provider.completed', JSON.stringify({
