@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getCryptoDepositAddressByAddress } from '@/lib/server/data'
 import { forceScanDepositAddress, processAlchemyErc20Activity } from '@/lib/server/crypto-deposit-scanner'
-import { getAlchemyWebhookChain, getAlchemyWebhookSigningKey } from '@/lib/server/alchemy-address-webhooks'
+import { getAlchemyWebhookChain, getAlchemyWebhookSigningKey, getSolanaDepositAddressMap } from '@/lib/server/alchemy-address-webhooks'
 
 export const runtime = 'nodejs'
 
@@ -68,6 +68,15 @@ export async function POST(request: Request) {
   const addresses = [...new Set(activity
     .map(item => typeof item?.toAddress === 'string' ? item.toAddress.trim() : '')
     .filter(Boolean))]
+  const solanaAddressMap = chain === 'solana' ? await getSolanaDepositAddressMap() : null
+
+  if (chain === 'solana' && addresses.length === 0) {
+    const first = activity[0] && typeof activity[0] === 'object' ? activity[0] as Record<string, unknown> : null
+    console.warn('[alchemy-webhook] Solana activity had no destination address', {
+      activityCount: activity.length,
+      firstActivityFields: first ? Object.keys(first).sort().join(',') : '',
+    })
+  }
 
   let scanned = 0
   let ignored = 0
@@ -76,7 +85,9 @@ export async function POST(request: Request) {
   for (const item of activity) {
     const address = typeof item?.toAddress === 'string' ? item.toAddress.trim() : ''
     if (!address) continue
-    const record = await getCryptoDepositAddressByAddress(address)
+    const record = chain === 'solana'
+      ? solanaAddressMap?.get(address) ?? null
+      : await getCryptoDepositAddressByAddress(address)
     if (!record || record.addressFamily !== 'evm') continue
     try {
       const result = await processAlchemyErc20Activity({ address: record.address, chain, activity: item })
@@ -96,7 +107,9 @@ export async function POST(request: Request) {
 
   for (const address of addresses) {
     // Address Activity includes outbound activity too. Only scan a known receiving address.
-    const record = await getCryptoDepositAddressByAddress(address)
+    const record = chain === 'solana'
+      ? solanaAddressMap?.get(address) ?? null
+      : await getCryptoDepositAddressByAddress(address)
     if (!record) {
       ignored += 1
       continue

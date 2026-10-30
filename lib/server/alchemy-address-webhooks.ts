@@ -1,5 +1,24 @@
 import { listCryptoDepositAddressesByFamily } from '@/lib/server/data'
-import type { CryptoDepositAddressFamily } from '@/types'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { PublicKey } from '@solana/web3.js'
+import type { CryptoDepositAddress, CryptoDepositAddressFamily } from '@/types'
+
+const SOLANA_USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+
+function getSolanaUsdcTokenAccount(ownerAddress: string) {
+  return getAssociatedTokenAddressSync(SOLANA_USDC_MINT, new PublicKey(ownerAddress)).toBase58()
+}
+
+/** Map both a Solana owner address and its USDC ATA back to the customer's deposit address. */
+export async function getSolanaDepositAddressMap() {
+  const records = await listCryptoDepositAddressesByFamily('solana' satisfies CryptoDepositAddressFamily)
+  const addressMap = new Map<string, CryptoDepositAddress>()
+  for (const record of records) {
+    addressMap.set(record.address, record)
+    addressMap.set(getSolanaUsdcTokenAccount(record.address), record)
+  }
+  return addressMap
+}
 
 type AlchemyWebhookChain = 'base' | 'bsc' | 'polygon' | 'robinhood' | 'solana'
 
@@ -80,7 +99,8 @@ export async function subscribeCryptoDepositAddressesToAlchemy(input: {
   solanaAddresses?: string[]
 }) {
   const evmAddresses = [...new Set((input.evmAddresses ?? []).map(address => address.trim()).filter(Boolean))]
-  const solanaAddresses = [...new Set((input.solanaAddresses ?? []).map(address => address.trim()).filter(Boolean))]
+  const solanaOwners = [...new Set((input.solanaAddresses ?? []).map(address => address.trim()).filter(Boolean))]
+  const solanaAddresses = [...new Set(solanaOwners.flatMap(address => [address, getSolanaUsdcTokenAccount(address)]))]
   const results: Partial<Record<AlchemyWebhookChain, { configured: boolean; added: number }>> = {}
 
   await Promise.all((['base', 'bsc', 'polygon', 'robinhood'] as const).map(async (chain) => {
@@ -100,8 +120,9 @@ export async function syncAllCryptoDepositAddressesToAlchemy() {
     evmAddresses: evm.map(item => item.address),
     solanaAddresses: solana.map(item => item.address),
   })
+  const solanaWebhookTracked = new Set(solana.flatMap(item => [item.address, getSolanaUsdcTokenAccount(item.address)])).size
   return {
-    addresses: { evm: evm.length, solana: solana.length },
+    addresses: { evm: evm.length, solana: solana.length, solanaWebhookTracked },
     webhooks: result,
   }
 }
