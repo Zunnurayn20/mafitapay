@@ -4,8 +4,8 @@ import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPh
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
-import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
-import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
+import { createAsbdataDataPayment, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
+import { createBardetechDataPayment, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { generateRef } from '@/lib/utils'
@@ -25,7 +25,6 @@ import type { BillProvider, Transaction } from '@/types'
 function hasProviderForBillType(type: BillProvider['type']) {
   if (isFlutterwaveBillsEnabled() && isFlutterwaveBillTypeSupported(type)) return true
   if (type === 'data') return isAsbdataBillsEnabled() || isAmigoBillsEnabled() || isBardetechBillsEnabled()
-  if (type === 'airtime') return isAsbdataBillsEnabled() || isBardetechBillsEnabled()
   return false
 }
 
@@ -319,17 +318,6 @@ async function handleBillPayment(req: Request) {
 
   const ref = generateRef()
 
-  const asbdataAirtimeNetworkId = selectedProvider.type === 'airtime' && isAsbdataBillsEnabled()
-    ? getAsbdataNetworkId(provider ?? '')
-    : undefined
-
-  // Only consulted when ASBDATA cannot serve the topup, so the two never race for the same sale.
-  const bardetechAirtimeNetworkId = selectedProvider.type === 'airtime'
-    && isBardetechBillsEnabled()
-    && asbdataAirtimeNetworkId === undefined
-    ? getBardetechNetworkId(provider ?? '')
-    : undefined
-
   const flutterwaveInput = {
     type: selectedProvider.type,
     networkProvider: provider,
@@ -340,18 +328,16 @@ async function handleBillPayment(req: Request) {
     itemCode,
   }
 
-  const expectedProvider = resolvedDataProvider && (
-    resolvedDataProvider === 'amigo' ? isAmigoBillsEnabled()
-      : resolvedDataProvider === 'asbdata' ? isAsbdataBillsEnabled()
-        : resolvedDataProvider === 'bardetech' ? isBardetechBillsEnabled()
-          : false
-  )
-    ? resolvedDataProvider
-    : asbdataAirtimeNetworkId !== undefined
-      ? 'asbdata'
-      : bardetechAirtimeNetworkId !== undefined
-        ? 'bardetech'
-        : 'flutterwave'
+  const expectedProvider = selectedProvider.type === 'airtime'
+    ? 'flutterwave'
+    : resolvedDataProvider && (
+        resolvedDataProvider === 'amigo' ? isAmigoBillsEnabled()
+          : resolvedDataProvider === 'asbdata' ? isAsbdataBillsEnabled()
+            : resolvedDataProvider === 'bardetech' ? isBardetechBillsEnabled()
+              : false
+      )
+      ? resolvedDataProvider
+      : 'flutterwave'
   const reservationTransaction: Transaction = {
     id: ref,
     type: selectedProvider.type as Transaction['type'],
@@ -397,7 +383,7 @@ async function handleBillPayment(req: Request) {
   }
 
   const providerStartedAt = Date.now()
-  let activeProvider = expectedProvider
+  const activeProvider = expectedProvider
   let providerResult: AsbdataPaymentResult | BardetechPaymentResult | AmigoDataPaymentResult | FlutterwaveBillPaymentResult
   try {
     providerResult = resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
@@ -421,21 +407,7 @@ async function handleBillPayment(req: Request) {
             planId: providerPlanId,
             reference: ref,
           })
-          : asbdataAirtimeNetworkId !== undefined
-            ? await createAsbdataAirtimePayment({
-              networkId: asbdataAirtimeNetworkId,
-              mobileNumber: account,
-              amount: chargeAmount,
-              reference: ref,
-            })
-            : bardetechAirtimeNetworkId !== undefined
-              ? await createBardetechAirtimePayment({
-                networkId: bardetechAirtimeNetworkId,
-                mobileNumber: account,
-                amount: chargeAmount,
-                reference: ref,
-              })
-              : await createFlutterwaveBillPayment(flutterwaveInput)
+          : await createFlutterwaveBillPayment(flutterwaveInput)
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Provider request ended without a confirmed response.'
     await recordProviderEvent({
@@ -451,35 +423,6 @@ async function handleBillPayment(req: Request) {
       message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',
       success: true,
     }, { status: 202 })
-  }
-
-  // Airtime falls back to Flutterwave when the VTU vendor rejects the request outright. Never retry
-  // an indeterminate result -- a topup that actually landed must not be sent a second time.
-  if (
-    (providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech')
-    && providerResult.status === 'failed'
-    && !providerResult.indeterminate
-    && selectedProvider.type === 'airtime'
-    && isFlutterwaveBillsEnabled()
-    && isFlutterwaveBillTypeSupported('airtime')
-  ) {
-    const failedVendor = providerResult.provider
-    console.warn(`[${failedVendor}] airtime failed for ref=${ref}, falling back to Flutterwave: ${providerResult.reason ?? 'unknown'}`)
-    await recordProviderEvent({
-      externalEventId: `bill:${ref}:${failedVendor}-airtime-failed`,
-      provider: `${failedVendor}_airtime`,
-      reference: ref,
-      status: providerResult.rawStatus || 'FAILED',
-      failureReason: providerResult.reason,
-      payload: providerResult.payload,
-    })
-    activeProvider = 'flutterwave'
-    await updatePendingTransactionMetadata(user.id, ref, {
-      ...reservationTransaction.metadata,
-      providerName: 'flutterwave',
-      providerReference: ref,
-    })
-    providerResult = await createFlutterwaveBillPayment(flutterwaveInput)
   }
 
   console.info('[bills] provider.completed', JSON.stringify({

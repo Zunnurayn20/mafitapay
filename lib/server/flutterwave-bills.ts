@@ -164,6 +164,14 @@ function normalizeNetworkProvider(value: string) {
   return normalized
 }
 
+function formatFlutterwaveCustomerId(type: BillProvider['type'], customerId: string) {
+  if (type !== 'airtime') return customerId
+  const digits = customerId.replace(/\D/g, '')
+  if (digits.length === 11 && digits.startsWith('0')) return `+234${digits.slice(1)}`
+  if (digits.length === 13 && digits.startsWith('234')) return `+${digits}`
+  return customerId
+}
+
 function formatDataBundleLabel(name: string) {
   const sizeMatch = name.match(/(\d+(?:\.\d+)?)\s*(kb|mb|gb|tb)/i)
   if (sizeMatch) {
@@ -765,7 +773,7 @@ export async function createFlutterwaveBillPayment(input: {
         method: 'POST',
         body: JSON.stringify({
           country: 'NG',
-          customer_id: input.account,
+          customer_id: formatFlutterwaveCustomerId(input.type, input.account),
           amount: input.amount,
           reference: input.reference,
           ...(getFlutterwaveBillsCallbackUrl() ? { callback_url: getFlutterwaveBillsCallbackUrl() } : {}),
