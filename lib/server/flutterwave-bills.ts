@@ -815,6 +815,12 @@ export async function createFlutterwaveBillPayment(input: {
     const indeterminate = error instanceof FlutterwaveRequestError
       ? error.statusCode >= 500
       : true
+    const providerError = error instanceof FlutterwaveRequestError ? {
+      httpStatus: error.statusCode,
+      apiStatus: readString(error.body.status) || null,
+      apiCode: readString(error.body.code) || null,
+      apiMessage: readString(error.body.message) || undefined,
+    } : undefined
     logFlutterwaveBills('payment.error', {
       type: input.type,
       networkProvider: input.networkProvider || null,
@@ -824,11 +830,7 @@ export async function createFlutterwaveBillPayment(input: {
       amount: input.amount,
       reference: input.reference,
       message: error instanceof Error ? error.message : 'Flutterwave bill payment failed.',
-      ...(error instanceof FlutterwaveRequestError ? {
-        statusCode: error.statusCode,
-        statusText: error.statusText,
-        body: error.body,
-      } : {}),
+      ...(providerError ?? {}),
     })
     return {
       provider: 'flutterwave',
@@ -837,6 +839,10 @@ export async function createFlutterwaveBillPayment(input: {
       rawStatus: indeterminate ? 'INDETERMINATE' : 'REQUEST_ERROR',
       reason: error instanceof Error ? error.message : 'Flutterwave bill payment failed.',
       providerReference: input.reference,
+      billerCode: target.billerCode,
+      itemCode: target.itemCode,
+      itemName: target.name,
+      payload: providerError ? { providerError } : undefined,
       indeterminate,
     }
   }
