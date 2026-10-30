@@ -43,8 +43,12 @@ export type FlutterwaveBillPaymentResult = {
 }
 
 const FLUTTERWAVE_SUPPORTED_BILL_TYPES = new Set<BillProvider['type']>(['airtime', 'data', 'cable', 'electric'])
-const FLUTTERWAVE_AIRTIME_BILLER_CODE = 'BIL099'
-const FLUTTERWAVE_AIRTIME_ITEM_CODE = 'AT099'
+const FLUTTERWAVE_AIRTIME_TARGETS: Record<string, { billerCode: string; itemCode: string; name: string }> = {
+  mtn: { billerCode: 'BIL099', itemCode: 'AT099', name: 'MTN VTU' },
+  airtel: { billerCode: 'BIL100', itemCode: 'AT100', name: 'Airtel VTU' },
+  glo: { billerCode: 'BIL102', itemCode: 'AT133', name: 'Glo VTU' },
+  '9mobile': { billerCode: 'BIL103', itemCode: 'AT134', name: '9mobile VTU' },
+}
 const FLUTTERWAVE_DATA_BILLER_CODES: Record<string, string> = {
   mtn: 'BIL108',
   glo: 'BIL109',
@@ -405,10 +409,13 @@ async function resolveFlutterwaveBillTarget(input: {
   itemCode?: string
 }): Promise<FlutterwaveBillItem> {
   if (input.type === 'airtime') {
+    const networkKey = normalizeNetworkProvider(input.networkProvider || '')
+    const target = FLUTTERWAVE_AIRTIME_TARGETS[networkKey]
+    if (!target) {
+      throw new Error('Selected network provider is not supported for Flutterwave airtime yet.')
+    }
     return {
-      billerCode: FLUTTERWAVE_AIRTIME_BILLER_CODE,
-      itemCode: FLUTTERWAVE_AIRTIME_ITEM_CODE,
-      name: 'Airtime',
+      ...target,
       amount: input.amount,
     }
   }

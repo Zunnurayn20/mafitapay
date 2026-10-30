@@ -431,6 +431,8 @@ async function handleBillPayment(req: Request) {
     provider: providerResult.provider,
     status: providerResult.status,
     providerStatus: providerResult.rawStatus ?? null,
+    billerCode: 'billerCode' in providerResult ? providerResult.billerCode ?? null : null,
+    itemCode: 'itemCode' in providerResult ? providerResult.itemCode ?? null : null,
     elapsedMs: Date.now() - providerStartedAt,
   }))
 
