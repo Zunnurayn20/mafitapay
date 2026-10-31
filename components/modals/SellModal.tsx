@@ -438,14 +438,14 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
 
           {depositMethod === 'exchange' && availableExchanges.length > 0 && (
             <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="flex gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {availableExchanges.map(exchange => (
                   <button
                     key={exchange.exchange}
                     type="button"
                     aria-pressed={selectedExchange === exchange.exchange}
                     onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSenderEmail(''); setCexSenderPhone(''); setCexSetupError('') }}
-                    className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold transition-colors ${selectedExchange === exchange.exchange
+                    className={`flex min-w-0 items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[10px] font-bold transition-colors ${selectedExchange === exchange.exchange
                       ? exchange.exchange === 'bybit' ? 'border-[#f7a600] bg-[#202124] text-[#ffd27a] shadow-[inset_0_0_0_1px_rgba(247,166,0,.14)]'
                         : exchange.exchange === 'bitget' ? 'border-[#00d6a3] bg-[#202124] text-[#70f0cc] shadow-[inset_0_0_0_1px_rgba(0,214,163,.14)]'
                           : exchange.exchange === 'mexc' ? 'border-[#2e9bff] bg-[#202124] text-[#78c0ff] shadow-[inset_0_0_0_1px_rgba(46,155,255,.14)]'
