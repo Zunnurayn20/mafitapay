@@ -70,7 +70,7 @@ export default async function AdminPricingPage() {
             Manage disabled plans
           </Link>
         )}
-        description="Operator margins on wholesale data plans (Amigo + ASBDATA + Bardetech). Same model as online-data-sub: percent, flat, floor, cap, and round — most specific rule wins."
+        description="Choose how much MafitaPay earns on each data plan. Set one default profit for all providers, then add exceptions only when needed."
       >
         <PricingClient
           initialRules={rules}
@@ -81,35 +81,32 @@ export default async function AdminPricingPage() {
       </AdminPageCard>
 
       <AdminPageCard
-        title="How this works"
-        description="Where data pricing stops, and what still uses the old flat-margin page."
+        title="Price basics"
+        description="A quick guide to provider cost, MafitaPay profit, and customer price."
       >
         <div className="space-y-3 p-4 text-sm leading-relaxed text-slate-500">
           <p>
-            Retail price = wholesale + % margin + flat ₦, then floor/cap, then round up.
-            A GLOBAL rule covers every plan; NETWORK / PLAN_TYPE / PLAN override it for matching plans.
+            The provider cost is what MafitaPay pays to deliver the plan. The customer price is the provider cost plus MafitaPay profit.
           </p>
           <p>
-            Vendor can be left blank (both Amigo and ASBDATA) or pinned to one provider. PLAN-scope
-            rules require a vendor because plan codes are not shared between them.
+            The default profit applies to all plans. Rules for a network, plan category, or individual plan override the default when they match.
           </p>
           <p>
-            <strong className="text-amber-700">No rule means sell at wholesale</strong> — you earn
-            nothing until at least a GLOBAL rule is active.
+            The example above uses a ₦1,000 provider cost. The plan preview below Advanced pricing rules shows current provider costs and customer prices.
           </p>
           <p>
-            Bank transfer fees stay on{' '}
+            Bank transfer fees are managed under{' '}
             <a href="/admin/margins" className="font-semibold text-[#8c6b31] hover:underline">
               Profit margins
             </a>
-            . Crypto spreads stay on{' '}
+            . Crypto prices are managed under{' '}
             <a href="/admin/catalogs/assets" className="font-semibold text-[#8c6b31] hover:underline">
               Crypto assets
             </a>
             .
           </p>
           <p>
-            Plans that fail provider delivery can be hidden and blocked without deleting them in{' '}
+            To hide a plan without deleting it, open{' '}
             <a href="/admin/pricing/disabled-plans" className="font-semibold text-[#8c6b31] hover:underline">
               Disabled data plans
             </a>

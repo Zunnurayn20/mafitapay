@@ -88,9 +88,18 @@ export function PricingClient({
 }) {
   const router = useRouter()
   const [rules, setRules] = useState(initialRules)
+  const initialDefaultRule = initialRules.find(rule => rule.scope === 'GLOBAL' && !rule.vendor) ?? null
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [simpleProfitType, setSimpleProfitType] = useState<'fixed' | 'percentage'>(
+    initialDefaultRule?.marginBps ? 'percentage' : 'fixed',
+  )
+  const [simpleProfitValue, setSimpleProfitValue] = useState(() => (
+    initialDefaultRule?.marginBps
+      ? String(initialDefaultRule.marginBps / 100)
+      : String((initialDefaultRule?.marginKobo ?? 0) / 100)
+  ))
 
   const [createForm, setCreateForm] = useState({
     scope: 'GLOBAL',
@@ -123,6 +132,75 @@ export function PricingClient({
     }),
     [rules],
   )
+
+  const defaultRule = rules.find(rule => rule.scope === 'GLOBAL' && !rule.vendor) ?? null
+  const sampleCostKobo = 100_000
+  const simpleProfitKobo = simpleProfitType === 'percentage'
+    ? Math.round((sampleCostKobo * Math.max(0, Number(simpleProfitValue) || 0) * 100) / 10_000)
+    : Math.round(Math.max(0, Number(simpleProfitValue) || 0) * 100)
+  const limitedProfitKobo = Math.max(simpleProfitKobo, defaultRule?.minMarginKobo ?? 0)
+  const cappedProfitKobo = defaultRule?.maxMarginKobo != null
+    ? Math.min(limitedProfitKobo, defaultRule.maxMarginKobo)
+    : limitedProfitKobo
+  const sampleRoundKobo = defaultRule?.roundToKobo ?? 0
+  const sampleRetailKobo = sampleRoundKobo > 1
+    ? Math.ceil((sampleCostKobo + cappedProfitKobo) / sampleRoundKobo) * sampleRoundKobo
+    : sampleCostKobo + cappedProfitKobo
+  const sampleFinalProfitKobo = sampleRetailKobo - sampleCostKobo
+
+  async function saveDefaultProfit() {
+    setBusy(true)
+    setError('')
+    try {
+      const body = {
+        ...(defaultRule ? { id: defaultRule.id } : {
+          scope: 'GLOBAL',
+          vendor: null,
+          network: null,
+          planType: null,
+          variationCode: null,
+        }),
+        marginPercent: simpleProfitType === 'percentage' ? Number(simpleProfitValue || 0) : 0,
+        marginFlatNgn: simpleProfitType === 'fixed' ? Number(simpleProfitValue || 0) : 0,
+        minMarginNgn: (defaultRule?.minMarginKobo ?? 0) / 100,
+        maxMarginNgn: defaultRule?.maxMarginKobo != null ? defaultRule.maxMarginKobo / 100 : null,
+        roundToNgn: (defaultRule?.roundToKobo ?? 0) / 100,
+        note: defaultRule?.note || '',
+      }
+      const response = await fetch('/api/admin/pricing', {
+        method: defaultRule ? 'PATCH' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.error || 'Could not save the default profit.')
+      }
+
+      let savedRule = payload.data as AdminPricingRule
+      if (!savedRule.active) {
+        const activateResponse = await fetch('/api/admin/pricing', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: savedRule.id, active: true }),
+        })
+        const activation = await activateResponse.json().catch(() => null)
+        if (!activateResponse.ok || activation?.success === false) {
+          throw new Error(activation?.error || 'Profit was saved, but the rule could not be enabled.')
+        }
+        savedRule = activation.data as AdminPricingRule
+      }
+
+      setRules(current => [savedRule, ...current.filter(rule => rule.id !== savedRule.id)])
+      router.refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save the default profit.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function createRule() {
     setBusy(true)
@@ -229,6 +307,80 @@ export function PricingClient({
   return (
     <div className="space-y-4">
       {error ? <AdminError message={error} /> : null}
+
+      <section className="m-4 rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-xl">
+            <h3 className="text-base font-bold text-slate-900">Default profit for data plans</h3>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              Choose one simple profit amount for all providers. More specific network or plan rules can still override it below.
+            </p>
+            {defaultRule?.marginBps && defaultRule.marginKobo ? (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                The current default combines percentage and fixed profit. Saving here will replace that combination with the one method you choose.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="grid w-full gap-3 sm:grid-cols-[1fr_1fr_auto] lg:max-w-2xl">
+            <label className="space-y-1.5 text-xs font-semibold text-slate-600">
+              Profit method
+              <AdminSelect
+                value={simpleProfitType}
+                onChange={event => setSimpleProfitType(event.target.value as 'fixed' | 'percentage')}
+              >
+                <option value="fixed">Fixed amount per plan</option>
+                <option value="percentage">Percentage of provider cost</option>
+              </AdminSelect>
+            </label>
+            <label className="space-y-1.5 text-xs font-semibold text-slate-600">
+              {simpleProfitType === 'fixed' ? 'Profit per plan (₦)' : 'Profit percentage (%)'}
+              <AdminInput
+                type="number"
+                step="0.01"
+                min={0}
+                value={simpleProfitValue}
+                onChange={event => setSimpleProfitValue(event.target.value)}
+                placeholder={simpleProfitType === 'fixed' ? 'e.g. 20' : 'e.g. 2.5'}
+              />
+            </label>
+            <div className="flex items-end">
+              <AdminButton type="button" disabled={busy} onClick={() => void saveDefaultProfit()} className="w-full">
+                {busy ? 'Saving…' : defaultRule && !defaultRule.active ? 'Save and enable' : 'Save profit'}
+              </AdminButton>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Example provider cost</div>
+            <div className="mt-1 font-mono text-sm font-semibold text-slate-800">{formatNaira(sampleCostKobo / 100)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">MafitaPay profit</div>
+            <div className="mt-1 font-mono text-sm font-semibold text-[#8c6b31]">{formatNaira(sampleFinalProfitKobo / 100)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Customer pays</div>
+            <div className="mt-1 font-mono text-sm font-bold text-slate-900">{formatNaira(sampleRetailKobo / 100)}</div>
+          </div>
+        </div>
+        {defaultRule && (defaultRule.minMarginKobo > 0 || defaultRule.maxMarginKobo != null || defaultRule.roundToKobo > 0) ? (
+          <p className="mt-2 text-xs text-slate-500">
+            Existing advanced adjustments are preserved: {defaultRule.minMarginKobo > 0 ? `minimum profit ${formatNaira(defaultRule.minMarginKobo / 100)}` : ''}
+            {defaultRule.maxMarginKobo != null ? `${defaultRule.minMarginKobo > 0 ? ', ' : ''}maximum profit ${formatNaira(defaultRule.maxMarginKobo / 100)}` : ''}
+            {defaultRule.roundToKobo > 0 ? `${defaultRule.minMarginKobo > 0 || defaultRule.maxMarginKobo != null ? ', ' : ''}price rounds up to ${formatNaira(defaultRule.roundToKobo / 100)}` : ''}.
+            {' '}Edit these under Advanced pricing rules.
+          </p>
+        ) : null}
+      </section>
+
+      <details className="border-t border-slate-200">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-bold text-slate-700 marker:hidden">
+          Advanced pricing rules
+          <span className="ml-2 text-xs font-normal text-slate-400">Networks, plan categories, individual plans, caps and rounding</span>
+        </summary>
 
       <div className="space-y-3 p-4">
         <p className="text-sm text-slate-500">
@@ -477,6 +629,7 @@ export function PricingClient({
           </table>
         </div>
       </div>
+      </details>
     </div>
   )
 }
