@@ -92,6 +92,7 @@ export function PricingClient({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [simpleVendor, setSimpleVendor] = useState<'' | 'amigo' | 'asbdata' | 'bardetech'>('')
   const [simpleProfitType, setSimpleProfitType] = useState<'fixed' | 'percentage'>(
     initialDefaultRule?.marginBps ? 'percentage' : 'fixed',
   )
@@ -134,48 +135,67 @@ export function PricingClient({
   )
 
   const defaultRule = rules.find(rule => rule.scope === 'GLOBAL' && !rule.vendor) ?? null
+  const providerRule = simpleVendor
+    ? rules.find(rule => rule.scope === 'GLOBAL' && rule.vendor === simpleVendor) ?? null
+    : defaultRule
+  const effectiveRule = providerRule ?? defaultRule
+  const selectedVendorLabel = simpleVendor ? VENDOR_LABELS[simpleVendor] : 'all providers'
   const sampleCostKobo = 100_000
   const simpleProfitKobo = simpleProfitType === 'percentage'
     ? Math.round((sampleCostKobo * Math.max(0, Number(simpleProfitValue) || 0) * 100) / 10_000)
     : Math.round(Math.max(0, Number(simpleProfitValue) || 0) * 100)
-  const limitedProfitKobo = Math.max(simpleProfitKobo, defaultRule?.minMarginKobo ?? 0)
-  const cappedProfitKobo = defaultRule?.maxMarginKobo != null
-    ? Math.min(limitedProfitKobo, defaultRule.maxMarginKobo)
+  const limitedProfitKobo = Math.max(simpleProfitKobo, effectiveRule?.minMarginKobo ?? 0)
+  const cappedProfitKobo = effectiveRule?.maxMarginKobo != null
+    ? Math.min(limitedProfitKobo, effectiveRule.maxMarginKobo)
     : limitedProfitKobo
-  const sampleRoundKobo = defaultRule?.roundToKobo ?? 0
+  const sampleRoundKobo = effectiveRule?.roundToKobo ?? 0
   const sampleRetailKobo = sampleRoundKobo > 1
     ? Math.ceil((sampleCostKobo + cappedProfitKobo) / sampleRoundKobo) * sampleRoundKobo
     : sampleCostKobo + cappedProfitKobo
   const sampleFinalProfitKobo = sampleRetailKobo - sampleCostKobo
 
+  function selectSimpleVendor(value: '' | 'amigo' | 'asbdata' | 'bardetech') {
+    const vendorRule = value
+      ? rules.find(rule => rule.scope === 'GLOBAL' && rule.vendor === value) ?? null
+      : defaultRule
+    const sourceRule = vendorRule ?? defaultRule
+    setSimpleVendor(value)
+    setSimpleProfitType(sourceRule?.marginBps ? 'percentage' : 'fixed')
+    setSimpleProfitValue(sourceRule?.marginBps
+      ? String(sourceRule.marginBps / 100)
+      : String((sourceRule?.marginKobo ?? 0) / 100))
+  }
+
   async function saveDefaultProfit() {
     setBusy(true)
     setError('')
     try {
+      const ruleToUpdate = providerRule
+      const ruleToPreserve = ruleToUpdate ?? defaultRule
       const body = {
-        ...(defaultRule ? { id: defaultRule.id } : {
+        ...(ruleToUpdate ? { id: ruleToUpdate.id } : {
           scope: 'GLOBAL',
-          vendor: null,
+          vendor: simpleVendor || null,
           network: null,
           planType: null,
           variationCode: null,
         }),
         marginPercent: simpleProfitType === 'percentage' ? Number(simpleProfitValue || 0) : 0,
         marginFlatNgn: simpleProfitType === 'fixed' ? Number(simpleProfitValue || 0) : 0,
-        minMarginNgn: (defaultRule?.minMarginKobo ?? 0) / 100,
-        maxMarginNgn: defaultRule?.maxMarginKobo != null ? defaultRule.maxMarginKobo / 100 : null,
-        roundToNgn: (defaultRule?.roundToKobo ?? 0) / 100,
-        note: defaultRule?.note || '',
+        minMarginNgn: (ruleToPreserve?.minMarginKobo ?? 0) / 100,
+        maxMarginNgn: ruleToPreserve?.maxMarginKobo != null ? ruleToPreserve.maxMarginKobo / 100 : null,
+        roundToNgn: (ruleToPreserve?.roundToKobo ?? 0) / 100,
+        note: ruleToUpdate?.note || '',
       }
       const response = await fetch('/api/admin/pricing', {
-        method: defaultRule ? 'PATCH' : 'POST',
+        method: ruleToUpdate ? 'PATCH' : 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.success === false) {
-        throw new Error(payload?.error || 'Could not save the default profit.')
+        throw new Error(payload?.error || `Could not save the ${selectedVendorLabel} profit.`)
       }
 
       let savedRule = payload.data as AdminPricingRule
@@ -196,7 +216,7 @@ export function PricingClient({
       setRules(current => [savedRule, ...current.filter(rule => rule.id !== savedRule.id)])
       router.refresh()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not save the default profit.')
+      setError(caught instanceof Error ? caught.message : `Could not save the ${selectedVendorLabel} profit.`)
     } finally {
       setBusy(false)
     }
@@ -313,16 +333,35 @@ export function PricingClient({
           <div className="max-w-xl">
             <h3 className="text-base font-bold text-slate-900">Default profit for data plans</h3>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Choose one simple profit amount for all providers. More specific network or plan rules can still override it below.
+              Set one profit for all providers, or choose a provider to give it a separate default. Network and plan rules can still override it below.
             </p>
-            {defaultRule?.marginBps && defaultRule.marginKobo ? (
+            {simpleVendor && !providerRule && defaultRule ? (
+              <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                {defaultRule.active
+                  ? `${VENDOR_LABELS[simpleVendor]} currently uses the all-provider default. Saving here will create a separate ${VENDOR_LABELS[simpleVendor]} profit.`
+                  : `The all-provider default is disabled. Saving here will create a separate ${VENDOR_LABELS[simpleVendor]} profit.`}
+              </p>
+            ) : null}
+            {effectiveRule?.marginBps && effectiveRule.marginKobo ? (
               <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                The current default combines percentage and fixed profit. Saving here will replace that combination with the one method you choose.
+                The current {selectedVendorLabel} setting combines percentage and fixed profit. Saving here will replace that combination with the one method you choose.
               </p>
             ) : null}
           </div>
 
-          <div className="grid w-full gap-3 sm:grid-cols-[1fr_1fr_auto] lg:max-w-2xl">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-4xl lg:grid-cols-4">
+            <label className="space-y-1.5 text-xs font-semibold text-slate-600">
+              Applies to
+              <AdminSelect
+                value={simpleVendor}
+                onChange={event => selectSimpleVendor(event.target.value as '' | 'amigo' | 'asbdata' | 'bardetech')}
+              >
+                <option value="">All providers</option>
+                <option value="amigo">Amigo only</option>
+                <option value="asbdata">ASBDATA only</option>
+                <option value="bardetech">Bardetech only</option>
+              </AdminSelect>
+            </label>
             <label className="space-y-1.5 text-xs font-semibold text-slate-600">
               Profit method
               <AdminSelect
@@ -346,7 +385,13 @@ export function PricingClient({
             </label>
             <div className="flex items-end">
               <AdminButton type="button" disabled={busy} onClick={() => void saveDefaultProfit()} className="w-full">
-                {busy ? 'Saving…' : defaultRule && !defaultRule.active ? 'Save and enable' : 'Save profit'}
+                {busy
+                  ? 'Saving…'
+                  : providerRule && !providerRule.active
+                    ? 'Save and enable'
+                    : simpleVendor && !providerRule
+                      ? `Set ${VENDOR_LABELS[simpleVendor]} profit`
+                      : 'Save profit'}
               </AdminButton>
             </div>
           </div>
@@ -366,11 +411,11 @@ export function PricingClient({
             <div className="mt-1 font-mono text-sm font-bold text-slate-900">{formatNaira(sampleRetailKobo / 100)}</div>
           </div>
         </div>
-        {defaultRule && (defaultRule.minMarginKobo > 0 || defaultRule.maxMarginKobo != null || defaultRule.roundToKobo > 0) ? (
+        {effectiveRule && (effectiveRule.minMarginKobo > 0 || effectiveRule.maxMarginKobo != null || effectiveRule.roundToKobo > 0) ? (
           <p className="mt-2 text-xs text-slate-500">
-            Existing advanced adjustments are preserved: {defaultRule.minMarginKobo > 0 ? `minimum profit ${formatNaira(defaultRule.minMarginKobo / 100)}` : ''}
-            {defaultRule.maxMarginKobo != null ? `${defaultRule.minMarginKobo > 0 ? ', ' : ''}maximum profit ${formatNaira(defaultRule.maxMarginKobo / 100)}` : ''}
-            {defaultRule.roundToKobo > 0 ? `${defaultRule.minMarginKobo > 0 || defaultRule.maxMarginKobo != null ? ', ' : ''}price rounds up to ${formatNaira(defaultRule.roundToKobo / 100)}` : ''}.
+            Existing advanced adjustments are preserved: {effectiveRule.minMarginKobo > 0 ? `minimum profit ${formatNaira(effectiveRule.minMarginKobo / 100)}` : ''}
+            {effectiveRule.maxMarginKobo != null ? `${effectiveRule.minMarginKobo > 0 ? ', ' : ''}maximum profit ${formatNaira(effectiveRule.maxMarginKobo / 100)}` : ''}
+            {effectiveRule.roundToKobo > 0 ? `${effectiveRule.minMarginKobo > 0 || effectiveRule.maxMarginKobo != null ? ', ' : ''}price rounds up to ${formatNaira(effectiveRule.roundToKobo / 100)}` : ''}.
             {' '}Edit these under Advanced pricing rules.
           </p>
         ) : null}

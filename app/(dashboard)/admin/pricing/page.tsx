@@ -70,7 +70,7 @@ export default async function AdminPricingPage() {
             Manage disabled plans
           </Link>
         )}
-        description="Choose how much MafitaPay earns on each data plan. Set one default profit for all providers, then add exceptions only when needed."
+        description="Choose how much MafitaPay earns on each data plan. Set one profit for all providers or different defaults for each provider."
       >
         <PricingClient
           initialRules={rules}
@@ -89,7 +89,7 @@ export default async function AdminPricingPage() {
             The provider cost is what MafitaPay pays to deliver the plan. The customer price is the provider cost plus MafitaPay profit.
           </p>
           <p>
-            The default profit applies to all plans. Rules for a network, plan category, or individual plan override the default when they match.
+            The all-provider default applies unless a provider-specific, network, plan category, or individual-plan rule overrides it.
           </p>
           <p>
             The example above uses a ₦1,000 provider cost. The plan preview below Advanced pricing rules shows current provider costs and customer prices.
