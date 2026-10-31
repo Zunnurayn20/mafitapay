@@ -126,7 +126,7 @@ export function AdminCexInboundTransfers() {
       {syncError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{syncError}</div>}
       {syncResults && <div className="space-y-2" aria-live="polite">
         {syncResults.map(result => {
-          const name = result.exchange === 'bitget' ? 'Bitget' : result.exchange === 'bybit' ? 'Bybit' : result.exchange === 'okx' ? 'OKX' : result.exchange
+          const name = result.exchange === 'bitget' ? 'Bitget' : result.exchange === 'bybit' ? 'Bybit' : result.exchange === 'okx' ? 'OKX' : result.exchange === 'mexc' ? 'MEXC' : result.exchange === 'gateio' ? 'Gate.io' : result.exchange
           const failed = Boolean(result.error)
           const notConfigured = result.configured === false
           const style = failed
@@ -141,6 +141,8 @@ export function AdminCexInboundTransfers() {
               : result.exchange === 'okx'
                 ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.matchedSenders ?? 0} uniquely matched senders · credited ${result.credited ?? 0}${result.limitReached ? ' · OKX returned the 100-record page limit; some older records may need a follow-up sync' : ''}.`
               : result.exchange === 'bitget'
+                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+              : result.exchange === 'mexc' || result.exchange === 'gateio'
                 ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
                 : `Connected · checked ${result.checked ?? 0} records · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
           return <div key={result.exchange} className={`rounded-lg border p-3 text-xs ${style}`}>

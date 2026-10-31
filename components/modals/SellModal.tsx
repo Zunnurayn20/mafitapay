@@ -26,6 +26,10 @@ type CexDepositSetup = {
 }
 type CexDepositSetups = Partial<Record<CexExchange, CexDepositSetup>>
 
+function cexExchangeLabel(exchange: CexExchange) {
+  return exchange === 'bybit' ? 'Bybit' : exchange === 'bitget' ? 'Bitget' : exchange === 'okx' ? 'OKX' : exchange === 'mexc' ? 'MEXC' : 'Gate.io'
+}
+
 export function SellModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { showToast, modalData, setModalData, cryptoDepositAddresses } = useAppStore()
   const assets = useCryptoAssets()
@@ -57,10 +61,12 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     ?? assets.find(item => item.symbol.toUpperCase() === asset?.symbol.toUpperCase() && item.isActive !== false && item.sellEnabled !== false)
   const availableExchanges = Object.values(cexSetups).filter((item): item is CexDepositSetup => Boolean(item?.enabled))
   const cexSetup = cexSetups[selectedExchange] ?? null
-  const exchangeLabel = selectedExchange === 'bybit' ? 'Bybit' : selectedExchange === 'bitget' ? 'Bitget' : 'OKX'
+  const exchangeLabel = cexExchangeLabel(selectedExchange)
   const canLinkCexAccount = selectedExchange === 'okx'
     ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cexSenderEmail.trim()) && /^\+[1-9]\d{7,14}$/.test(cexSenderPhone.replace(/[ ()-]/g, ''))
-    : cexSenderUid.trim().length >= 4
+    : selectedExchange === 'bybit' || selectedExchange === 'gateio'
+      ? /^\d{4,24}$/.test(cexSenderUid.trim())
+      : /^\d{4,24}$/.test(cexSenderUid.trim()) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cexSenderUid.trim()) || /^\+[1-9]\d{7,14}$/.test(cexSenderUid.replace(/[ ()-]/g, ''))
   const hasPendingCexVerification = availableExchanges.some(item => item.account?.status === 'pending_verification')
   const displayedSellAsset = depositMethod === 'exchange' && exchangeRateAsset ? exchangeRateAsset : asset
   const addressFamily = getCryptoDepositAddressFamilyForAsset(asset)
@@ -251,7 +257,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setCexSenderUid('')
       setCexSenderEmail('')
       setCexSenderPhone('')
-      showToast(`${exchangeLabel} UID linked. Send the exact verification amount to complete setup.`)
+      showToast(`${exchangeLabel} account linked. Send the exact verification amount to complete setup.`)
     } catch (error) {
       setCexSetupError(error instanceof Error ? error.message : `Could not link your ${exchangeLabel} UID.`)
     } finally {
@@ -439,20 +445,20 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     type="button"
                     aria-pressed={selectedExchange === exchange.exchange}
                     onClick={() => { setSelectedExchange(exchange.exchange); setCexSenderUid(''); setCexSenderEmail(''); setCexSenderPhone(''); setCexSetupError('') }}
-                    className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold transition-colors ${exchange.exchange === 'bybit'
-                      ? selectedExchange === exchange.exchange
-                        ? 'border-[#f7a600] bg-[#202124] text-[#ffd27a] shadow-[inset_0_0_0_1px_rgba(247,166,0,.14)]'
-                        : 'border-[#f7a600]/40 bg-transparent text-[#e6b84f]'
-                      : exchange.exchange === 'bitget'
-                        ? selectedExchange === exchange.exchange
-                          ? 'border-[#00d6a3] bg-[#202124] text-[#70f0cc] shadow-[inset_0_0_0_1px_rgba(0,214,163,.14)]'
-                          : 'border-[#00d6a3]/40 bg-transparent text-[#63cdb0]'
-                        : selectedExchange === exchange.exchange
-                          ? 'border-white/70 bg-[#202124] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.12)]'
-                          : 'border-white/30 bg-transparent text-white/70'}`}
+                    className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold transition-colors ${selectedExchange === exchange.exchange
+                      ? exchange.exchange === 'bybit' ? 'border-[#f7a600] bg-[#202124] text-[#ffd27a] shadow-[inset_0_0_0_1px_rgba(247,166,0,.14)]'
+                        : exchange.exchange === 'bitget' ? 'border-[#00d6a3] bg-[#202124] text-[#70f0cc] shadow-[inset_0_0_0_1px_rgba(0,214,163,.14)]'
+                          : exchange.exchange === 'mexc' ? 'border-[#2e9bff] bg-[#202124] text-[#78c0ff] shadow-[inset_0_0_0_1px_rgba(46,155,255,.14)]'
+                            : exchange.exchange === 'gateio' ? 'border-[#77baff] bg-[#202124] text-[#b7d9ff] shadow-[inset_0_0_0_1px_rgba(119,186,255,.14)]'
+                              : 'border-white/70 bg-[#202124] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.12)]'
+                      : exchange.exchange === 'bybit' ? 'border-[#f7a600]/40 bg-transparent text-[#e6b84f]'
+                        : exchange.exchange === 'bitget' ? 'border-[#00d6a3]/40 bg-transparent text-[#63cdb0]'
+                          : exchange.exchange === 'mexc' ? 'border-[#2e9bff]/40 bg-transparent text-[#78c0ff]'
+                            : exchange.exchange === 'gateio' ? 'border-[#77baff]/40 bg-transparent text-[#b7d9ff]'
+                              : 'border-white/30 bg-transparent text-white/70'}`}
                   >
                     <CexLogo exchange={exchange.exchange} size="sm" />
-                    {exchange.exchange === 'bybit' ? 'Bybit' : exchange.exchange === 'bitget' ? 'Bitget' : 'OKX'}
+                    {cexExchangeLabel(exchange.exchange)}
                   </button>
                 ))}
               </div>
@@ -490,23 +496,23 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     </div>
                   </> : <>
                     <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">
-                      {selectedExchange === 'bybit' ? 'Your Bybit UID' : 'Your Bitget UID, email, or phone number'}
+                      {selectedExchange === 'bybit' || selectedExchange === 'gateio' ? `Your ${exchangeLabel} UID` : `Your ${exchangeLabel} UID, email, or phone number`}
                     </label>
                     <input
                       id="cex-sender-uid"
-                      inputMode={selectedExchange === 'bybit' ? 'numeric' : 'text'}
+                      inputMode={selectedExchange === 'bybit' || selectedExchange === 'gateio' ? 'numeric' : 'text'}
                       autoComplete="off"
                       value={cexSenderUid}
-                      maxLength={selectedExchange === 'bybit' ? 24 : 254}
-                      onChange={event => setCexSenderUid(selectedExchange === 'bybit' ? event.target.value.replace(/\D/g, '').slice(0, 24) : event.target.value.slice(0, 254))}
-                      placeholder={selectedExchange === 'bybit' ? 'Enter your Bybit UID' : 'UID, email, or phone number'}
+                      maxLength={selectedExchange === 'bybit' || selectedExchange === 'gateio' ? 24 : 254}
+                      onChange={event => setCexSenderUid(selectedExchange === 'bybit' || selectedExchange === 'gateio' ? event.target.value.replace(/\D/g, '').slice(0, 24) : event.target.value.slice(0, 254))}
+                      placeholder={selectedExchange === 'bybit' || selectedExchange === 'gateio' ? `Enter your ${exchangeLabel} UID` : 'UID, email, or phone number'}
                       className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]"
                     />
                   </>}
                   <div className="text-[9px] leading-relaxed text-[var(--muted)]">
                     {selectedExchange === 'okx'
                       ? 'Enter both contacts exactly as registered on the same OKX account. We’ll verify account ownership with a one-time exact transfer. Deposits credit only when the masked sender uniquely matches one of these contacts.'
-                      : `We’ll verify ownership with a one-time exact transfer. After verification, deposits from this ${selectedExchange === 'bitget' ? 'account' : 'UID'} will credit automatically.`}
+                      : `We’ll verify ownership with a one-time exact transfer. After verification, deposits from this ${selectedExchange === 'bitget' || selectedExchange === 'mexc' ? 'account' : 'UID'} will credit automatically.`}
                   </div>
                   {cexSetupError && <div className="text-[10px] text-[var(--red2)]">{cexSetupError}</div>}
                   <Button variant="green" onClick={() => void linkCexUid()} disabled={savingCexAccount || !canLinkCexAccount} className="w-full py-3">
@@ -532,7 +538,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                       </Button>
                     </div>
                   )}
-                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' ? 'email or phone' : 'UID'}</button>
+                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' || selectedExchange === 'mexc' || selectedExchange === 'bitget' ? 'account' : 'UID'}</button>
                 </div>
               )}
               {cexSetup.account?.status === 'verified' && (
@@ -541,7 +547,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                   <div className="mt-1 text-[10px] leading-relaxed text-[var(--text2)]">
                   Send USDT or USDC from <span className="font-mono font-bold">{(cexSetup.account.externalIdentifiers ?? [cexSetup.account.externalUid]).join(' · ')}</span> to MafitaPay’s UID above. Successful deposits are credited to NGN at the matching asset’s sell rate when detected. Other sender accounts are not auto-credited.
                   </div>
-                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' ? 'email or phone' : 'UID'}</button>
+                  <button type="button" onClick={() => void unlinkCexUid()} className="mt-2 text-[9px] font-semibold text-[var(--muted)] underline underline-offset-2">Change linked {selectedExchange === 'okx' || selectedExchange === 'mexc' || selectedExchange === 'bitget' ? 'account' : 'UID'}</button>
                 </div>
               )}
               </>}

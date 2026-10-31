@@ -390,7 +390,7 @@ export interface CexDepositIntent {
   updatedAt: string
 }
 
-export type CexExchange = 'bybit' | 'bitget' | 'okx'
+export type CexExchange = 'bybit' | 'bitget' | 'okx' | 'mexc' | 'gateio'
 export type CexDepositAccountStatus = 'pending_verification' | 'verified' | 'disabled'
 
 export interface CexDepositAccount {

@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import {
   createCryptoDepositEvent,
   getCryptoAssets,
@@ -76,9 +76,41 @@ type OkxAccountConfigResponse = {
   data?: Array<{ uid?: string }>
 }
 
+type MexcInternalTransfer = {
+  tranId?: string
+  asset?: string
+  amount?: string
+  toAccountType?: string
+  toAccount?: string
+  fromAccount?: string
+  status?: string
+  timestamp?: number
+}
+
+type MexcResponse = {
+  code?: number
+  msg?: string
+  data?: MexcInternalTransfer[]
+  page?: number
+  totalPageNum?: number
+}
+
+type GateIoInternalTransfer = {
+  id?: number
+  push_uid?: number | string
+  receive_uid?: number | string
+  currency?: string
+  amount?: string
+  status?: string
+  create_time?: number
+  transaction_type?: string
+}
+
 const BYBIT: CexExchange = 'bybit'
 const BITGET: CexExchange = 'bitget'
 const OKX: CexExchange = 'okx'
+const MEXC: CexExchange = 'mexc'
+const GATEIO: CexExchange = 'gateio'
 const RECV_WINDOW = '10000'
 const MAX_PAGES_PER_PASS = 2
 const PAGE_LIMIT = 100
@@ -169,6 +201,80 @@ function bitgetConfig() {
   const receiverUid = process.env.MAFITAPAY_BITGET_DEPOSIT_UID?.trim()
   if (!apiKey || !apiSecret || !apiPassphrase || !receiverUid) return null
   return { apiKey, apiSecret, apiPassphrase, receiverUid }
+}
+
+function mexcConfig() {
+  if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return null
+  const apiKey = process.env.MAFITAPAY_MEXC_API_KEY?.trim()
+  const apiSecret = process.env.MAFITAPAY_MEXC_API_SECRET?.trim()
+  const receiverUid = process.env.MAFITAPAY_MEXC_DEPOSIT_UID?.trim()
+  if (!apiKey || !apiSecret || !receiverUid) return null
+  return { apiKey, apiSecret, receiverUid }
+}
+
+function gateIoConfig() {
+  if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return null
+  const apiKey = process.env.MAFITAPAY_GATEIO_API_KEY?.trim()
+  const apiSecret = process.env.MAFITAPAY_GATEIO_API_SECRET?.trim()
+  const receiverUid = process.env.MAFITAPAY_GATEIO_DEPOSIT_UID?.trim()
+  if (!apiKey || !apiSecret || !receiverUid) return null
+  return { apiKey, apiSecret, receiverUid }
+}
+
+function signMexc(apiSecret: string, query: string) {
+  return createHmac('sha256', apiSecret).update(query).digest('hex')
+}
+
+async function fetchMexcInternalTransfers(input: { startTime: number; endTime: number; page: number }) {
+  const config = mexcConfig()
+  if (!config) throw new Error('MEXC internal transfer credentials are not configured.')
+  const params = new URLSearchParams({ startTime: String(input.startTime), endTime: String(input.endTime), page: String(input.page), limit: '100', timestamp: String(Date.now()) })
+  const query = params.toString()
+  const signature = signMexc(config.apiSecret, query)
+  const response = await fetch(`https://api.mexc.com/api/v3/capital/transfer/internal?${query}&signature=${signature}`, {
+    method: 'GET',
+    headers: { 'X-MEXC-APIKEY': config.apiKey, Accept: 'application/json' },
+    signal: AbortSignal.timeout(9_000),
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300)
+    throw new Error(`MEXC internal transfer history returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`)
+  }
+  const payload = await response.json() as MexcResponse
+  if (payload.code !== undefined && payload.code !== 0) throw new Error(`MEXC internal transfer history failed: ${payload.msg || payload.code}.`)
+  return { rows: payload.data ?? [], totalPages: Number(payload.totalPageNum) || 1 }
+}
+
+function gateIoSign(apiSecret: string, method: string, requestPath: string, query: string, body = '') {
+  const bodyHash = createHash('sha512').update(body).digest('hex')
+  const timestamp = String(Math.floor(Date.now() / 1000))
+  const signature = createHmac('sha512', apiSecret)
+    .update(`${method}\n/api/v4${requestPath}\n${query}\n${bodyHash}\n${timestamp}`)
+    .digest('hex')
+  return { timestamp, signature }
+}
+
+async function fetchGateIoInternalTransfers(input: { startTime: number; endTime: number; offset: number }) {
+  const config = gateIoConfig()
+  if (!config) throw new Error('Gate.io internal transfer credentials are not configured.')
+  const requestPath = '/wallet/push'
+  const params = new URLSearchParams({ from: String(Math.floor(input.startTime / 1000)), to: String(Math.floor(input.endTime / 1000)), limit: '100', offset: String(input.offset), transaction_type: 'deposit' })
+  const query = params.toString()
+  const signed = gateIoSign(config.apiSecret, 'GET', requestPath, query)
+  const response = await fetch(`https://api.gateio.ws/api/v4${requestPath}?${query}`, {
+    method: 'GET',
+    headers: { KEY: config.apiKey, SIGN: signed.signature, Timestamp: signed.timestamp, Accept: 'application/json' },
+    signal: AbortSignal.timeout(9_000),
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300)
+    throw new Error(`Gate.io UID transfer history returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`)
+  }
+  const payload = await response.json() as GateIoInternalTransfer[]
+  if (!Array.isArray(payload)) throw new Error('Gate.io UID transfer history returned an unexpected response.')
+  return payload
 }
 
 function signBybit(timestamp: string, apiKey: string, apiSecret: string, query: string) {
@@ -279,7 +385,7 @@ function normalizeSenderIdentifier(exchange: CexExchange, value: string | undefi
   const identifier = value?.trim() ?? ''
   if (/^\d{4,24}$/.test(identifier)) return identifier
   if (exchange === OKX && identifier.includes('*') && identifier.length <= 254 && !/[\r\n]/.test(identifier)) return identifier.toLowerCase()
-  if (exchange !== BITGET && exchange !== OKX) return ''
+  if (exchange !== BITGET && exchange !== OKX && exchange !== MEXC) return ''
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return identifier.toLowerCase()
   if (/^\+?[0-9][0-9 ()-]{5,23}$/.test(identifier)) return identifier.replace(/[ ()-]/g, '')
   return ''
@@ -406,7 +512,8 @@ async function acceptCexTransfer(input: {
     return false
   }
 
-  const network = `${exchange === BYBIT ? 'Bybit' : exchange === BITGET ? 'Bitget' : 'OKX'} internal transfer`
+  const exchangeLabel = exchange === BYBIT ? 'Bybit' : exchange === BITGET ? 'Bitget' : exchange === OKX ? 'OKX' : exchange === MEXC ? 'MEXC' : 'Gate.io'
+  const network = `${exchangeLabel} internal transfer`
   const event = await createCryptoDepositEvent({
     externalEventId,
     userId: account.userId,
@@ -525,6 +632,52 @@ async function acceptOkxTransfer(row: OkxInternalDeposit, receiverUid: string, m
     isSuccessful: row.state === '1' || row.state === '2',
     receivedAtMs,
     providerPayload: { type: '3', state: row.state ?? null, senderMasked: senderIdentifier, areaCodeFrom: row.areaCodeFrom ?? null },
+  })
+}
+
+async function acceptMexcTransfer(row: MexcInternalTransfer, receiverUid: string) {
+  const assetSymbol = row.asset?.toUpperCase()
+  if ((assetSymbol !== 'USDT' && assetSymbol !== 'USDC') || row.toAccountType?.toUpperCase() !== 'UID') return false
+  if (normalizeIdentifier(row.toAccount) !== normalizeIdentifier(receiverUid)) return false
+  const transferId = row.tranId?.trim() || ''
+  const amount = getAmount(row.amount)
+  const receivedAtMs = Number(row.timestamp)
+  if (!transferId || !amount || !Number.isFinite(receivedAtMs)) return false
+  return acceptCexTransfer({
+    exchange: MEXC,
+    externalTransferId: transferId,
+    senderUid: row.fromAccount?.trim() || '',
+    receiverUid,
+    assetSymbol,
+    amount,
+    amountUnits: row.amount!,
+    providerStatus: row.status?.toUpperCase() ?? 'unknown',
+    isSuccessful: row.status?.toUpperCase() === 'SUCCESS',
+    receivedAtMs,
+    providerPayload: { toAccountType: row.toAccountType, asset: assetSymbol, status: row.status ?? null },
+  })
+}
+
+async function acceptGateIoTransfer(row: GateIoInternalTransfer, receiverUid: string) {
+  const assetSymbol = row.currency?.toUpperCase()
+  if (row.transaction_type?.toLowerCase() !== 'deposit' || (assetSymbol !== 'USDT' && assetSymbol !== 'USDC')) return false
+  if (normalizeIdentifier(String(row.receive_uid ?? '')) !== normalizeIdentifier(receiverUid)) return false
+  const transferId = row.id === undefined || row.id === null ? '' : String(row.id)
+  const amount = getAmount(row.amount)
+  const receivedAtMs = Number(row.create_time) * 1000
+  if (!transferId || !amount || !Number.isFinite(receivedAtMs)) return false
+  return acceptCexTransfer({
+    exchange: GATEIO,
+    externalTransferId: transferId,
+    senderUid: String(row.push_uid ?? ''),
+    receiverUid,
+    assetSymbol,
+    amount,
+    amountUnits: row.amount!,
+    providerStatus: row.status?.toUpperCase() ?? 'unknown',
+    isSuccessful: row.status?.toUpperCase() === 'RECEIVED',
+    receivedAtMs,
+    providerPayload: { transactionType: row.transaction_type, currency: assetSymbol, status: row.status ?? null },
   })
 }
 
@@ -689,11 +842,79 @@ async function syncOkxInternalDeposits() {
   return { configured: true, exchange: OKX, checked: rows.length, internalTransfers, matchedSenders, credited, limitReached: rows.length === 100 }
 }
 
+async function syncMexcInternalDeposits() {
+  const config = mexcConfig()
+  if (!config) return { configured: false, exchange: MEXC, checked: 0, internalTransfers: 0, recipientMatches: 0, credited: 0 }
+  const state = await getCexDepositSyncState(MEXC)
+  const windowEndMs = state?.nextCursor ? state.windowEndMs : Date.now()
+  const windowStartMs = state?.nextCursor
+    ? state.windowStartMs
+    : state ? Math.max(0, state.windowEndMs - OVERLAP_MS) : windowEndMs - 24 * 60 * 60_000
+  let page = Number(state?.nextCursor) || 1
+  let checked = 0
+  let internalTransfers = 0
+  let recipientMatches = 0
+  let credited = 0
+  let pages = 0
+  let totalPages = page
+  do {
+    const result = await fetchMexcInternalTransfers({ startTime: windowStartMs, endTime: windowEndMs, page })
+    totalPages = result.totalPages
+    for (const row of result.rows) {
+      checked += 1
+      if (row.toAccountType?.toUpperCase() === 'UID' && normalizeIdentifier(row.toAccount) === normalizeIdentifier(config.receiverUid)) {
+        internalTransfers += 1
+        recipientMatches += 1
+      }
+      if (await acceptMexcTransfer(row, config.receiverUid)) credited += 1
+    }
+    page += 1
+    pages += 1
+    await saveCexDepositSyncState({ exchange: MEXC, windowStartMs, windowEndMs, nextCursor: page <= totalPages ? String(page) : undefined })
+  } while (page <= totalPages && pages < MAX_PAGES_PER_PASS)
+  return { configured: true, exchange: MEXC, checked, internalTransfers, recipientMatches, credited, pages, morePages: page <= totalPages }
+}
+
+async function syncGateIoInternalDeposits() {
+  const config = gateIoConfig()
+  if (!config) return { configured: false, exchange: GATEIO, checked: 0, internalTransfers: 0, recipientMatches: 0, credited: 0 }
+  const state = await getCexDepositSyncState(GATEIO)
+  const windowEndMs = state?.nextCursor ? state.windowEndMs : Date.now()
+  const windowStartMs = state?.nextCursor
+    ? state.windowStartMs
+    : state ? Math.max(0, state.windowEndMs - OVERLAP_MS) : windowEndMs - 24 * 60 * 60_000
+  let offset = Number(state?.nextCursor) || 0
+  let checked = 0
+  let internalTransfers = 0
+  let recipientMatches = 0
+  let credited = 0
+  let pages = 0
+  let morePages = false
+  do {
+    const rows = await fetchGateIoInternalTransfers({ startTime: windowStartMs, endTime: windowEndMs, offset })
+    for (const row of rows) {
+      checked += 1
+      if (row.transaction_type?.toLowerCase() === 'deposit') {
+        internalTransfers += 1
+        if (normalizeIdentifier(String(row.receive_uid ?? '')) === normalizeIdentifier(config.receiverUid)) recipientMatches += 1
+      }
+      if (await acceptGateIoTransfer(row, config.receiverUid)) credited += 1
+    }
+    morePages = rows.length === 100
+    offset += rows.length
+    pages += 1
+    await saveCexDepositSyncState({ exchange: GATEIO, windowStartMs, windowEndMs, nextCursor: morePages ? String(offset) : undefined })
+  } while (morePages && pages < MAX_PAGES_PER_PASS)
+  return { configured: true, exchange: GATEIO, checked, internalTransfers, recipientMatches, credited, pages, morePages }
+}
+
 export async function syncCexInternalDepositsOnce() {
-  const results = await Promise.allSettled([syncBybitInternalDeposits(), syncBitgetInternalDeposits(), syncOkxInternalDeposits()])
+  const syncers = [syncBybitInternalDeposits, syncBitgetInternalDeposits, syncOkxInternalDeposits, syncMexcInternalDeposits, syncGateIoInternalDeposits]
+  const exchanges: CexExchange[] = [BYBIT, BITGET, OKX, MEXC, GATEIO]
+  const results = await Promise.allSettled(syncers.map(sync => sync()))
   return {
     exchanges: results.map((result, index) => result.status === 'fulfilled'
       ? result.value
-      : { exchange: index === 0 ? BYBIT : index === 1 ? BITGET : OKX, error: result.reason instanceof Error ? result.reason.message : 'CEX sync failed' }),
+      : { exchange: exchanges[index], error: result.reason instanceof Error ? result.reason.message : 'CEX sync failed' }),
   }
 }

@@ -4,10 +4,10 @@ import { requireUser, unauthorized } from '@/lib/server/auth'
 import { createCexDepositAccount, deleteCexDepositAccount, getCexDepositAccountByUser, listCexDepositAccountActiveIdentifiers, refreshExpiredCexDepositChallenge } from '@/lib/server/data'
 import type { CexExchange } from '@/types'
 
-const EXCHANGES: CexExchange[] = ['bybit', 'bitget', 'okx']
+const EXCHANGES: CexExchange[] = ['bybit', 'bitget', 'okx', 'mexc', 'gateio']
 
 function exchangeName(exchange: CexExchange) {
-  return exchange === 'bybit' ? 'Bybit' : exchange === 'bitget' ? 'Bitget' : 'OKX'
+  return exchange === 'bybit' ? 'Bybit' : exchange === 'bitget' ? 'Bitget' : exchange === 'okx' ? 'OKX' : exchange === 'mexc' ? 'MEXC' : 'Gate.io'
 }
 
 function isExchangeConfigured(exchange: CexExchange) {
@@ -25,18 +25,30 @@ function isExchangeConfigured(exchange: CexExchange) {
     && process.env.MAFITAPAY_BITGET_API_PASSPHRASE?.trim()
     && process.env.MAFITAPAY_BITGET_DEPOSIT_UID?.trim(),
   )
-  return Boolean(
+  if (exchange === 'okx') return Boolean(
     process.env.MAFITAPAY_OKX_API_KEY?.trim()
     && process.env.MAFITAPAY_OKX_API_SECRET?.trim()
     && process.env.MAFITAPAY_OKX_API_PASSPHRASE?.trim()
     && process.env.MAFITAPAY_OKX_DEPOSIT_UID?.trim(),
+  )
+  if (exchange === 'mexc') return Boolean(
+    process.env.MAFITAPAY_MEXC_API_KEY?.trim()
+    && process.env.MAFITAPAY_MEXC_API_SECRET?.trim()
+    && process.env.MAFITAPAY_MEXC_DEPOSIT_UID?.trim(),
+  )
+  return Boolean(
+    process.env.MAFITAPAY_GATEIO_API_KEY?.trim()
+    && process.env.MAFITAPAY_GATEIO_API_SECRET?.trim()
+    && process.env.MAFITAPAY_GATEIO_DEPOSIT_UID?.trim(),
   )
 }
 
 function receivingUid(exchange: CexExchange) {
   if (exchange === 'bybit') return process.env.MAFITAPAY_BYBIT_DEPOSIT_UID?.trim() ?? null
   if (exchange === 'bitget') return process.env.MAFITAPAY_BITGET_DEPOSIT_UID?.trim() ?? null
-  return process.env.MAFITAPAY_OKX_DEPOSIT_UID?.trim() ?? null
+  if (exchange === 'okx') return process.env.MAFITAPAY_OKX_DEPOSIT_UID?.trim() ?? null
+  if (exchange === 'mexc') return process.env.MAFITAPAY_MEXC_DEPOSIT_UID?.trim() ?? null
+  return process.env.MAFITAPAY_GATEIO_DEPOSIT_UID?.trim() ?? null
 }
 
 function normalizeSenderIdentifier(exchange: CexExchange, value: string) {
@@ -47,14 +59,14 @@ function normalizeSenderIdentifier(exchange: CexExchange, value: string) {
     const phone = identifier.replace(/[ ()-]/g, '')
     return /^\+[1-9]\d{7,14}$/.test(phone) ? phone : ''
   }
-  if (exchange !== 'bitget') return ''
+  if (exchange !== 'bitget' && exchange !== 'mexc') return ''
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) return identifier.toLowerCase()
   if (/^\+?[0-9][0-9 ()-]{5,23}$/.test(identifier)) return identifier.replace(/[ ()-]/g, '')
   return ''
 }
 
 function parseExchange(value: unknown): CexExchange | null {
-  return value === 'bybit' || value === 'bitget' || value === 'okx' ? value : null
+  return value === 'bybit' || value === 'bitget' || value === 'okx' || value === 'mexc' || value === 'gateio' ? value : null
 }
 
 export async function GET() {
@@ -101,7 +113,7 @@ export async function POST(request: Request) {
   } else {
     const senderIdentifier = typeof body.senderUid === 'string' ? normalizeSenderIdentifier(exchange, body.senderUid) : ''
     if (!senderIdentifier) {
-      const expected = exchange === 'bybit' ? 'UID' : 'UID, email, or phone number'
+      const expected = exchange === 'bybit' || exchange === 'gateio' ? 'UID' : 'UID, email, or phone number'
       return NextResponse.json({ error: `Enter a valid ${exchangeName(exchange)} ${expected}.`, success: false }, { status: 400 })
     }
     externalIdentifiers = [senderIdentifier]
