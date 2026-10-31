@@ -39,6 +39,16 @@ export type PricingPreviewRow = {
   retailNgn: number
 }
 
+export type PricingPlanOption = {
+  vendor: 'amigo' | 'asbdata' | 'bardetech'
+  network: string
+  planType: string
+  variationCode: string
+  label: string
+  costNgn: number
+  retailNgn: number
+}
+
 const SCOPES = ['GLOBAL', 'NETWORK', 'PLAN_TYPE', 'PLAN'] as const
 
 /** Vendor display names. Falls back to the raw value so an unknown vendor is never mislabelled. */
@@ -75,14 +85,26 @@ function describeMargin(rule: Pick<AdminPricingRule, 'marginBps' | 'marginKobo'>
   return parts.length ? parts.join(' + ') : 'No margin'
 }
 
+function findPlanRule(rules: AdminPricingRule[], plan: PricingPlanOption) {
+  return rules
+    .filter(rule => rule.scope === 'PLAN'
+      && rule.vendor === plan.vendor
+      && rule.network === plan.network
+      && rule.variationCode === plan.variationCode
+      && (!rule.planType || rule.planType === plan.planType))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null
+}
+
 export function PricingClient({
   initialRules,
   preview,
+  plans,
   networks,
   planTypes,
 }: {
   initialRules: AdminPricingRule[]
   preview: PricingPreviewRow[]
+  plans: PricingPlanOption[]
   networks: string[]
   planTypes: string[]
 }) {
@@ -93,6 +115,7 @@ export function PricingClient({
   const [busy, setBusy] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [simpleVendor, setSimpleVendor] = useState<'' | 'amigo' | 'asbdata' | 'bardetech'>('')
+  const [simplePlanKey, setSimplePlanKey] = useState('')
   const [simpleProfitType, setSimpleProfitType] = useState<'fixed' | 'percentage'>(
     initialDefaultRule?.marginBps ? 'percentage' : 'fixed',
   )
@@ -138,7 +161,11 @@ export function PricingClient({
   const providerRule = simpleVendor
     ? rules.find(rule => rule.scope === 'GLOBAL' && rule.vendor === simpleVendor) ?? null
     : defaultRule
-  const effectiveRule = providerRule ?? defaultRule
+  const providerPlans = simpleVendor ? plans.filter(plan => plan.vendor === simpleVendor) : []
+  const selectedPlan = providerPlans.find(plan => `${plan.vendor}:${plan.network}:${plan.variationCode}` === simplePlanKey) ?? null
+  const planRule = selectedPlan ? findPlanRule(rules, selectedPlan) : null
+  const targetRule = selectedPlan ? planRule : providerRule
+  const effectiveRule = targetRule ?? providerRule ?? defaultRule
   const selectedVendorLabel = simpleVendor ? VENDOR_LABELS[simpleVendor] : 'all providers'
   const sampleCostKobo = 100_000
   const simpleProfitKobo = simpleProfitType === 'percentage'
@@ -160,6 +187,18 @@ export function PricingClient({
       : defaultRule
     const sourceRule = vendorRule ?? defaultRule
     setSimpleVendor(value)
+    setSimplePlanKey('')
+    setSimpleProfitType(sourceRule?.marginBps ? 'percentage' : 'fixed')
+    setSimpleProfitValue(sourceRule?.marginBps
+      ? String(sourceRule.marginBps / 100)
+      : String((sourceRule?.marginKobo ?? 0) / 100))
+  }
+
+  function selectSimplePlan(value: string) {
+    const selected = providerPlans.find(plan => `${plan.vendor}:${plan.network}:${plan.variationCode}` === value) ?? null
+    const rule = selected ? findPlanRule(rules, selected) : null
+    const sourceRule = rule ?? providerRule ?? defaultRule
+    setSimplePlanKey(value)
     setSimpleProfitType(sourceRule?.marginBps ? 'percentage' : 'fixed')
     setSimpleProfitValue(sourceRule?.marginBps
       ? String(sourceRule.marginBps / 100)
@@ -170,15 +209,15 @@ export function PricingClient({
     setBusy(true)
     setError('')
     try {
-      const ruleToUpdate = providerRule
-      const ruleToPreserve = ruleToUpdate ?? defaultRule
+      const ruleToUpdate = targetRule
+      const ruleToPreserve = ruleToUpdate ?? providerRule ?? defaultRule
       const body = {
         ...(ruleToUpdate ? { id: ruleToUpdate.id } : {
-          scope: 'GLOBAL',
-          vendor: simpleVendor || null,
-          network: null,
+          scope: selectedPlan ? 'PLAN' : 'GLOBAL',
+          vendor: selectedPlan?.vendor || simpleVendor || null,
+          network: selectedPlan?.network || null,
           planType: null,
-          variationCode: null,
+          variationCode: selectedPlan?.variationCode || null,
         }),
         marginPercent: simpleProfitType === 'percentage' ? Number(simpleProfitValue || 0) : 0,
         marginFlatNgn: simpleProfitType === 'fixed' ? Number(simpleProfitValue || 0) : 0,
@@ -342,14 +381,19 @@ export function PricingClient({
                   : `The all-provider default is disabled. Saving here will create a separate ${VENDOR_LABELS[simpleVendor]} profit.`}
               </p>
             ) : null}
+            {selectedPlan && !planRule ? (
+              <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                {selectedPlan.label} currently uses the {providerRule ? `${VENDOR_LABELS[simpleVendor]} default` : 'all-provider default'}. Saving will set profit for this plan only.
+              </p>
+            ) : null}
             {effectiveRule?.marginBps && effectiveRule.marginKobo ? (
               <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                The current {selectedVendorLabel} setting combines percentage and fixed profit. Saving here will replace that combination with the one method you choose.
+                The current {selectedPlan ? 'plan' : selectedVendorLabel} setting combines percentage and fixed profit. Saving here will replace that combination with the one method you choose.
               </p>
             ) : null}
           </div>
 
-          <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-4xl lg:grid-cols-4">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-5xl lg:grid-cols-5">
             <label className="space-y-1.5 text-xs font-semibold text-slate-600">
               Applies to
               <AdminSelect
@@ -362,6 +406,22 @@ export function PricingClient({
                 <option value="bardetech">Bardetech only</option>
               </AdminSelect>
             </label>
+            {simpleVendor ? (
+              <label className="space-y-1.5 text-xs font-semibold text-slate-600">
+                Plan to override
+                <AdminSelect value={simplePlanKey} onChange={event => selectSimplePlan(event.target.value)}>
+                  <option value="">All {VENDOR_LABELS[simpleVendor]} plans</option>
+                  {providerPlans.map(plan => {
+                    const key = `${plan.vendor}:${plan.network}:${plan.variationCode}`
+                    return (
+                      <option key={key} value={key}>
+                        {plan.network} · {plan.label} · {plan.planType} · {formatNaira(plan.retailNgn)}
+                      </option>
+                    )
+                  })}
+                </AdminSelect>
+              </label>
+            ) : null}
             <label className="space-y-1.5 text-xs font-semibold text-slate-600">
               Profit method
               <AdminSelect
@@ -387,10 +447,12 @@ export function PricingClient({
               <AdminButton type="button" disabled={busy} onClick={() => void saveDefaultProfit()} className="w-full">
                 {busy
                   ? 'Saving…'
-                  : providerRule && !providerRule.active
+                  : targetRule && !targetRule.active
                     ? 'Save and enable'
-                    : simpleVendor && !providerRule
-                      ? `Set ${VENDOR_LABELS[simpleVendor]} profit`
+                    : selectedPlan && !planRule
+                      ? 'Set plan profit'
+                      : simpleVendor && !providerRule
+                        ? `Set ${VENDOR_LABELS[simpleVendor]} profit`
                       : 'Save profit'}
               </AdminButton>
             </div>

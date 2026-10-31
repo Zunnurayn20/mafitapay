@@ -5,7 +5,7 @@ import { loadPricingRulesForAdmin } from '@/lib/server/data-pricing'
 import { getPricedAmigoPlans } from '@/lib/server/amigo-bills'
 import { getPricedAsbdataPlans, listAsbdataPlanTypes } from '@/lib/server/asbdata-bills'
 import { getPricedBardetechPlans, listBardetechPlanTypes } from '@/lib/server/bardetech-bills'
-import { PricingClient } from './PricingClient'
+import { PricingClient, type PricingPlanOption } from './PricingClient'
 
 export default async function AdminPricingPage() {
   await requireAdminPageUser()
@@ -46,6 +46,36 @@ export default async function AdminPricingPage() {
     })),
   ]
 
+  const plans: PricingPlanOption[] = [
+    ...amigoPlans.map(plan => ({
+      vendor: 'amigo' as const,
+      network: plan.network,
+      planType: plan.planType,
+      variationCode: String(plan.planId),
+      label: `${plan.label}${plan.validity ? ` · ${plan.validity}` : ''}`,
+      costNgn: plan.costNgn,
+      retailNgn: plan.retailNgn,
+    })),
+    ...asbdataPlans.map(plan => ({
+      vendor: 'asbdata' as const,
+      network: plan.network,
+      planType: plan.planTypeNormalized,
+      variationCode: String(plan.planId),
+      label: `${plan.size}${plan.validity ? ` · ${plan.validity}` : ''}`,
+      costNgn: plan.costNgn,
+      retailNgn: plan.retailNgn,
+    })),
+    ...bardetechPlans.map(plan => ({
+      vendor: 'bardetech' as const,
+      network: plan.network,
+      planType: plan.planTypeNormalized,
+      variationCode: String(plan.planId),
+      label: `${plan.size}${plan.validity ? ` · ${plan.validity}` : ''}`,
+      costNgn: plan.costNgn,
+      retailNgn: plan.retailNgn,
+    })),
+  ]
+
   const planTypes = Array.from(new Set([
     'STANDARD',
     'SME',
@@ -75,6 +105,7 @@ export default async function AdminPricingPage() {
         <PricingClient
           initialRules={rules}
           preview={preview}
+          plans={plans}
           networks={['MTN', 'Airtel', 'Glo', '9mobile']}
           planTypes={planTypes}
         />
