@@ -50,6 +50,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [qrRenderKey, setQrRenderKey] = useState(0)
   const qrCodeCacheRef = useRef<Record<string, string>>({})
   const [depositMethod, setDepositMethod] = useState<'wallet' | 'exchange'>('wallet')
+  const [exchangeSelectionLocked, setExchangeSelectionLocked] = useState(false)
   const [cexSetups, setCexSetups] = useState<CexDepositSetups>({})
   const [selectedExchange, setSelectedExchange] = useState<CexExchange>('bybit')
   const [cexSenderUid, setCexSenderUid] = useState('')
@@ -93,6 +94,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setPairId(presetPairId as CryptoPairId)
       if (modalData.cryptoDepositMethod === 'exchange') {
         setDepositMethod('exchange')
+        setExchangeSelectionLocked(true)
         setShowAssetPicker(false)
         setPickerSymbol(null)
         if (isCexExchange(modalData.cryptoCexExchange)) {
@@ -107,12 +109,14 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
     }
 
     if (modalAsset?.id) {
+      setExchangeSelectionLocked(false)
       setPairId(modalAsset.id)
       initializedPairRef.current = true
       return
     }
 
     if (sellableAssets[0]?.id) {
+      setExchangeSelectionLocked(false)
       setPairId(sellableAssets[0].id)
       initializedPairRef.current = true
     }
@@ -127,6 +131,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   useEffect(() => {
     if (!open) {
       setDepositMethod('wallet')
+      setExchangeSelectionLocked(false)
       setCexSetups({})
       setSelectedExchange('bybit')
       requestedCexExchangeRef.current = null
@@ -454,7 +459,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             </>
           )}
 
-          {depositMethod === 'exchange' && availableExchanges.length > 0 && (
+          {depositMethod === 'exchange' && availableExchanges.length > 0 && !exchangeSelectionLocked && (
             <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] p-4">
               <div className="grid grid-cols-3 gap-2">
                 {availableExchanges.map(exchange => (
