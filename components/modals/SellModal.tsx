@@ -459,9 +459,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
             </>
           )}
 
-          {depositMethod === 'exchange' && availableExchanges.length > 0 && !exchangeSelectionLocked && (
+          {depositMethod === 'exchange' && availableExchanges.length > 0 && (
             <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] p-4">
-              <div className="grid grid-cols-3 gap-2">
+              {!exchangeSelectionLocked && <div className="grid grid-cols-3 gap-2">
                 {availableExchanges.map(exchange => (
                   <button
                     key={exchange.exchange}
@@ -484,7 +484,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     {cexExchangeLabel(exchange.exchange)}
                   </button>
                 ))}
-              </div>
+              </div>}
               {!cexSetup ? <div className="text-[10px] text-[var(--muted)]">Loading exchange details…</div> : <>
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-[1px] text-[var(--gold2)]">{exchangeLabel} · {asset.symbol} internal transfer</div>
