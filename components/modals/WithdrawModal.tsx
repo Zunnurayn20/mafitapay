@@ -192,8 +192,8 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         </div>
         <div>
-          <Input label="Amount (NGN)" prefix="₦" type="number" placeholder="0.00"
-            value={amount} onChange={e => setAmount(e.target.value)} className="text-lg font-bold font-display" />
+          <Input label="Amount (NGN)" prefix="₦" type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0"
+            value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))} className="text-lg font-bold font-display" />
           <div className="mt-2 flex gap-1.5">
             {[5000,20000,50000].map(q => (
               <button key={q} onClick={() => setAmount(String(q))}

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
 import { Headphones } from 'lucide-react'
+import { phoneFromChipInput } from '@/lib/auth/validation'
 export default function ProfilePage() {
   const { refreshSession, showToast, user, wallet } = useAppStore()
   const router = useRouter()
@@ -54,7 +55,7 @@ export default function ProfilePage() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name, phone }),
+        body: JSON.stringify({ name, phone: phoneFromChipInput(phone) }),
       })
       const payload = await response.json()
       if (!response.ok || payload.success === false) {
@@ -107,7 +108,7 @@ export default function ProfilePage() {
             <>
               <div className="mt-5 space-y-4">
                 <Input label="Full Name" value={name} onChange={event => setName(event.target.value)} />
-                <Input label="Phone Number" value={phone} onChange={event => setPhone(event.target.value)} />
+                <Input label="Phone Number" type="text" inputMode="numeric" autoComplete="tel" value={phone} onChange={event => setPhone(event.target.value.replace(/\D/g, ''))} />
                 <Input label="Email Address" value={user?.email || ''} readOnly disabled />
                 <Input label="Public Handle" value={user?.handle || ''} readOnly disabled />
               </div>

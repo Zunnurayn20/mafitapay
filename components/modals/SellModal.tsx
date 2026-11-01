@@ -69,7 +69,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   const cexSetup = cexSetups[selectedExchange] ?? null
   const exchangeLabel = cexExchangeLabel(selectedExchange)
   const canLinkCexAccount = selectedExchange === 'okx'
-    ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cexSenderEmail.trim()) && /^\+[1-9]\d{7,14}$/.test(cexSenderPhone.replace(/[ ()-]/g, ''))
+    ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cexSenderEmail.trim()) && /^[1-9]\d{7,14}$/.test(cexSenderPhone.replace(/\D/g, ''))
     : selectedExchange === 'bybit' || selectedExchange === 'gateio'
       ? /^\d{4,24}$/.test(cexSenderUid.trim())
       : /^\d{4,24}$/.test(cexSenderUid.trim()) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cexSenderUid.trim()) || /^\+[1-9]\d{7,14}$/.test(cexSenderUid.replace(/[ ()-]/g, ''))
@@ -268,7 +268,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(selectedExchange === 'okx'
-          ? { exchange: selectedExchange, senderEmail: linkedOkxEmail ?? cexSenderEmail.trim(), senderPhone: linkedOkxPhone ?? cexSenderPhone.trim() }
+          ? { exchange: selectedExchange, senderEmail: linkedOkxEmail ?? cexSenderEmail.trim(), senderPhone: linkedOkxPhone ?? `+${cexSenderPhone.replace(/\D/g, '')}` }
           : { exchange: selectedExchange, senderUid: cexSetup?.account?.externalUid ?? cexSenderUid.trim() }),
       })
       const payload = await response.json()
@@ -513,9 +513,9 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-email">Email on your OKX account</label>
                     <input id="cex-sender-email" type="email" inputMode="email" autoComplete="email" value={cexSenderEmail} maxLength={254} onChange={event => setCexSenderEmail(event.target.value.slice(0, 254))} placeholder="name@example.com" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
                     <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-phone">Phone number on your OKX account</label>
-                    <input id="cex-sender-phone" type="tel" inputMode="tel" autoComplete="tel" value={cexSenderPhone} maxLength={20} onChange={event => setCexSenderPhone(event.target.value.slice(0, 20))} placeholder="+2348012345678" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
+                    <input id="cex-sender-phone" type="text" inputMode="numeric" autoComplete="tel" value={cexSenderPhone} maxLength={15} onChange={event => setCexSenderPhone(event.target.value.replace(/\D/g, '').slice(0, 15))} placeholder="2348012345678" className="w-full rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 py-2.5 font-mono text-[12px] text-[var(--text)] outline-none focus:border-[var(--gold2)]" />
                     <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[9px] leading-relaxed text-amber-200">
-                      Include the + country code. For Nigeria, enter +234 and drop the leading 0 (for example, 08012345678 becomes +2348012345678).
+                      Include the country code digits. For Nigeria, drop the leading 0 (for example, 08012345678 becomes 2348012345678).
                     </div>
                   </> : <>
                     <label className="text-[9px] font-semibold text-[var(--text2)]" htmlFor="cex-sender-uid">

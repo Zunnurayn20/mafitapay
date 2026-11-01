@@ -285,8 +285,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
             />
           )}
           <div>
-            <Input label="Amount (NGN)" prefix="₦" type="number" placeholder="0.00"
-              value={amount} onChange={e => setAmount(e.target.value)}
+            <Input label="Amount (NGN)" prefix="₦" type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0"
+              value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))}
               className="text-lg font-bold font-display" />
             <div className="text-[10px] text-[var(--muted)] mt-1.5 font-mono">≈ ${(amt/1620).toFixed(2)} USD</div>
             <div className="flex gap-1.5 mt-2">
