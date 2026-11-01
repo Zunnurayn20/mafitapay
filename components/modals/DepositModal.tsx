@@ -262,7 +262,8 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
           <div className="text-sm font-semibold text-[#1f1a12]">{account.bank}</div>
 
-          <div className="mt-2 flex items-center justify-between gap-2">
+          <div className="mt-2 text-[11px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Account number</div>
+          <div className="mt-0.5 flex items-center justify-between gap-2">
             <div className="font-mono text-[22px] font-bold tracking-wider text-[#1f1a12] sm:text-2xl">
               {account.accountNumber}
             </div>
