@@ -93,6 +93,8 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setPairId(presetPairId as CryptoPairId)
       if (modalData.cryptoDepositMethod === 'exchange') {
         setDepositMethod('exchange')
+        setShowAssetPicker(false)
+        setPickerSymbol(null)
         if (isCexExchange(modalData.cryptoCexExchange)) {
           requestedCexExchangeRef.current = modalData.cryptoCexExchange
           setSelectedExchange(modalData.cryptoCexExchange)
@@ -309,21 +311,24 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                 Rate includes platform margin. No network fee is deducted from your credit.
               </div>
             </div>
-            <button
-              type="button"
-              onClick={toggleAssetPicker}
-              className="flex h-10 w-10 items-center justify-center border border-[var(--border)] bg-[var(--clay2)]"
-            >
-              <AssetLogo
-                src={asset.icon}
-                alt={`${asset.symbol} logo`}
-                fallback={asset.symbol.slice(0, 1)}
-                className="flex h-8 w-8 items-center justify-center overflow-hidden"
-                imgClassName="h-7 w-7 object-contain"
-                textClassName="text-lg"
-              />
-            </button>
-            {showAssetPicker && (
+            {depositMethod === 'wallet' && (
+              <button
+                type="button"
+                onClick={toggleAssetPicker}
+                aria-label="Choose crypto asset"
+                className="flex h-10 w-10 items-center justify-center border border-[var(--border)] bg-[var(--clay2)]"
+              >
+                <AssetLogo
+                  src={asset.icon}
+                  alt={`${asset.symbol} logo`}
+                  fallback={asset.symbol.slice(0, 1)}
+                  className="flex h-8 w-8 items-center justify-center overflow-hidden"
+                  imgClassName="h-7 w-7 object-contain"
+                  textClassName="text-lg"
+                />
+              </button>
+            )}
+            {depositMethod === 'wallet' && showAssetPicker && (
               <div className="absolute right-3 top-[calc(100%+0.5rem)] z-20 max-h-64 w-[17.5rem] overflow-y-auto border border-[var(--border)] bg-[var(--coal)] p-3 shadow-[0_14px_30px_rgba(0,0,0,.35)]">
                 {pickerGroup ? (
                   <>
