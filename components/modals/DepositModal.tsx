@@ -245,6 +245,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
 
   function renderAccountCard(account: FundingAccount) {
     const copied = copiedNumber === account.accountNumber
+    const bankName = account.bank.replace(/\s*\(Formerly OK MFB\)/i, '').trim()
 
     return (
       <div className="relative overflow-hidden rounded-2xl border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-4 text-[#2c2418] shadow-[0_12px_28px_rgba(0,0,0,.14)]">
@@ -255,15 +256,14 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
         <div className="relative pt-1">
           <div className="mb-1 flex items-center gap-2 text-[11px] text-[#7c6a4b]">
             <Building2 size={14} className="text-[#8c6b31]" />
-            <span className="truncate font-bold uppercase tracking-[0.06em]">Bank name:</span>
-            <span className="ml-auto shrink-0 rounded-full border border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.7)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.5px] text-[#8c6b31]">
-              {providerLabel(account.provider)}
-            </span>
+            <span className="shrink-0 font-bold">Bank name:</span>
+            <span className="truncate text-sm font-semibold text-[#1f1a12]">{bankName}</span>
           </div>
-          <div className="text-sm font-semibold text-[#1f1a12]">{account.bank}</div>
 
-          <div className="mt-3 text-[11px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Account name</div>
-          <div className="mt-0.5 text-sm font-semibold text-[#1f1a12]">{account.accountName}</div>
+          <div className="mt-2 flex items-baseline gap-2 text-[11px] text-[#7c6a4b]">
+            <span className="shrink-0 font-bold">Account name:</span>
+            <span className="min-w-0 truncate text-sm font-semibold text-[#1f1a12]">{account.accountName}</span>
+          </div>
 
           <div className="mt-3 text-[11px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Account number</div>
           <div className="mt-0.5 flex items-center justify-between gap-2">
