@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, Building2, Check, Copy, Shield } from 'lucide-react'
+import { ArrowLeftRight, ArrowRight, Building2, Check, Coins, Copy, Shield } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
@@ -14,6 +14,13 @@ import type { CexExchange, CryptoAsset, Wallet } from '@/types'
 
 type FundingAccount = Wallet['virtualAccounts'][number]
 type FundingProvider = 'palmpay' | 'flutterwave'
+type DepositTab = 'bank' | 'crypto' | 'exchanges'
+
+const DEPOSIT_TABS: Array<{ id: DepositTab; label: string; Icon: typeof Building2 }> = [
+  { id: 'bank', label: 'Bank transfer', Icon: Building2 },
+  { id: 'crypto', label: 'Crypto', Icon: Coins },
+  { id: 'exchanges', label: 'Exchanges', Icon: ArrowLeftRight },
+]
 
 function providerLabel(provider: FundingProvider | FundingAccount['provider']) {
   if (provider === 'palmpay') return 'PalmPay'
@@ -37,6 +44,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const [loadingProvider, setLoadingProvider] = useState<FundingProvider | null>(null)
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null)
   const [selectedProvider, setSelectedProvider] = useState<FundingProvider>('palmpay')
+  const [activeTab, setActiveTab] = useState<DepositTab>('bank')
   const [networkPickerSymbol, setNetworkPickerSymbol] = useState<string | null>(null)
   const [exchangeDepositsEnabled, setExchangeDepositsEnabled] = useState(false)
   const [exchangeDepositNames, setExchangeDepositNames] = useState<string[]>([])
@@ -65,6 +73,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       setNetworkPickerSymbol(null)
       return
     }
+    setActiveTab('bank')
     if (palmpayAccount) {
       setSelectedProvider('palmpay')
       return
@@ -268,6 +277,28 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     <>
     <Modal open={open} onClose={onClose} title="Deposit Funds">
       <div className="flex flex-col gap-3.5 p-5">
+        <div role="tablist" aria-label="Deposit method" className="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border)] bg-[var(--coal)] p-1">
+          {DEPOSIT_TABS.map(({ id, label, Icon }) => {
+            const active = activeTab === id
+            return (
+              <button
+                key={id}
+                id={`deposit-tab-${id}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls={`deposit-panel-${id}`}
+                onClick={() => setActiveTab(id)}
+                className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-center text-[10px] font-semibold transition-colors sm:flex-row sm:gap-1.5 sm:px-3 sm:text-[11px] ${active ? 'bg-[var(--gold)] text-[var(--char)] shadow-sm' : 'text-[var(--text2)] hover:bg-[var(--clay)]'}`}
+              >
+                <Icon size={14} aria-hidden="true" />
+                <span className="truncate">{label}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        {activeTab === 'bank' && <div role="tabpanel" id="deposit-panel-bank" aria-labelledby="deposit-tab-bank" className="flex flex-col gap-3.5">
         {!hasSubmittedFundingIdentity ? (
           <div className="flex gap-3 rounded-xl border border-amber-200/80 bg-amber-50 p-4">
             <Shield size={18} className="mt-0.5 shrink-0 text-amber-700" />
@@ -339,16 +370,27 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             blockedMessage: fundingAccountEligibility.message,
           })
         )}
+        {hasAnyAccount && (
+          <Button className="w-full rounded-xl py-3" onClick={() => { closeModal(); onClose() }}>
+            Done
+          </Button>
+        )}
+        </div>}
 
-        {exchangeDepositsEnabled && exchangeDepositAsset && (
+        {activeTab === 'exchanges' && <div role="tabpanel" id="deposit-panel-exchanges" aria-labelledby="deposit-tab-exchanges" className="flex flex-col gap-3.5">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--gold2)]">Deposit from an exchange</div>
+            <div className="mt-1 text-[12px] leading-relaxed text-[var(--text2)]">Send USDT or USDC using an internal transfer from an exchange account linked to your MafitaPay profile.</div>
+          </div>
+          {exchangeDepositsEnabled && exchangeDepositAsset ? (
           <button
             type="button"
             onClick={depositFromExchange}
             className="flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--gold)] bg-[var(--gold)] px-4 py-3.5 text-left text-[var(--char)] shadow-[0_8px_22px_rgba(202,165,96,.22)] transition-all hover:brightness-105 active:scale-[0.99]"
           >
             <span className="min-w-0">
-              <span className="block text-[13px] font-bold">From Exchanges?</span>
-              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Deposit USDT or USDC from {exchangeDepositNames.join(' or ')} with an internal transfer.</span>
+              <span className="block text-[13px] font-bold">Continue with an exchange</span>
+              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Supported: {exchangeDepositNames.join(', ')}</span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
               <span className="flex -space-x-2" aria-label={`Accepted exchanges: ${exchangeDepositNames.join(' and ')}`}>
@@ -360,8 +402,12 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
               <ArrowRight size={18} aria-hidden="true" />
             </span>
           </button>
-        )}
+          ) : (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--coal)] p-4 text-[11px] leading-relaxed text-[var(--muted)]">Exchange deposits are temporarily unavailable.</div>
+          )}
+        </div>}
 
+        {activeTab === 'crypto' && <div role="tabpanel" id="deposit-panel-crypto" aria-labelledby="deposit-tab-crypto" className="flex flex-col gap-3.5">
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4 shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]">
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--gold2)]">
             Crypto deposits
@@ -404,12 +450,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             Tap an asset, then choose a network for the deposit address.
           </div>
         </div>
-
-        {hasAnyAccount && (
-          <Button className="w-full rounded-xl py-3" onClick={() => { closeModal(); onClose() }}>
-            Done
-          </Button>
-        )}
+        </div>}
       </div>
     </Modal>
 
