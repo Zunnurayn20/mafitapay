@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeftRight, ArrowRight, Building2, Check, Coins, Copy, Shield } from 'lucide-react'
+import { ArrowLeftRight, ArrowRight, Building2, Check, Coins, Copy, Hash, Shield, UserRound } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { AssetLogo } from '@/components/ui/AssetLogo'
@@ -254,18 +254,17 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]"
         />
         <div className="relative pt-1">
-          <div className="mb-1 flex items-center gap-2 text-[11px] text-[#7c6a4b]">
-            <Building2 size={14} className="text-[#8c6b31]" />
-            <span className="shrink-0 font-bold">Bank name:</span>
-            <span className="truncate text-sm font-semibold text-[#1f1a12]">{bankName}</span>
+          <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
+            <span className="flex shrink-0 items-center gap-2 font-bold"><Building2 size={14} className="text-[#8c6b31]" />Bank name:</span>
+            <span className="min-w-0 truncate text-right text-sm font-semibold text-[#1f1a12]">{bankName}</span>
           </div>
 
-          <div className="mt-2 flex items-baseline gap-2 text-[11px] text-[#7c6a4b]">
-            <span className="shrink-0 font-bold">Account name:</span>
-            <span className="min-w-0 truncate text-sm font-semibold text-[#1f1a12]">{account.accountName}</span>
+          <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
+            <span className="flex shrink-0 items-center gap-2 font-bold"><UserRound size={14} className="text-[#8c6b31]" />Account name:</span>
+            <span className="min-w-0 truncate text-right text-sm font-semibold text-[#1f1a12]">{account.accountName}</span>
           </div>
 
-          <div className="mt-3 text-[11px] font-bold uppercase tracking-[1px] text-[#8c6b31]">Account number</div>
+          <div className="mt-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[1px] text-[#8c6b31]"><Hash size={14} />Account number</div>
           <div className="mt-0.5 flex items-center justify-between gap-2">
             <div className="font-mono text-lg font-bold tracking-wider text-[#1f1a12] sm:text-xl">
               {account.accountNumber}
