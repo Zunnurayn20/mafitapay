@@ -116,6 +116,7 @@ const MAX_PAGES_PER_PASS = 2
 const PAGE_LIMIT = 100
 const OVERLAP_MS = 5 * 60_000
 const BITGET_OVERLAP_MS = 24 * 60 * 60_000
+const OKX_LOOKBACK_MS = 24 * 60 * 60_000
 
 function okxConfig() {
   if (process.env.MAFITAPAY_CEX_DEPOSITS_ENABLED !== '1') return null
@@ -133,10 +134,13 @@ function signOkx(timestamp: string, apiSecret: string, requestPath: string) {
   return createHmac('sha256', apiSecret).update(`${timestamp}GET${requestPath}`).digest('base64')
 }
 
-async function fetchOkxInternalDeposits(afterMs: number, beforeMs: number) {
+async function fetchOkxInternalDeposits() {
   const config = okxConfig()
   if (!config) throw new Error('OKX internal deposit credentials are not configured.')
-  const params = new URLSearchParams({ type: '3', after: String(afterMs), before: String(beforeMs), limit: '100' })
+  // OKX's `after` and `before` parameters are pagination cursors with
+  // counterintuitive directions. Fetch the newest internal deposits and apply
+  // our own time window below instead of risking an inverted cursor range.
+  const params = new URLSearchParams({ type: '3', limit: '100' })
   const requestPath = `/api/v5/asset/deposit-history?${params.toString()}`
   const timestamp = new Date().toISOString()
   const response = await fetch(`${config.apiBaseUrl}${requestPath}`, {
@@ -439,7 +443,18 @@ async function resolveOkxLinkedAccount(row: OkxInternalDeposit, identifiers?: Ok
   // attribute the transfer.
   const owners = new Set(matches.map(item => item.userId))
   if (owners.size !== 1) return null
-  const active = matches.filter(item => item.isActive && item.accountExternalUid && item.accountStatus && item.accountStatus !== 'disabled')
+  const [userId] = owners
+  const active = candidates.filter(item => item.userId === userId
+    && item.isActive
+    && item.accountExternalUid
+    && item.accountStatus
+    && item.accountStatus !== 'disabled')
+  // OKX exposes only one masked sender identifier on each deposit row (email
+  // or phone). Require both identifiers to be actively linked to the same
+  // account, then match the row against whichever identifier OKX supplied.
+  const hasEmail = active.some(item => item.externalUid.includes('@'))
+  const hasPhone = active.some(item => item.externalUid.startsWith('+'))
+  if (!hasEmail || !hasPhone || !active.some(item => okxSenderMatchesIdentifier(row, item.externalUid))) return null
   if (active.length === 0) return null
   const accountUids = new Set(active.map(item => item.accountExternalUid))
   return accountUids.size === 1 ? active[0].accountExternalUid : null
@@ -825,9 +840,14 @@ async function syncOkxInternalDeposits() {
 
   await verifyOkxReceivingAccount()
   // OKX returns the newest 100 records in reverse chronological order.
-  // A rolling 24-hour overlap makes each poll idempotent while catching delayed history updates.
+  // Apply a rolling 24-hour window locally because its after/before parameters
+  // are pagination cursors rather than ordinary start/end filters.
   const now = Date.now()
-  const rows = await fetchOkxInternalDeposits(now - 24 * 60 * 60_000, now)
+  const fetchedRows = await fetchOkxInternalDeposits()
+  const rows = fetchedRows.filter(row => {
+    const receivedAtMs = Number(row.ts)
+    return Number.isFinite(receivedAtMs) && receivedAtMs >= now - OKX_LOOKBACK_MS && receivedAtMs <= now + 5 * 60_000
+  })
   const identifiers = await listCexDepositAccountIdentifiers(OKX)
   let internalTransfers = 0
   let matchedSenders = 0
@@ -839,7 +859,7 @@ async function syncOkxInternalDeposits() {
     if (matchedExternalUid) matchedSenders += 1
     if (await acceptOkxTransfer(row, config.receiverUid, matchedExternalUid, identifiers)) credited += 1
   }
-  return { configured: true, exchange: OKX, checked: rows.length, internalTransfers, matchedSenders, credited, limitReached: rows.length === 100 }
+  return { configured: true, exchange: OKX, checked: rows.length, internalTransfers, matchedSenders, credited, limitReached: fetchedRows.length === 100 }
 }
 
 async function syncMexcInternalDeposits() {
