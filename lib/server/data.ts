@@ -181,6 +181,10 @@ const TRANSACTION_PIN_MAX_FAILED_ATTEMPTS = 5
 const TRANSACTION_PIN_LOCK_MINUTES = 15
 const WEBAUTHN_CHALLENGE_TTL_MINUTES = 10
 const BIOMETRIC_APPROVAL_TTL_MINUTES = 5
+const MIN_REWARD_QUALIFYING_SPEND_NGN = 5_000
+const REWARD_QUALIFYING_TRANSACTION_TYPES = new Set<Transaction['type']>([
+  'airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water',
+])
 const DEFAULT_REWARD_RULES: RewardRule[] = [
   {
     id: 'reward_referral_inviter_first_success',
@@ -198,12 +202,11 @@ const DEFAULT_REWARD_RULES: RewardRule[] = [
   },
 ]
 
-function isReferralRewardEligibleTransaction(transaction: Pick<Transaction, 'id' | 'type' | 'status'>) {
+function isReferralRewardEligibleTransaction(transaction: Pick<Transaction, 'id' | 'type' | 'status' | 'amount'>) {
   return transaction.status === 'success'
-    && transaction.type !== 'referral_bonus'
-    && transaction.type !== 'reward_bonus'
-    && transaction.type !== 'admin_credit'
-    && transaction.type !== 'admin_debit'
+    && REWARD_QUALIFYING_TRANSACTION_TYPES.has(transaction.type)
+    && Number.isFinite(transaction.amount)
+    && transaction.amount >= MIN_REWARD_QUALIFYING_SPEND_NGN
 }
 
 function readReferralBonusMetadata(metadata: Record<string, unknown> | undefined) {
@@ -5198,7 +5201,10 @@ async function maybeApplyRewardRulesForEvent(input: {
           }
         }
 
-        if (rule.manualApprovalRequired) {
+        const requiresReview = rule.manualApprovalRequired
+          || input.event === 'user_signup'
+          || sourceUser.kycStatus !== 'verified'
+        if (requiresReview) {
           const requestId = `reward_req_${randomBytes(6).toString('hex')}`
           await queryPostgresClient(client, `
             INSERT INTO reward_award_requests (
@@ -5270,10 +5276,16 @@ async function maybeApplyRewardRulesForEvent(input: {
                 db.exec('COMMIT')
                 outcome = { status: 'capped', rule, requestId, reason }
               } else {
-                outcome = await processNonCappedSqliteReward(db, rule, claimId, sourceUser, beneficiary, input, now, createRewardTransaction)
+                outcome = await processNonCappedSqliteReward(db, {
+                  ...rule,
+                  manualApprovalRequired: rule.manualApprovalRequired || input.event === 'user_signup' || sourceUser.kycStatus !== 'verified',
+                }, claimId, sourceUser, beneficiary, input, now, createRewardTransaction)
               }
             } else {
-              outcome = await processNonCappedSqliteReward(db, rule, claimId, sourceUser, beneficiary, input, now, createRewardTransaction)
+              outcome = await processNonCappedSqliteReward(db, {
+                ...rule,
+                manualApprovalRequired: rule.manualApprovalRequired || input.event === 'user_signup' || sourceUser.kycStatus !== 'verified',
+              }, claimId, sourceUser, beneficiary, input, now, createRewardTransaction)
             }
           }
         }
@@ -5356,21 +5368,23 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
         FROM transactions
         WHERE user_id = ?
           AND status = 'success'
-          AND type NOT IN ('referral_bonus', 'reward_bonus')
+          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+          AND amount >= ?
         ORDER BY created_at ASC, id ASC
         LIMIT 1
-      `, [userId])).rows[0]
+      `, [userId, MIN_REWARD_QUALIFYING_SPEND_NGN])).rows[0]
     : getDb()
       .prepare(`
         SELECT id
         FROM transactions
         WHERE user_id = ?
           AND status = 'success'
-          AND type NOT IN ('referral_bonus', 'reward_bonus')
+          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+          AND amount >= ?
         ORDER BY datetime(created_at) ASC, id ASC
         LIMIT 1
       `)
-      .get(userId) as { id?: string } | undefined
+      .get(userId, MIN_REWARD_QUALIFYING_SPEND_NGN) as { id?: string } | undefined
 
   if (firstQualifyingTransaction?.id !== transaction.id) return
 
@@ -10525,7 +10539,7 @@ export async function upsertRewardRules(rules: RewardRule[]) {
           INSERT INTO reward_rules (id, name, description, kind, trigger_event, audience, amount_ngn, requires_referral, allowed_transaction_types, excluded_transaction_types, daily_payout_cap_ngn, manual_approval_required, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, kind = excluded.kind, trigger_event = excluded.trigger_event, audience = excluded.audience, amount_ngn = excluded.amount_ngn, requires_referral = excluded.requires_referral, allowed_transaction_types = excluded.allowed_transaction_types, excluded_transaction_types = excluded.excluded_transaction_types, daily_payout_cap_ngn = excluded.daily_payout_cap_ngn, manual_approval_required = excluded.manual_approval_required, is_active = excluded.is_active, updated_at = excluded.updated_at
-        `, [rule.id.trim(), rule.name.trim(), rule.description?.trim() || null, rule.kind, rule.triggerEvent, rule.audience, rule.amountNgn, rule.requiresReferral === true, rule.allowedTransactionTypes?.length ? JSON.stringify(rule.allowedTransactionTypes) : null, rule.excludedTransactionTypes?.length ? JSON.stringify(rule.excludedTransactionTypes) : null, rule.dailyPayoutCapNgn ?? null, rule.manualApprovalRequired === true, rule.isActive !== false, rule.createdAt || now, now])
+        `, [rule.id.trim(), rule.name.trim(), rule.description?.trim() || null, rule.kind, rule.triggerEvent, rule.audience, rule.amountNgn, rule.requiresReferral === true, rule.allowedTransactionTypes?.length ? JSON.stringify(rule.allowedTransactionTypes) : null, rule.excludedTransactionTypes?.length ? JSON.stringify(rule.excludedTransactionTypes) : null, rule.dailyPayoutCapNgn ?? null, rule.triggerEvent === 'user_signup' || rule.manualApprovalRequired === true, rule.isActive !== false, rule.createdAt || now, now])
       }
     })
     return getRewardRules()
@@ -10581,7 +10595,7 @@ export async function upsertRewardRules(rules: RewardRule[]) {
         rule.allowedTransactionTypes?.length ? JSON.stringify(rule.allowedTransactionTypes) : null,
         rule.excludedTransactionTypes?.length ? JSON.stringify(rule.excludedTransactionTypes) : null,
         rule.dailyPayoutCapNgn ?? null,
-        rule.manualApprovalRequired === true ? 1 : 0,
+        rule.triggerEvent === 'user_signup' || rule.manualApprovalRequired === true ? 1 : 0,
         rule.isActive === false ? 0 : 1,
         rule.createdAt || now,
         now
@@ -10796,6 +10810,29 @@ export async function reviewRewardAwardRequest(input: {
       const sourceUser = users.rows.find(user => user.id === request.source_user_id)
       const beneficiary = users.rows.find(user => user.id === request.beneficiary_user_id)
       if (!sourceUser || !beneficiary) throw new Error('Reward request users could not be loaded.')
+      if (input.action === 'approve') {
+        if (sourceUser.kycStatus !== 'verified') throw new Error('The referred user must complete KYC before this reward can be approved.')
+        if (request.trigger_event === 'first_successful_transaction') {
+          if (!request.trigger_transaction_id) throw new Error('The qualifying purchase is missing; this reward cannot be approved.')
+          const triggerResult = await queryPostgresClient<TransactionRow>(client,
+            'SELECT * FROM transactions WHERE id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
+            [request.trigger_transaction_id, sourceUser.id])
+          const triggerTransaction = triggerResult.rows[0] ? mapTransactionRow(triggerResult.rows[0]) : null
+          if (!triggerTransaction || !isReferralRewardEligibleTransaction(triggerTransaction)) {
+            throw new Error('The qualifying transaction must be a successful eligible service purchase of at least ₦5,000.')
+          }
+          const firstQualifyingResult = await queryPostgresClient<{ id: string }>(client, `
+            SELECT id FROM transactions
+            WHERE user_id = ? AND status = 'success'
+              AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+              AND amount >= ?
+            ORDER BY created_at ASC, id ASC LIMIT 1
+          `, [sourceUser.id, MIN_REWARD_QUALIFYING_SPEND_NGN])
+          if (firstQualifyingResult.rows[0]?.id !== triggerTransaction.id) {
+            throw new Error('This reward is no longer tied to the user’s first qualifying purchase.')
+          }
+        }
+      }
       const claimResult = await queryPostgresClient<RewardAwardClaimRow>(client, 'SELECT * FROM reward_award_claims WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1 FOR UPDATE', [request.reward_rule_id, request.source_user_id])
       const claim = claimResult.rows[0]
       if (!claim) throw new Error('Reward idempotency claim is missing. Apply the rewards migration and retry.')
@@ -10867,6 +10904,28 @@ export async function reviewRewardAwardRequest(input: {
       const sourceUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(request.source_user_id) as UserRow | undefined
       const beneficiary = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(request.beneficiary_user_id) as UserRow | undefined
       if (!sourceUser || !beneficiary) throw new Error('Reward request users could not be loaded.')
+      if (input.action === 'approve') {
+        if (sourceUser.kycStatus !== 'verified') throw new Error('The referred user must complete KYC before this reward can be approved.')
+        if (request.trigger_event === 'first_successful_transaction') {
+          if (!request.trigger_transaction_id) throw new Error('The qualifying purchase is missing; this reward cannot be approved.')
+          const triggerRow = db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? LIMIT 1')
+            .get(request.trigger_transaction_id, sourceUser.id) as TransactionRow | undefined
+          const triggerTransaction = triggerRow ? mapTransactionRow(triggerRow) : null
+          if (!triggerTransaction || !isReferralRewardEligibleTransaction(triggerTransaction)) {
+            throw new Error('The qualifying transaction must be a successful eligible service purchase of at least ₦5,000.')
+          }
+          const firstQualifying = db.prepare(`
+            SELECT id FROM transactions
+            WHERE user_id = ? AND status = 'success'
+              AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+              AND amount >= ?
+            ORDER BY datetime(created_at) ASC, id ASC LIMIT 1
+          `).get(sourceUser.id, MIN_REWARD_QUALIFYING_SPEND_NGN) as { id?: string } | undefined
+          if (firstQualifying?.id !== triggerTransaction.id) {
+            throw new Error('This reward is no longer tied to the user’s first qualifying purchase.')
+          }
+        }
+      }
       const claim = db.prepare('SELECT * FROM reward_award_claims WHERE reward_rule_id = ? AND source_user_id = ? LIMIT 1').get(request.reward_rule_id, request.source_user_id) as RewardAwardClaimRow | undefined
       if (!claim) throw new Error('Reward idempotency claim is missing. Apply the rewards migration and retry.')
       if (claim.status === 'paid') throw new Error('Reward has already been paid for this trigger.')

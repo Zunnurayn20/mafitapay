@@ -1240,7 +1240,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-bold text-[var(--text)]">Reward Rules</div>
-            <div className="mt-1 text-[10px] text-[var(--muted)]">Control referral and bonus payouts from admin. The engine currently supports signup rewards and first successful transaction rewards.</div>
+            <div className="mt-1 text-[10px] text-[var(--muted)]">Signup rewards require manual review and verified KYC. Transaction rewards require verified KYC and a successful in-app service purchase of at least ₦5,000; deposits, transfers, crypto, and admin credits never qualify.</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -1445,8 +1445,8 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               Requires referral context
             </label>
             <label className="flex items-center gap-2 self-end text-[10px] text-[var(--muted)]">
-              <input type="checkbox" checked={newRewardRule.manualApprovalRequired} onChange={event => setNewRewardRule(current => ({ ...current, manualApprovalRequired: event.target.checked }))} />
-              Manual approval required
+              <input type="checkbox" checked={newRewardRule.triggerEvent === 'user_signup' || newRewardRule.manualApprovalRequired} disabled={newRewardRule.triggerEvent === 'user_signup'} onChange={event => setNewRewardRule(current => ({ ...current, manualApprovalRequired: event.target.checked }))} />
+              {newRewardRule.triggerEvent === 'user_signup' ? 'Manual review required for signup rewards' : 'Manual approval required'}
             </label>
             <label className="flex items-center gap-2 self-end text-[10px] text-[var(--muted)]">
               <input type="checkbox" checked={newRewardRule.isActive} onChange={event => setNewRewardRule(current => ({ ...current, isActive: event.target.checked }))} />
@@ -1460,7 +1460,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
           {newRewardRule.triggerEvent === 'first_successful_transaction' && (
             <div className="mt-3 grid gap-4 xl:grid-cols-2">
               <div>
-                <div className="text-[10px] font-bold text-[var(--muted)]">Allowed Transaction Types</div>
+                <div className="text-[10px] font-bold text-[var(--muted)]">Eligible Service Purchases (₦5,000 minimum)</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                     <label key={`draft-allow-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">
@@ -1516,7 +1516,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-[8px] text-[var(--muted)]">
                 {rule.requiresReferral === true && <span className="border border-[var(--border)] px-2 py-1">Referral</span>}
-                {rule.manualApprovalRequired === true && <span className="border border-[var(--border)] px-2 py-1">Manual Review</span>}
+                {(rule.manualApprovalRequired === true || rule.triggerEvent === 'user_signup') && <span className="border border-[var(--border)] px-2 py-1">Manual Review</span>}
                 {rule.dailyPayoutCapNgn ? <span className="border border-[var(--border)] px-2 py-1">Cap ₦{rule.dailyPayoutCapNgn.toLocaleString('en-NG')}</span> : null}
               </div>
             </button>
@@ -1581,8 +1581,8 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   Requires referral context
                 </label>
                 <label className="flex items-center gap-2 self-end text-[10px] text-[var(--muted)]">
-                  <input type="checkbox" checked={rule.manualApprovalRequired === true} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, manualApprovalRequired: event.target.checked } : item))} />
-                  Manual approval required
+                  <input type="checkbox" checked={rule.triggerEvent === 'user_signup' || rule.manualApprovalRequired === true} disabled={rule.triggerEvent === 'user_signup'} onChange={event => setRewardRules(current => current.map(item => item.id === rule.id ? { ...item, manualApprovalRequired: event.target.checked } : item))} />
+                  {rule.triggerEvent === 'user_signup' ? 'Manual review required for signup rewards' : 'Manual approval required'}
                 </label>
               </div>
               <label className="mt-3 block text-[10px] text-[var(--muted)]">
@@ -1592,7 +1592,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               {rule.triggerEvent === 'first_successful_transaction' && (
                 <div className="mt-3 grid gap-4 xl:grid-cols-2">
                   <div>
-                    <div className="text-[10px] font-bold text-[var(--muted)]">Allowed Transaction Types</div>
+                    <div className="text-[10px] font-bold text-[var(--muted)]">Eligible Service Purchases (₦5,000 minimum)</div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                         <label key={`${rule.id}-allow-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">

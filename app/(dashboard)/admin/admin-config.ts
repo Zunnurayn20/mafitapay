@@ -118,10 +118,6 @@ export const REWARD_KIND_OPTIONS: RewardRule['kind'][] = ['referral', 'bonus']
 export const REWARD_TRIGGER_OPTIONS: RewardRule['triggerEvent'][] = ['user_signup', 'first_successful_transaction']
 export const REWARD_AUDIENCE_OPTIONS: RewardRule['audience'][] = ['actor', 'inviter']
 export const REWARD_TRANSACTION_TYPE_OPTIONS: Transaction['type'][] = [
-  'deposit',
-  'withdrawal',
-  'transfer_in',
-  'transfer_out',
   'airtime',
   'data',
   'electric',
@@ -130,10 +126,6 @@ export const REWARD_TRANSACTION_TYPE_OPTIONS: Transaction['type'][] = [
   'gas',
   'insurance',
   'water',
-  'crypto_buy',
-  'crypto_sell',
-  'p2p_deposit',
-  'p2p_withdrawal',
 ]
 export const CRYPTO_LOGO_SUGGESTIONS: Record<string, string> = {
   USDT: '/crypto-assets/usdt.png',

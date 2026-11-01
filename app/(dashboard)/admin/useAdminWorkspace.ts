@@ -1046,7 +1046,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       requiresReferral: rule.requiresReferral === true,
       allowedTransactionTypes: rule.allowedTransactionTypes?.length ? Array.from(new Set(rule.allowedTransactionTypes)) : undefined,
       excludedTransactionTypes: rule.excludedTransactionTypes?.length ? Array.from(new Set(rule.excludedTransactionTypes)) : undefined,
-      manualApprovalRequired: rule.manualApprovalRequired === true,
+      manualApprovalRequired: rule.triggerEvent === 'user_signup' || rule.manualApprovalRequired === true,
       isActive: rule.isActive !== false,
       createdAt: rule.createdAt,
       updatedAt: rule.updatedAt,
