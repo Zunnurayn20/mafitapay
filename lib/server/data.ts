@@ -183,13 +183,13 @@ const WEBAUTHN_CHALLENGE_TTL_MINUTES = 10
 const BIOMETRIC_APPROVAL_TTL_MINUTES = 5
 const MIN_REWARD_QUALIFYING_SPEND_NGN = 5_000
 const REWARD_QUALIFYING_TRANSACTION_TYPES = new Set<Transaction['type']>([
-  'airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water',
+  'airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water', 'crypto_buy',
 ])
 const DEFAULT_REWARD_RULES: RewardRule[] = [
   {
     id: 'reward_referral_inviter_first_success',
     name: 'Referral Reward',
-    description: 'Pays the inviter when a referred user completes their first successful non-reward transaction.',
+    description: 'Pays the inviter when a referred user completes their first qualifying in-app purchase.',
     kind: 'referral',
     triggerEvent: 'first_successful_transaction',
     audience: 'inviter',
@@ -5368,7 +5368,7 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
         FROM transactions
         WHERE user_id = ?
           AND status = 'success'
-          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water', 'crypto_buy')
           AND amount >= ?
         ORDER BY created_at ASC, id ASC
         LIMIT 1
@@ -5379,7 +5379,7 @@ async function maybeApplyFirstSuccessfulTransactionRewards(userId: string, trans
         FROM transactions
         WHERE user_id = ?
           AND status = 'success'
-          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+          AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water', 'crypto_buy')
           AND amount >= ?
         ORDER BY datetime(created_at) ASC, id ASC
         LIMIT 1
@@ -10824,7 +10824,7 @@ export async function reviewRewardAwardRequest(input: {
           const firstQualifyingResult = await queryPostgresClient<{ id: string }>(client, `
             SELECT id FROM transactions
             WHERE user_id = ? AND status = 'success'
-              AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+              AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water', 'crypto_buy')
               AND amount >= ?
             ORDER BY created_at ASC, id ASC LIMIT 1
           `, [sourceUser.id, MIN_REWARD_QUALIFYING_SPEND_NGN])
@@ -10917,7 +10917,7 @@ export async function reviewRewardAwardRequest(input: {
           const firstQualifying = db.prepare(`
             SELECT id FROM transactions
             WHERE user_id = ? AND status = 'success'
-              AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water')
+              AND type IN ('airtime', 'data', 'electric', 'cable', 'education', 'gas', 'insurance', 'water', 'crypto_buy')
               AND amount >= ?
             ORDER BY datetime(created_at) ASC, id ASC LIMIT 1
           `).get(sourceUser.id, MIN_REWARD_QUALIFYING_SPEND_NGN) as { id?: string } | undefined

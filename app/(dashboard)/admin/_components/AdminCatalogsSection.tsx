@@ -1240,7 +1240,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-bold text-[var(--text)]">Reward Rules</div>
-            <div className="mt-1 text-[10px] text-[var(--muted)]">Signup rewards require manual review and verified KYC. Transaction rewards require verified KYC and a successful in-app service purchase of at least ₦5,000; deposits, transfers, crypto, and admin credits never qualify.</div>
+            <div className="mt-1 text-[10px] text-[var(--muted)]">Signup rewards require manual review and verified KYC. Transaction rewards require verified KYC and a successful in-app service purchase or crypto buy of at least ₦5,000; deposits, transfers, crypto sells, and admin credits never qualify.</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -1460,7 +1460,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
           {newRewardRule.triggerEvent === 'first_successful_transaction' && (
             <div className="mt-3 grid gap-4 xl:grid-cols-2">
               <div>
-                <div className="text-[10px] font-bold text-[var(--muted)]">Eligible Service Purchases (₦5,000 minimum)</div>
+                <div className="text-[10px] font-bold text-[var(--muted)]">Eligible Purchases (₦5,000 minimum)</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                     <label key={`draft-allow-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">
@@ -1592,7 +1592,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               {rule.triggerEvent === 'first_successful_transaction' && (
                 <div className="mt-3 grid gap-4 xl:grid-cols-2">
                   <div>
-                    <div className="text-[10px] font-bold text-[var(--muted)]">Eligible Service Purchases (₦5,000 minimum)</div>
+                    <div className="text-[10px] font-bold text-[var(--muted)]">Eligible Purchases (₦5,000 minimum)</div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {REWARD_TRANSACTION_TYPE_OPTIONS.map(option => (
                         <label key={`${rule.id}-allow-${option}`} className="flex items-center gap-2 border border-[var(--border)] bg-[var(--coal)] px-2 py-1 text-[10px] text-[var(--muted)]">

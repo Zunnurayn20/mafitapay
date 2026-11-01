@@ -126,6 +126,7 @@ export const REWARD_TRANSACTION_TYPE_OPTIONS: Transaction['type'][] = [
   'gas',
   'insurance',
   'water',
+  'crypto_buy',
 ]
 export const CRYPTO_LOGO_SUGGESTIONS: Record<string, string> = {
   USDT: '/crypto-assets/usdt.png',
