@@ -35,7 +35,7 @@ export default function BillsPage() {
             <div className="text-[30px] mb-3">{p.icon}</div>
             <div className="text-[11px] font-bold text-[var(--text)]">{p.name}</div>
             <div className="text-[9px] text-[var(--muted)] mt-1">
-              {p.isActive === false ? 'Unavailable' : 'Live via Flutterwave'}
+              {p.isActive === false ? 'Unavailable' : p.type === 'airtime' ? 'Live via VTU' : 'Live via Flutterwave'}
             </div>
           </button>
         ))}

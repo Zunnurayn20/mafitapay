@@ -15,14 +15,18 @@ import type { BardetechPaymentResult } from '@/lib/server/bardetech-bills'
 import type { FlutterwaveBillPaymentResult } from '@/lib/server/flutterwave-bills'
 import type { BillProvider, Transaction } from '@/types'
 
-/**
- * Whether any configured provider can serve a bill type.
- *
- * Flutterwave covers everything it supports, but data and airtime can also be served by ASBDATA
- * or Amigo alone -- so this must not collapse back to a Flutterwave-only check, or those two
- * categories go dark whenever Flutterwave is unconfigured.
- */
+type AirtimeProvider = 'bardetech' | 'asbdata'
+
+function getConfiguredAirtimeProviders(): AirtimeProvider[] {
+  return [
+    ...(isBardetechBillsEnabled() ? ['bardetech' as const] : []),
+    ...(isAsbdataBillsEnabled() ? ['asbdata' as const] : []),
+  ]
+}
+
+/** Whether any configured provider can serve a bill type. */
 function hasProviderForBillType(type: BillProvider['type']) {
+  if (type === 'airtime') return getConfiguredAirtimeProviders().length > 0
   if (isFlutterwaveBillsEnabled() && isFlutterwaveBillTypeSupported(type)) return true
   if (type === 'data') return isAsbdataBillsEnabled() || isAmigoBillsEnabled() || isBardetechBillsEnabled()
   return false
@@ -199,6 +203,20 @@ async function handleBillPayment(req: Request) {
     return NextResponse.json({ error: 'Enter a valid phone number.', success: false }, { status: 400 })
   }
 
+  const airtimeNetworkIds = new Map<AirtimeProvider, number>()
+  if (selectedProvider.type === 'airtime') {
+    for (const airtimeProvider of getConfiguredAirtimeProviders()) {
+      const networkId = airtimeProvider === 'bardetech'
+        ? getBardetechNetworkId(provider || '')
+        : getAsbdataNetworkId(provider || '')
+      if (networkId !== undefined) airtimeNetworkIds.set(airtimeProvider, networkId)
+    }
+    if (airtimeNetworkIds.size === 0) {
+      return NextResponse.json({ error: 'Airtime is temporarily unavailable for this network.', success: false }, { status: 503 })
+    }
+  }
+  const airtimeProviders = [...airtimeNetworkIds.keys()]
+
   // Which provider owns this purchase. Prefer the name the client sent; fall back to the old
   // inference (plan id + network id implied Amigo) so app builds predating providerName still work.
   const hasPlanSelection = Boolean(providerPlanId) && Number.isFinite(providerNetworkId)
@@ -329,7 +347,7 @@ async function handleBillPayment(req: Request) {
   }
 
   const expectedProvider = selectedProvider.type === 'airtime'
-    ? 'flutterwave'
+    ? airtimeProviders[0]!
     : resolvedDataProvider && (
         resolvedDataProvider === 'amigo' ? isAmigoBillsEnabled()
           : resolvedDataProvider === 'asbdata' ? isAsbdataBillsEnabled()
@@ -386,7 +404,21 @@ async function handleBillPayment(req: Request) {
   const activeProvider = expectedProvider
   let providerResult: AsbdataPaymentResult | BardetechPaymentResult | AmigoDataPaymentResult | FlutterwaveBillPaymentResult
   try {
-    providerResult = resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
+    providerResult = selectedProvider.type === 'airtime' && expectedProvider === 'bardetech'
+      ? await createBardetechAirtimePayment({
+        networkId: airtimeNetworkIds.get('bardetech')!,
+        mobileNumber: account,
+        amount: chargeAmount,
+        reference: ref,
+      })
+      : selectedProvider.type === 'airtime' && expectedProvider === 'asbdata'
+        ? await createAsbdataAirtimePayment({
+          networkId: airtimeNetworkIds.get('asbdata')!,
+          mobileNumber: account,
+          amount: chargeAmount,
+          reference: ref,
+        })
+      : resolvedDataProvider === 'asbdata' && isAsbdataBillsEnabled() && providerPlanId
       ? await createAsbdataDataPayment({
         networkId: providerNetworkId,
         mobileNumber: account,
@@ -412,7 +444,9 @@ async function handleBillPayment(req: Request) {
     const reason = error instanceof Error ? error.message : 'Provider request ended without a confirmed response.'
     await recordProviderEvent({
       externalEventId: `bill:${ref}:request-indeterminate`,
-      provider: `${activeProvider}_bills`,
+      provider: selectedProvider.type === 'airtime'
+        ? activeProvider === 'bardetech' ? 'bardetech_airtime' : 'asbdata_airtime'
+        : `${activeProvider}_bills`,
       reference: ref,
       status: 'INDETERMINATE',
       failureReason: reason,
@@ -425,24 +459,22 @@ async function handleBillPayment(req: Request) {
     }, { status: 202 })
   }
 
-  // Airtime is routed through Flutterwave first. If Flutterwave explicitly rejects the request,
-  // try configured backup vendors in order. Never retry an indeterminate result: the first
-  // provider may already have delivered airtime, and a second purchase could double-credit.
+  // Airtime uses the configured primary provider, then tries the other configured vendor only
+  // after an explicit rejection. Never retry an indeterminate result: the first provider may
+  // already have delivered airtime, and a second purchase could double-credit.
   if (
     selectedProvider.type === 'airtime'
-    && providerResult.provider === 'flutterwave'
+    && providerResult.provider === expectedProvider
     && providerResult.status === 'failed'
     && !providerResult.indeterminate
   ) {
     const primaryFailure = providerResult
-    const fallbackProviders = [
-      ...(isBardetechBillsEnabled() ? ['bardetech'] as const : []),
-      ...(isAsbdataBillsEnabled() ? ['asbdata'] as const : []),
-    ]
-    const primaryFailureEventId = `bill:${ref}:flutterwave-fallback:${primaryFailure.rawStatus || 'FAILED'}`
+    const primaryProvider = primaryFailure.provider as AirtimeProvider
+    const fallbackProviders = airtimeProviders.filter(candidate => candidate !== primaryProvider)
+    const primaryFailureEventId = `bill:${ref}:${primaryProvider}-fallback:${primaryFailure.rawStatus || 'FAILED'}`
     await recordProviderEvent({
       externalEventId: primaryFailureEventId,
-      provider: 'flutterwave_bills',
+      provider: primaryProvider === 'bardetech' ? 'bardetech_airtime' : 'asbdata_airtime',
       reference: ref,
       status: primaryFailure.rawStatus || 'FAILED',
       failureReason: primaryFailure.reason,
@@ -451,9 +483,7 @@ async function handleBillPayment(req: Request) {
     await markProviderEventProcessed(primaryFailureEventId)
 
     for (const fallbackProvider of fallbackProviders) {
-      const networkId = fallbackProvider === 'bardetech'
-        ? getBardetechNetworkId(provider || '')
-        : getAsbdataNetworkId(provider || '')
+      const networkId = airtimeNetworkIds.get(fallbackProvider)
       if (networkId === undefined) continue
 
       console.info('[bills] provider.fallback.start', JSON.stringify({ reference: ref, type: 'airtime', provider: fallbackProvider }))
@@ -528,7 +558,7 @@ async function handleBillPayment(req: Request) {
       providerStatus: providerResult.rawStatus || 'INDETERMINATE',
     })
     if (!pendingTransaction) throw new Error('Unable to preserve pending bill payment details.')
-    void kickPendingFlutterwaveBillSync()
+    if (providerResult.provider === 'flutterwave') void kickPendingFlutterwaveBillSync()
     return NextResponse.json({
       data: { transaction: pendingTransaction, wallet: reservation.wallet },
       message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',
