@@ -80,6 +80,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       return
     }
     setActiveTab('bank')
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
     if (palmpayAccount) {
       setSelectedProvider('palmpay')
       return
