@@ -11,6 +11,8 @@ import {
 } from '@/lib/server/data'
 import { syncFlutterwavePayout } from '@/lib/server/payout-sync'
 import { syncFlutterwaveBill } from '@/lib/server/flutterwave-bill-sync'
+import { toCustomerCryptoOrder, toCustomerProviderEvent, toCustomerTransaction } from '@/lib/server/customer-errors'
+import { sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[id]'>) {
   const user = await requireUser()
@@ -33,7 +35,7 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[i
       if (freshTransaction) transaction = freshTransaction
       payoutRequest = freshPayout
     } catch (error) {
-      console.warn('[transactions] payout sync failed', error instanceof Error ? error.message : error)
+      console.warn('[transactions] payout sync failed', sanitizeErrorForLogs(error))
     }
   }
 
@@ -47,7 +49,7 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[i
       const freshTransaction = await getTransactionById(user.id, id)
       if (freshTransaction) transaction = freshTransaction
     } catch (error) {
-      console.warn('[transactions] bill sync failed', error instanceof Error ? error.message : 'Sync failed.')
+      console.warn('[transactions] bill sync failed', sanitizeErrorForLogs(error))
     }
   }
 
@@ -73,13 +75,23 @@ export async function GET(_req: Request, ctx: RouteContext<'/api/transactions/[i
 
   return NextResponse.json({
     data: {
-      transaction,
-      cryptoOrder,
+      transaction: toCustomerTransaction(transaction),
+      cryptoOrder: cryptoOrder ? toCustomerCryptoOrder(cryptoOrder) : cryptoOrder,
       cryptoDepositEvents,
       ledgerEntries,
-      providerEvents,
-      depositIntent,
-      payoutRequest,
+      providerEvents: providerEvents.map(toCustomerProviderEvent),
+      depositIntent: depositIntent ? {
+        ...depositIntent,
+        failureReason: depositIntent.status === 'failed'
+          ? `This deposit could not be confirmed. Reference ${depositIntent.reference}. Contact support if you need help.`
+          : undefined,
+      } : depositIntent,
+      payoutRequest: payoutRequest ? {
+        ...payoutRequest,
+        failureReason: payoutRequest.status === 'failed'
+          ? `This transfer could not be completed. Reference ${payoutRequest.reference}. Contact support if you need help.`
+          : undefined,
+      } : payoutRequest,
       timeline,
     },
     success: true,

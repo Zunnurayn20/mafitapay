@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
 import { listCryptoOrdersByUser } from '@/lib/server/data'
+import { toCustomerCryptoOrder } from '@/lib/server/customer-errors'
 
 export async function GET(req: Request) {
   const user = await requireUser()
@@ -14,12 +15,12 @@ export async function GET(req: Request) {
   const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(100, limitParam)) : 50
 
   return NextResponse.json({
-    data: await listCryptoOrdersByUser(user.id, {
+    data: (await listCryptoOrdersByUser(user.id, {
       status: statusParam === 'pending' || statusParam === 'fulfilled' || statusParam === 'failed' || statusParam === 'expired' ? statusParam : undefined,
       pairId,
       side: sideParam === 'buy' || sideParam === 'sell' ? sideParam : undefined,
       limit,
-    }),
+    })).map(toCustomerCryptoOrder),
     success: true,
   })
 }

@@ -20,9 +20,10 @@ import { isDepositableCryptoAsset } from '@/lib/crypto-deposit-assets'
 import { createPlatformCryptoCostSnapshot } from '@/lib/server/crypto-platform-cost'
 import { ensureCryptoDepositScannerWatchdog } from '@/lib/server/crypto-deposit-scanner'
 import { createCexDepositIntent } from '@/lib/server/data'
+import { toCustomerCryptoOrder, toCustomerCryptoQuote } from '@/lib/server/customer-errors'
 import { validateWalletAddressForAsset } from '@/lib/crypto-addresses'
 import { getCryptoNetworkFeeNgn, getMaxQuoteDriftPercentForAsset, getMinimumBuyNgnForAsset, getQuoteDriftPercent } from '@/lib/crypto-rules'
-import { formatCrypto, formatNGN, generateRef } from '@/lib/utils'
+import { formatCrypto, formatNGN, generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 import type { CryptoAsset, CryptoPairId } from '@/types'
 
 const CRYPTO_MARKET_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_CRYPTO_MARKET === '1'
@@ -174,16 +175,36 @@ export async function POST(req: Request) {
     try {
       await assertTonDestinationIsNotTreasury(walletAddress)
     } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : 'Use a personal TON wallet address.', success: false }, { status: 400 })
+      return NextResponse.json({
+        error: error instanceof Error && error.message.startsWith('Choose your own TON wallet address.')
+          ? error.message
+          : 'We couldn’t validate this TON wallet right now. Please try again shortly.',
+        success: false,
+      }, { status: 503 })
     }
   }
   if (action === 'sell' && !isDepositableCryptoAsset(requestedAsset)) {
     return NextResponse.json({ error: 'Crypto deposits are not supported for this asset yet.', success: false }, { status: 400 })
   }
+  if (intent === 'quote' && action === 'buy') {
+    if (!walletAddress) {
+      return NextResponse.json({ error: 'Destination wallet address is required', success: false }, { status: 400 })
+    }
+    try {
+      assertDestinationWalletAddressForAsset(requestedAsset, walletAddress)
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Destination wallet address is invalid.', success: false }, { status: 400 })
+    }
+  }
   try {
     await assertCryptoActionEnabled(requestedAsset, action)
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Crypto trading is temporarily unavailable.', success: false }, { status: 400 })
+    const message = error instanceof Error ? error.message : ''
+    const disabledMessage = `${requestedAsset.symbol} ${action === 'buy' ? 'buys' : 'sells'} are temporarily unavailable.`
+    return NextResponse.json({
+      error: message === disabledMessage ? message : 'Crypto trading is temporarily unavailable. Please try again shortly.',
+      success: false,
+    }, { status: message === disabledMessage ? 400 : 503 })
   }
 
   if (intent === 'quote') {
@@ -253,7 +274,7 @@ export async function POST(req: Request) {
           quotedCryptoAmount: buyQuote.cryptoAmount,
           executionRail,
         })
-        return NextResponse.json({ data, success: true })
+        return NextResponse.json({ data: toCustomerCryptoQuote(data), success: true })
       }
       if (action === 'buy' && executionRail === 'routed_treasury') {
         assertMinimumBuyAmount(requestedAsset, amount)
@@ -280,7 +301,7 @@ export async function POST(req: Request) {
           cryptoAmount: routedQuote.cryptoAmount,
           unitRate: routedQuote.unitRate,
         })
-        return NextResponse.json({ data, success: true })
+        return NextResponse.json({ data: toCustomerCryptoQuote(data), success: true })
       }
       if (action === 'buy' && executionRail === 'sui_treasury') {
         assertMinimumBuyAmount(requestedAsset, amount)
@@ -305,7 +326,7 @@ export async function POST(req: Request) {
           cryptoAmount: suiQuote.cryptoAmount,
           unitRate: suiQuote.unitRate,
         })
-        return NextResponse.json({ data, success: true })
+        return NextResponse.json({ data: toCustomerCryptoQuote(data), success: true })
       }
       if (action === 'buy' && executionRail === 'ton_treasury') {
         assertMinimumBuyAmount(requestedAsset, amount)
@@ -332,7 +353,7 @@ export async function POST(req: Request) {
           cryptoAmount: tonQuote.cryptoAmount,
           unitRate: tonQuote.unitRate,
         })
-        return NextResponse.json({ data, success: true })
+        return NextResponse.json({ data: toCustomerCryptoQuote(data), success: true })
       }
       if (action === 'buy' && executionRail === 'near_intents') {
         assertMinimumBuyAmount(requestedAsset, amount)
@@ -357,7 +378,7 @@ export async function POST(req: Request) {
           cryptoAmount: nearQuote.cryptoAmount,
           unitRate: nearQuote.unitRate,
         })
-        return NextResponse.json({ data, success: true })
+        return NextResponse.json({ data: toCustomerCryptoQuote(data), success: true })
       }
       const data = await createCryptoQuote({
         userId: user.id,
@@ -373,16 +394,23 @@ export async function POST(req: Request) {
         cryptoAmount: data.quote.cryptoAmount,
         unitRate: data.quote.unitRate,
       })
-      return NextResponse.json({ data, success: true })
+      return NextResponse.json({ data: toCustomerCryptoQuote(data), success: true })
     } catch (error) {
       logCrypto('quote.error', {
         action,
         pairId,
         amount,
         walletAddress,
-        error: error instanceof Error ? error.message : 'Quote creation failed.',
+        error: sanitizeErrorForLogs(error),
       })
-      return NextResponse.json({ error: error instanceof Error ? error.message : 'Quote creation failed.', success: false }, { status: 400 })
+      const message = error instanceof Error ? error.message : ''
+      const safeQuoteMessage = message.startsWith(`Minimum buy amount for ${requestedAsset.id} is `)
+        || message === 'Live buy pricing is unavailable for this asset.'
+        || message === 'Could not lock a quote that covers the requested crypto amount. Please try again.'
+      return NextResponse.json({
+        error: safeQuoteMessage ? message : 'A live quote is temporarily unavailable. Please try again shortly.',
+        success: false,
+      }, { status: safeQuoteMessage ? 400 : 503 })
     }
   }
 
@@ -481,12 +509,12 @@ export async function POST(req: Request) {
         amount,
         executionRail: getExecutionRailForAsset(asset),
         walletAddress,
-        error: error instanceof Error ? error.message : 'Treasury cannot fulfill this order right now.',
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Treasury cannot fulfill this order right now.',
+        error: 'We can’t confirm availability for this asset right now. Please try again shortly.',
         success: false,
-      }, { status: 400 })
+      }, { status: 503 })
     }
   }
 
@@ -499,6 +527,29 @@ export async function POST(req: Request) {
   let quote
   try {
     await verifySensitiveActionAuthorization(user.id, { transactionPin, biometricApprovalToken })
+  } catch (error) {
+    logCrypto('execute.security-error', { action, pairId, quoteId, error: sanitizeErrorForLogs(error) })
+    const message = error instanceof Error ? error.message : ''
+    const safeSecurityMessages = [
+      'Transaction PIN is not set.',
+      'Set up a transaction PIN before continuing.',
+      'Current transaction PIN is incorrect.',
+      'Transaction PIN is incorrect.',
+      'Transaction PIN is temporarily locked',
+      'Too many failed PIN attempts.',
+      'Transaction PIN or biometric approval is required.',
+      'Biometric approval is invalid or already used.',
+      'Biometric approval expired. Try again.',
+      'Biometric approval is not enabled for this account.',
+      'Transaction PIN must be exactly ',
+    ]
+    return NextResponse.json({
+      error: safeSecurityMessages.some(safe => message.startsWith(safe)) ? message : 'Security approval could not be verified. Please try again.',
+      success: false,
+    }, { status: 400 })
+  }
+
+  try {
     const consumed = await consumeCryptoQuote(user.id, quoteId, action)
     asset = consumed.asset
     quote = consumed.quote
@@ -507,9 +558,9 @@ export async function POST(req: Request) {
       action,
       pairId,
       quoteId,
-      error: error instanceof Error ? error.message : 'Security approval or quote execution failed.',
+      error: sanitizeErrorForLogs(error),
     })
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Security approval or quote execution failed.', success: false }, { status: 400 })
+    return NextResponse.json({ error: 'This quote is no longer available. Request a new quote and try again.', success: false }, { status: 400 })
   }
 
   const wallet = await getWalletByUserId(user.id)
@@ -576,12 +627,14 @@ export async function POST(req: Request) {
         pairId: asset.id,
         amount: quotedAmount,
         quoteId,
-        error: error instanceof Error ? error.message : 'Live market revalidation failed.',
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Live market revalidation failed.',
+        error: error instanceof Error && error.message.startsWith('Market moved by ')
+          ? error.message
+          : 'Live pricing changed or is temporarily unavailable. Request a new quote and try again.',
         success: false,
-      }, { status: 400 })
+      }, { status: 409 })
     }
     try {
       const executionRail = getExecutionRailForAsset(asset)
@@ -609,12 +662,12 @@ export async function POST(req: Request) {
         amount: quotedAmount,
         executionRail: getExecutionRailForAsset(asset),
         walletAddress,
-        error: error instanceof Error ? error.message : 'Treasury cannot fulfill this order right now.',
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Treasury cannot fulfill this order right now.',
+        error: 'We can’t confirm availability for this asset right now. Please try again shortly.',
         success: false,
-      }, { status: 400 })
+      }, { status: 503 })
     }
 
     const executionRail = getExecutionRailForAsset(liveAsset)
@@ -675,10 +728,13 @@ export async function POST(req: Request) {
     try {
       liveAsset = await assertQuoteStillMatchesLiveMarket(asset, action, quote.unitRate)
     } catch (error) {
+      logCrypto('sell.revalidation-error', { action, pairId: asset.id, amount: quotedAmount, quoteId, error: sanitizeErrorForLogs(error) })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Live market revalidation failed.',
+        error: error instanceof Error && error.message.startsWith('Market moved by ')
+          ? error.message
+          : 'Live pricing changed or is temporarily unavailable. Request a new quote and try again.',
         success: false,
-      }, { status: 400 })
+      }, { status: 409 })
     }
     const userDepositAddress = await getCryptoDepositAddressForAsset(user.id, liveAsset)
     if (!userDepositAddress) {
@@ -812,7 +868,7 @@ export async function POST(req: Request) {
         pairId: liveAsset.id,
         orderId: cryptoOrder.id,
         executionRail: cryptoOrder.executionRail,
-        error: error instanceof Error ? error.message : 'Automatic crypto execution failed.',
+        error: sanitizeErrorForLogs(error),
       })
       const latestOrder = await getCryptoOrderById(cryptoOrder.id)
       const safeToFail = latestOrder?.status === 'pending'
@@ -827,7 +883,7 @@ export async function POST(req: Request) {
           actorUserId: user.id,
           source: 'auto_execution',
           metadata: {
-            reason: error instanceof Error ? error.message : 'Automatic crypto execution failed.',
+            reason: `Crypto delivery could not be completed. Contact support with reference ${ref}.`,
           },
         })
         finalOrder = failed.order ?? latestOrder
@@ -848,7 +904,7 @@ export async function POST(req: Request) {
     executionStatus: finalOrder.executionStatus,
   })
   return NextResponse.json({
-    data: { asset: liveAsset, quote, cryptoOrder: finalOrder, transaction: finalTransaction, wallet: finalWallet },
+    data: { asset: liveAsset, quote: toCustomerCryptoQuote({ quote }).quote, cryptoOrder: toCustomerCryptoOrder(finalOrder), transaction: finalTransaction, wallet: finalWallet },
     success: true,
   })
 }

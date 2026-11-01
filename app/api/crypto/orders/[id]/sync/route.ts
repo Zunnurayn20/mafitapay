@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
+import { sanitizeErrorForLogs } from '@/lib/utils'
+import { toCustomerCryptoSyncResult } from '@/lib/server/customer-errors'
 import { getCryptoOrderById } from '@/lib/server/data'
 import { syncNearReceiptForCryptoOrder } from '@/lib/server/near-receipt-sync'
 import { syncBscReceiptForCryptoOrder } from '@/lib/server/bsc-receipt-sync'
@@ -21,16 +23,16 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
   if ((order.executionRail === 'base_legacy' || order.executionRail === 'base_treasury') && order.status === 'pending') {
     try {
       const result = await syncBaseReceiptForCryptoOrder(order.id, user.id)
-      return NextResponse.json({ data: result, success: true })
+      return NextResponse.json({ data: toCustomerCryptoSyncResult(result), success: true })
     } catch (error) {
       console.error('Base crypto order sync failed', {
         orderId: order.id,
         pairId: order.pairId,
         userId: user.id,
-        error: error instanceof Error ? error.stack ?? error.message : error,
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Unable to sync Base crypto order.',
+        error: 'Crypto delivery status could not be refreshed. Please try again shortly.',
         success: false,
       }, { status: 502 })
     }
@@ -39,16 +41,16 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
   if (order.executionRail === 'bsc_treasury' && order.status === 'pending') {
     try {
       const result = await syncBscReceiptForCryptoOrder(order.id, user.id)
-      return NextResponse.json({ data: result, success: true })
+      return NextResponse.json({ data: toCustomerCryptoSyncResult(result), success: true })
     } catch (error) {
       console.error('BSC crypto order sync failed', {
         orderId: order.id,
         pairId: order.pairId,
         userId: user.id,
-        error: error instanceof Error ? error.stack ?? error.message : error,
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Unable to sync BSC crypto order.',
+        error: 'Crypto delivery status could not be refreshed. Please try again shortly.',
         success: false,
       }, { status: 502 })
     }
@@ -57,16 +59,16 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
   if (order.executionRail === 'routed_treasury' && order.status === 'pending') {
     try {
       const result = await syncRoutedReceiptForCryptoOrder(order.id, user.id)
-      return NextResponse.json({ data: result, success: true })
+      return NextResponse.json({ data: toCustomerCryptoSyncResult(result), success: true })
     } catch (error) {
       console.error('Routed crypto order sync failed', {
         orderId: order.id,
         pairId: order.pairId,
         userId: user.id,
-        error: error instanceof Error ? error.stack ?? error.message : error,
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Unable to sync routed crypto order.',
+        error: 'Crypto delivery status could not be refreshed. Please try again shortly.',
         success: false,
       }, { status: 502 })
     }
@@ -75,16 +77,16 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
   if (order.executionRail === 'sui_treasury' && order.status === 'pending') {
     try {
       const result = await syncSuiReceiptForCryptoOrder(order.id, user.id, { forcePayoutRetry: true })
-      return NextResponse.json({ data: result, success: true })
+      return NextResponse.json({ data: toCustomerCryptoSyncResult(result), success: true })
     } catch (error) {
       console.error('SUI crypto order sync failed', {
         orderId: order.id,
         pairId: order.pairId,
         userId: user.id,
-        error: error instanceof Error ? error.stack ?? error.message : error,
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Unable to sync SUI crypto order.',
+        error: 'Crypto delivery status could not be refreshed. Please try again shortly.',
         success: false,
       }, { status: 502 })
     }
@@ -93,16 +95,16 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
   if (order.executionRail === 'near_intents' && order.status === 'pending') {
     try {
       const result = await syncNearReceiptForCryptoOrder(order.id, user.id, { forcePayoutRetry: true })
-      return NextResponse.json({ data: result, success: true })
+      return NextResponse.json({ data: toCustomerCryptoSyncResult(result), success: true })
     } catch (error) {
       console.error('NEAR crypto order sync failed', {
         orderId: order.id,
         pairId: order.pairId,
         userId: user.id,
-        error: error instanceof Error ? error.stack ?? error.message : error,
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Unable to sync NEAR crypto order.',
+        error: 'Crypto delivery status could not be refreshed. Please try again shortly.',
         success: false,
       }, { status: 502 })
     }
@@ -111,16 +113,16 @@ export async function POST(_req: Request, ctx: RouteContext<'/api/crypto/orders/
   if (order.executionRail === 'ton_treasury' && order.status === 'pending') {
     try {
       const result = await syncTonReceiptForCryptoOrder(order.id, user.id)
-      return NextResponse.json({ data: result, success: true })
+      return NextResponse.json({ data: toCustomerCryptoSyncResult(result), success: true })
     } catch (error) {
       console.error('TON crypto order sync failed', {
         orderId: order.id,
         pairId: order.pairId,
         userId: user.id,
-        error: error instanceof Error ? error.stack ?? error.message : error,
+        error: sanitizeErrorForLogs(error),
       })
       return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Unable to sync TON crypto order.',
+        error: 'Crypto delivery status could not be refreshed. Please try again shortly.',
         success: false,
       }, { status: 502 })
     }

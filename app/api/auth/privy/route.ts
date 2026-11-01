@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { verifyIdentityToken } from '@privy-io/node'
 import { createRemoteJWKSet } from 'jose'
 import { NextResponse } from 'next/server'
+import { sanitizeErrorForLogs } from '@/lib/utils'
 import { normalizePhone } from '@/lib/auth/validation'
 import { createSession } from '@/lib/server/auth'
 import {
@@ -178,8 +179,9 @@ export async function POST(req: Request) {
     if (error instanceof Error && error.message.includes('already linked to another MafitaPay account')) {
       return NextResponse.json({ error: error.message, success: false }, { status: 409 })
     }
+    console.error('[auth/privy] sign-in failed', sanitizeErrorForLogs(error))
     return NextResponse.json({
-      error: error instanceof Error ? error.message : 'Unable to complete Privy sign-in.',
+      error: 'We couldn’t complete sign-in right now. Please try again shortly.',
       success: false,
     }, { status: 401 })
   }

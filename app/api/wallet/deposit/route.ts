@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { applyWalletMutation, createDepositIntent, getWalletByUserId, updateWalletVirtualAccounts } from '@/lib/server/data'
 import { createFlutterwaveVirtualAccount, isFlutterwaveCollectionsEnabled } from '@/lib/server/flutterwave-collections'
-import { generateRef } from '@/lib/utils'
+import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 const MAX_DEPOSIT_FEE = 50
 
@@ -49,8 +49,9 @@ export async function POST(req: Request) {
   })
 
   if (providerAccount.status === 'failed' || !providerAccount.accountNumber || !providerAccount.bankName) {
+    console.error(`[wallet/deposit] provider account creation failed ref=${ref}:`, sanitizeErrorForLogs(providerAccount.reason || providerAccount.rawStatus))
     return NextResponse.json({
-      error: providerAccount.reason || 'Unable to generate a deposit account.',
+      error: `We couldn't create a deposit account right now. Please try again later. Reference ${ref}.`,
       success: false,
     }, { status: 502 })
   }

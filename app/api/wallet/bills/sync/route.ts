@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
 import { syncPendingFlutterwaveBills } from '@/lib/server/flutterwave-bill-sync-batch'
+import { sanitizeErrorForLogs } from '@/lib/utils'
 
 export const runtime = 'nodejs'
 
@@ -12,7 +13,7 @@ export async function POST() {
     const data = await syncPendingFlutterwaveBills(user.id, { userId: user.id, onlyDue: true })
     return NextResponse.json({ data, success: true })
   } catch (error) {
-    console.error('[wallet/bills/sync] failed', error instanceof Error ? error.message : 'Bill sync failed.')
+    console.error('[wallet/bills/sync] failed', sanitizeErrorForLogs(error))
     return NextResponse.json({ error: 'Bill status could not be refreshed.', success: false }, { status: 500 })
   }
 }

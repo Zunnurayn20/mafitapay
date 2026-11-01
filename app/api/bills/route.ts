@@ -584,7 +584,9 @@ async function handleBillPayment(req: Request) {
     await markProviderEventProcessed(eventId)
 
     return NextResponse.json({
-      error: providerResult.reason || 'Bill payment failed.',
+      error: released
+        ? `We couldn't complete this purchase. Any reserved funds have been released. Contact support with reference ${ref} if you need help.`
+        : `We couldn't complete this purchase. Check your balance, and contact support with reference ${ref} if the amount has not been returned.`,
       data: released ? { transaction: released.transaction, wallet: released.wallet } : undefined,
       success: false,
     }, { status: 400 })

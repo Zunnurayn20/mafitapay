@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
 import { getTransactionsForUser } from '@/lib/server/data'
+import { toCustomerTransaction } from '@/lib/server/customer-errors'
 
 export async function GET(req: Request) {
   const user = await requireUser()
@@ -9,6 +10,6 @@ export async function GET(req: Request) {
   const transactions = await getTransactionsForUser(user.id)
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type')
-  const data = type ? transactions.filter(t => t.type === type) : transactions
+  const data = (type ? transactions.filter(t => t.type === type) : transactions).map(toCustomerTransaction)
   return NextResponse.json({ data, success: true, total: data.length })
 }

@@ -11,6 +11,7 @@ import {
   insertAuditLog,
 } from '@/lib/server/data'
 import type { Wallet } from '@/types'
+import { sanitizeErrorForLogs } from '@/lib/utils'
 
 export const runtime = 'nodejs'
 
@@ -133,6 +134,7 @@ export async function POST(req: Request) {
 
     if (providerAccount.status === 'failed' || !providerAccount.accountNumber) {
       const indeterminate = Boolean(providerAccount.indeterminate || providerAccount.status === 'pending')
+      console.error(`[deposit-account] PalmPay provisioning failed ref=${reference}:`, sanitizeErrorForLogs(providerAccount.reason || providerAccount.rawStatus))
       await finishStaticVirtualAccountProvisioning({
         userId: user.id,
         provider: 'palmpay',
@@ -144,7 +146,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         error: indeterminate
           ? 'PalmPay may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
-          : providerAccount.reason || 'Unable to create a PalmPay funding account.',
+          : `We couldn't create a PalmPay funding account right now. Please try again later. Reference ${reference}.`,
         code: indeterminate ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : undefined,
         success: false,
       }, { status: indeterminate ? 202 : 502 })
@@ -242,6 +244,7 @@ export async function POST(req: Request) {
 
   if (providerAccount.status === 'failed' || !providerAccount.accountNumber || !providerAccount.bankName) {
     const indeterminate = Boolean(providerAccount.indeterminate || providerAccount.status === 'pending')
+    console.error(`[deposit-account] Flutterwave provisioning failed ref=${reference}:`, sanitizeErrorForLogs(providerAccount.reason || providerAccount.rawStatus))
     await finishStaticVirtualAccountProvisioning({
       userId: user.id,
       provider: 'flutterwave',
@@ -252,7 +255,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       error: indeterminate
         ? 'Flutterwave may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
-        : providerAccount.reason || 'Unable to create a Flutterwave funding account.',
+        : `We couldn't create a Flutterwave funding account right now. Please try again later. Reference ${reference}.`,
       code: indeterminate ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : undefined,
       success: false,
     }, { status: indeterminate ? 202 : 502 })

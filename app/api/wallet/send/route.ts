@@ -5,7 +5,7 @@ import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { executeBankPayout } from '@/lib/server/payout-execution'
 import { quoteTransferFee } from '@/lib/transfer-fees'
 import { resolveMargin } from '@/lib/server/profit-margins'
-import { generateRef } from '@/lib/utils'
+import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function POST(req: Request) {
   const user = await requireUser()
@@ -147,7 +147,7 @@ export async function POST(req: Request) {
   try {
     const resolved = await resolveBankBeneficiary(body)
     if (resolved.status !== 'verified') {
-      return NextResponse.json({ error: resolved.reason || 'Beneficiary verification failed.', success: false }, { status: 400 })
+      return NextResponse.json({ error: 'We couldn’t verify these bank details. Check the bank and account number, then try again.', success: false }, { status: 400 })
     }
     bankCode = resolved.bankCode
     bankName = resolved.bankName
@@ -157,7 +157,8 @@ export async function POST(req: Request) {
     verificationReference = resolved.reference
     verificationReason = resolved.reason || verificationReason
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid beneficiary details.', success: false }, { status: 400 })
+    console.error(`[wallet/send] beneficiary verification failed ref=${verificationReference}:`, sanitizeErrorForLogs(error))
+    return NextResponse.json({ error: 'We couldn’t verify these bank details right now. Please try again shortly.', success: false }, { status: 503 })
   }
 
   // Charged on top of the transfer: the beneficiary receives numericAmount while the wallet
@@ -236,7 +237,9 @@ export async function POST(req: Request) {
 
   if (payoutExecution.mode === 'failed') {
     return NextResponse.json({
-      error: payoutExecution.payout.reason || 'Flutterwave payout initiation failed.',
+      error: payoutExecution.released
+        ? `We couldn't complete this bank transfer. Any reserved funds have been returned. Contact support with reference ${ref} if you need help.`
+        : `We couldn't confirm this bank transfer. Check your balance, and contact support with reference ${ref} if the amount has not been returned.`,
       data: payoutExecution.released
         ? { transaction: payoutExecution.released.transaction, wallet: payoutExecution.released.wallet }
         : undefined,

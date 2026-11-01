@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
 import { getUserByEmail, getUserByHandle, recordBeneficiaryVerification, upsertBeneficiary } from '@/lib/server/data'
 import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
-import { generateRef } from '@/lib/utils'
+import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function POST(req: Request) {
   const user = await requireUser()
@@ -101,39 +101,38 @@ export async function POST(req: Request) {
     })
 
     if (result.status !== 'verified') {
+      const customerReason = 'We couldn’t verify these bank details. Check the bank and account number, then try again.'
       return NextResponse.json({
         data: {
-          beneficiary,
-          verificationRecord,
+          beneficiary: { ...beneficiary, verificationReason: customerReason },
+          verificationRecord: { status: verificationRecord.status, reference: verificationRecord.reference },
           verification: {
             bankCode: result.bankCode,
             bankName: result.bankName,
             accountNumber: result.accountNumber,
             accountName: result.accountName,
-            provider: result.provider,
-            reason: result.reason,
-            errorCode: result.errorCode,
+            provider: 'MafitaPay',
+            reason: customerReason,
             status: result.status,
             verified: false,
           },
         },
-        error: result.reason || 'Beneficiary verification failed.',
+        error: customerReason,
         success: false,
       }, { status: 400 })
     }
 
     return NextResponse.json({
       data: {
-        beneficiary,
-        verificationRecord,
+        beneficiary: { ...beneficiary, verificationReason: 'Bank account details verified.' },
+        verificationRecord: { status: verificationRecord.status, reference: verificationRecord.reference },
         verification: {
           bankCode: result.bankCode,
           bankName: result.bankName,
           accountNumber: result.accountNumber,
           accountName: result.accountName,
-          provider: result.provider,
-          reason: result.reason,
-          errorCode: result.errorCode,
+          provider: 'MafitaPay',
+          reason: 'Bank account details verified.',
           status: result.status,
           verified: true,
         },
@@ -141,6 +140,7 @@ export async function POST(req: Request) {
       success: true,
     })
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid beneficiary details.', success: false }, { status: 400 })
+    console.error('[beneficiaries/lookup] provider verification failed', sanitizeErrorForLogs(error))
+    return NextResponse.json({ error: 'We couldn’t verify these bank details right now. Please try again shortly.', success: false }, { status: 503 })
   }
 }
