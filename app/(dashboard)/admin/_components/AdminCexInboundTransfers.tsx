@@ -139,12 +139,12 @@ export function AdminCexInboundTransfers() {
             : notConfigured
               ? 'Not configured for automatic deposits.'
               : result.exchange === 'okx'
-                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.matchedSenders ?? 0} uniquely matched senders · credited ${result.credited ?? 0}${result.limitReached ? ' · OKX returned the 100-record page limit; some older records may need a follow-up sync' : ''}.`
+                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.matchedSenders ?? 0} uniquely matched senders · credited this sync ${result.credited ?? 0}${result.limitReached ? ' · OKX returned the 100-record page limit; some older records may need a follow-up sync' : ''}.`
               : result.exchange === 'bitget'
-                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited this sync ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
               : result.exchange === 'mexc' || result.exchange === 'gateio'
-                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
-                : `Connected · checked ${result.checked ?? 0} records · credited ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+                ? `Connected · checked ${result.checked ?? 0} records · ${result.internalTransfers ?? 0} internal transfers · ${result.recipientMatches ?? 0} to MafitaPay UID · credited this sync ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
+                : `Connected · checked ${result.checked ?? 0} records · credited this sync ${result.credited ?? 0}${result.morePages ? ' · additional records will be checked on the next sync' : ''}.`
           return <div key={result.exchange} className={`rounded-lg border p-3 text-xs ${style}`}>
             <span className="font-bold">{name}:</span> {message}
           </div>
@@ -167,7 +167,7 @@ export function AdminCexInboundTransfers() {
             </div>
           </div>
         ) : null}
-        <div className="text-[10px] text-[var(--muted)]">Successful transfers credit automatically only when a verified sender account can be matched uniquely. OKX sender contacts are masked, so ambiguous matches stay unmatched.</div>
+        <div className="text-[10px] text-[var(--muted)]">“Credited this sync” counts only transfers credited by this pass; an automatic or earlier sync may already have credited a transfer. Successful transfers require a verified, uniquely matched sender account. OKX sender contacts are masked, so ambiguous matches stay unmatched.</div>
       </div>}
       {items.length === 0 ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--clay2)] p-3 text-xs text-[var(--muted)]">No exchange transfers have been reported yet.</div>
