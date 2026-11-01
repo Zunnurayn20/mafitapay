@@ -16,9 +16,8 @@ import {
  * Docs: https://bardetech.com/documentation/ (live token rendered into the cURL examples)
  * Auth: Authorization: Token <token>
  *
- * NOTE the host. The docs show bardetech.com, but that deployment keeps its own user table and
- * rejects our key with 401 "Invalid token"; the API account lives on bardetechapi.com, which
- * answers the same paths and payloads. Base URL is overridable if they ever converge.
+ * API host: https://bardetech.com. The API paths, auth header, and request payloads remain the
+ * same as the previous Bardetech API host.
  *
  *   GET  /api/user/           account / balance
  *   GET  /api/get/network/    network list
@@ -149,7 +148,7 @@ function readNumber(value: unknown): number | null {
 
 function getBardetechConfig() {
   return {
-    baseUrl: (process.env.MAFITAPAY_BARDETECH_BASE_URL?.trim() || 'https://bardetechapi.com').replace(/\/+$/, ''),
+    baseUrl: (process.env.MAFITAPAY_BARDETECH_BASE_URL?.trim() || 'https://bardetech.com').replace(/\/+$/, ''),
     token: process.env.MAFITAPAY_BARDETECH_TOKEN?.trim() || '',
     airtimeType: process.env.MAFITAPAY_BARDETECH_AIRTIME_TYPE?.trim() || 'VTU',
   }
