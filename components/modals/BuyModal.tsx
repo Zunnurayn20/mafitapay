@@ -408,14 +408,21 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
                 {amountMode === 'ngn' ? '₦' : amountMode === 'usd' ? '$' : asset.symbol}
               </div>
               <input
-                type="number"
+                type="text"
+                inputMode={amountMode === 'ngn' ? 'numeric' : 'decimal'}
+                pattern={amountMode === 'ngn' ? '[0-9]*' : undefined}
                 placeholder={`Min ${amountMode === 'asset'
                   ? formatCrypto(minimumBuyNgn / asset.buyRate, asset.symbol)
                   : amountMode === 'usd' && usdNgnRate > 0
                     ? (minimumBuyNgn / usdNgnRate).toFixed(2)
                     : '0.00'}`}
                 value={amount}
-                onChange={e => setAmount(e.target.value)}
+                onChange={e => {
+                  const value = e.target.value
+                  setAmount(amountMode === 'ngn'
+                    ? value.replace(/\D/g, '')
+                    : value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1'))
+                }}
                 className="flex-1 bg-[var(--clay2)] text-[var(--text)] text-lg font-bold font-display px-3.5 py-3 border-none outline-none placeholder:text-[var(--muted)] min-w-0"
               />
               <select

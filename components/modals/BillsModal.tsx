@@ -687,7 +687,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               ref={formAccountInputRef}
               placeholder={accountPlaceholder}
               value={account}
-              inputMode={isPhoneService ? 'tel' : undefined}
+              inputMode={isPhoneService ? 'numeric' : undefined}
               suffix={isPhoneService ? 'PASTE' : undefined}
               onSuffixClick={isPhoneService ? () => void pasteAccount(formAccountInputRef) : undefined}
               onFocus={() => {
@@ -696,7 +696,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 }
               }}
               onChange={e => {
-                setAccount(e.target.value)
+                setAccount(isPhoneService ? e.target.value.replace(/\D/g, '') : e.target.value)
                 setTouched(current => ({ ...current, account: true }))
               }}
               onBlur={() => {
@@ -926,11 +926,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                   <div className="mt-3">
                     <Input
                       prefix="₦"
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       placeholder="Enter amount"
                       value={amount}
                       onChange={e => {
-                        setAmount(e.target.value)
+                        setAmount(e.target.value.replace(/\D/g, ''))
                         setTouched(current => ({ ...current, amount: true }))
                       }}
                       onBlur={() => setTouched(current => ({ ...current, amount: true }))}
@@ -959,11 +961,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
             </div>
             <Input
               prefix="₦"
-              type="number"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               placeholder="Enter amount"
               value={amount}
               onChange={e => {
-                setAmount(e.target.value)
+                setAmount(e.target.value.replace(/\D/g, ''))
                 setTouched(current => ({ ...current, amount: true }))
               }}
               onBlur={() => setTouched(current => ({ ...current, amount: true }))}
@@ -996,7 +1000,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               ref={phoneAccountInputRef}
               placeholder={accountPlaceholder}
               value={account}
-              inputMode="tel"
+              inputMode="numeric"
               autoFocus
               suffix="PASTE"
               onSuffixClick={() => void pasteAccount(phoneAccountInputRef)}
@@ -1004,7 +1008,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 if (recentPhoneAccounts.length > 0) setShowRecentAccounts(true)
               }}
               onChange={e => {
-                setAccount(e.target.value)
+                setAccount(e.target.value.replace(/\D/g, ''))
                 setTouched(current => ({ ...current, account: true }))
               }}
               onBlur={() => {
