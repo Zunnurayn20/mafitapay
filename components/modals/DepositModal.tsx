@@ -396,14 +396,12 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           ) : exchangeDepositOptions.length > 0 ? (
             <div className="flex flex-col gap-2">
               {exchangeDepositOptions.map(option => {
-                const accent = option.exchange === 'bybit' ? '#f7a600' : option.exchange === 'bitget' ? '#00d6a3' : option.exchange === 'mexc' ? '#2e9bff' : option.exchange === 'gateio' ? '#77baff' : '#ffffff'
                 return (
                   <button
                     key={option.exchange}
                     type="button"
                     onClick={() => depositFromExchange(option.exchange)}
-                    className="flex w-full items-center gap-3 rounded-xl border bg-[var(--coal)] px-3.5 py-3 text-left transition-all hover:bg-[var(--clay)] active:scale-[0.99]"
-                    style={{ borderColor: `${accent}70` }}
+                    className="flex w-full items-center gap-3 rounded-xl border border-black bg-[var(--coal)] px-3.5 py-3 text-left transition-all hover:bg-[var(--clay)] active:scale-[0.99]"
                   >
                     <CexLogo exchange={option.exchange} />
                     <span className="min-w-0 flex-1">
