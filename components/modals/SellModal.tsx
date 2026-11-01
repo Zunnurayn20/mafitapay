@@ -30,6 +30,10 @@ function cexExchangeLabel(exchange: CexExchange) {
   return exchange === 'bybit' ? 'Bybit' : exchange === 'bitget' ? 'Bitget' : exchange === 'okx' ? 'OKX' : exchange === 'mexc' ? 'MEXC' : 'Gate.io'
 }
 
+function isCexExchange(value: unknown): value is CexExchange {
+  return value === 'bybit' || value === 'bitget' || value === 'okx' || value === 'mexc' || value === 'gateio'
+}
+
 export function SellModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { showToast, modalData, setModalData, cryptoDepositAddresses } = useAppStore()
   const assets = useCryptoAssets()
@@ -39,6 +43,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
   )
   const assetGroups = useMemo(() => groupCryptoAssetsBySymbol(sellableAssets), [sellableAssets])
   const initializedPairRef = useRef(false)
+  const requestedCexExchangeRef = useRef<CexExchange | null>(null)
   const [pairId, setPairId] = useState<CryptoPairId>('USDT_BSC')
   const [showAssetPicker, setShowAssetPicker] = useState(false)
   const [pickerSymbol, setPickerSymbol] = useState<string | null>(null)
@@ -88,6 +93,10 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setPairId(presetPairId as CryptoPairId)
       if (modalData.cryptoDepositMethod === 'exchange') {
         setDepositMethod('exchange')
+        if (isCexExchange(modalData.cryptoCexExchange)) {
+          requestedCexExchangeRef.current = modalData.cryptoCexExchange
+          setSelectedExchange(modalData.cryptoCexExchange)
+        }
         // Consume the one-time handoff so a later, ordinary open starts on-chain.
         setModalData({ cryptoAsset: modalAsset, cryptoPairId: presetPairId })
       }
@@ -105,7 +114,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setPairId(sellableAssets[0].id)
       initializedPairRef.current = true
     }
-  }, [modalAsset?.id, modalData.cryptoDepositMethod, modalData.cryptoPairId, open, sellableAssets, setModalData])
+  }, [modalAsset?.id, modalData.cryptoCexExchange, modalData.cryptoDepositMethod, modalData.cryptoPairId, open, sellableAssets, setModalData])
 
   useEffect(() => {
     if (!open || sellableAssets.length === 0) return
@@ -118,6 +127,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
       setDepositMethod('wallet')
       setCexSetups({})
       setSelectedExchange('bybit')
+      requestedCexExchangeRef.current = null
       setCexSetupError('')
       setCexSenderUid('')
       setCexSenderEmail('')
@@ -131,8 +141,11 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
         if (!cancelled && payload?.success && payload.data?.exchanges) {
           const setups = payload.data.exchanges as CexDepositSetups
           setCexSetups(setups)
-          const firstAvailable = Object.values(setups).find(item => item?.enabled)?.exchange
-          if (firstAvailable) setSelectedExchange(firstAvailable)
+          const requestedExchange = requestedCexExchangeRef.current
+          const preferredExchange = requestedExchange && setups[requestedExchange]?.enabled
+            ? requestedExchange
+            : Object.values(setups).find(item => item?.enabled)?.exchange
+          if (preferredExchange) setSelectedExchange(preferredExchange)
         }
       })
       .catch(() => {

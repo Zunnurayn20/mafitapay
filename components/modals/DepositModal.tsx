@@ -15,6 +15,9 @@ import type { CexExchange, CryptoAsset, Wallet } from '@/types'
 type FundingAccount = Wallet['virtualAccounts'][number]
 type FundingProvider = 'palmpay' | 'flutterwave'
 type DepositTab = 'bank' | 'crypto' | 'exchanges'
+type ExchangeDepositOption = { exchange: CexExchange; linked: boolean }
+
+const CEX_EXCHANGES: CexExchange[] = ['bybit', 'bitget', 'okx', 'mexc', 'gateio']
 
 const DEPOSIT_TABS: Array<{ id: DepositTab; label: string; Icon: typeof Building2 }> = [
   { id: 'bank', label: 'Bank transfer', Icon: Building2 },
@@ -26,6 +29,10 @@ function providerLabel(provider: FundingProvider | FundingAccount['provider']) {
   if (provider === 'palmpay') return 'PalmPay'
   if (provider === 'flutterwave') return 'Flutterwave'
   return provider
+}
+
+function cexExchangeLabel(exchange: CexExchange) {
+  return exchange === 'bybit' ? 'Bybit' : exchange === 'bitget' ? 'Bitget' : exchange === 'okx' ? 'OKX' : exchange === 'mexc' ? 'MEXC' : 'Gate.io'
 }
 
 export function DepositModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -46,8 +53,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const [selectedProvider, setSelectedProvider] = useState<FundingProvider>('palmpay')
   const [activeTab, setActiveTab] = useState<DepositTab>('bank')
   const [networkPickerSymbol, setNetworkPickerSymbol] = useState<string | null>(null)
-  const [exchangeDepositsEnabled, setExchangeDepositsEnabled] = useState(false)
-  const [exchangeDepositNames, setExchangeDepositNames] = useState<string[]>([])
+  const [exchangeDepositOptions, setExchangeDepositOptions] = useState<ExchangeDepositOption[]>([])
   const hasSubmittedFundingIdentity = Boolean(
     kycSubmission
     && kycSubmission.status !== 'rejected'
@@ -85,8 +91,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
 
   useEffect(() => {
     if (!open) {
-      setExchangeDepositsEnabled(false)
-      setExchangeDepositNames([])
+      setExchangeDepositOptions([])
       return
     }
     let cancelled = false
@@ -94,17 +99,16 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       .then(response => response.json())
       .then(payload => {
         if (!cancelled) {
-          const exchanges = Object.values(payload?.data?.exchanges ?? {}) as Array<{ enabled?: boolean; exchange?: string }>
-          const names = exchanges.filter(item => item.enabled).map(item => item.exchange === 'bitget' ? 'Bitget' : item.exchange === 'okx' ? 'OKX' : item.exchange === 'mexc' ? 'MEXC' : item.exchange === 'gateio' ? 'Gate.io' : 'Bybit')
-          setExchangeDepositNames(names)
-          setExchangeDepositsEnabled(payload?.success === true && names.length > 0)
+          const exchanges = Object.values(payload?.data?.exchanges ?? {}) as Array<{ enabled?: boolean; exchange?: string; account?: { status?: string } | null }>
+          const options = exchanges.flatMap(item => {
+            const exchange = CEX_EXCHANGES.find(candidate => candidate === item.exchange)
+            return item.enabled && exchange ? [{ exchange, linked: Boolean(item.account) }] : []
+          })
+          setExchangeDepositOptions(payload?.success === true ? options : [])
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setExchangeDepositsEnabled(false)
-          setExchangeDepositNames([])
-        }
+        if (!cancelled) setExchangeDepositOptions([])
       })
     return () => { cancelled = true }
   }, [open])
@@ -165,7 +169,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     openModal('sell')
   }
 
-  function depositFromExchange() {
+  function depositFromExchange(exchange: CexExchange) {
     if (!exchangeDepositAsset) return
     setNetworkPickerSymbol(null)
     closeModal()
@@ -174,6 +178,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
       cryptoAsset: exchangeDepositAsset,
       cryptoPairId: exchangeDepositAsset.id,
       cryptoDepositMethod: 'exchange',
+      cryptoCexExchange: exchange,
     })
     openModal('sell')
   }
@@ -382,26 +387,33 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--gold2)]">Deposit from an exchange</div>
             <div className="mt-1 text-[12px] leading-relaxed text-[var(--text2)]">Send USDT or USDC using an internal transfer from an exchange account linked to your MafitaPay profile.</div>
           </div>
-          {exchangeDepositsEnabled && exchangeDepositAsset ? (
-          <button
-            type="button"
-            onClick={depositFromExchange}
-            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--gold)] bg-[var(--gold)] px-4 py-3.5 text-left text-[var(--char)] shadow-[0_8px_22px_rgba(202,165,96,.22)] transition-all hover:brightness-105 active:scale-[0.99]"
-          >
-            <span className="min-w-0">
-              <span className="block text-[13px] font-bold">Continue with an exchange</span>
-              <span className="mt-0.5 block text-[10px] leading-relaxed text-[var(--char)]/80">Supported: {exchangeDepositNames.join(', ')}</span>
-            </span>
-            <span className="flex shrink-0 items-center gap-2">
-              <span className="flex -space-x-2" aria-label={`Accepted exchanges: ${exchangeDepositNames.join(' and ')}`}>
-                {exchangeDepositNames.map(exchange => {
-                  const exchangeId = exchange.toLowerCase() as CexExchange
-                  return <span key={exchange} title={exchange}><CexLogo exchange={exchangeId} /></span>
-                })}
-              </span>
-              <ArrowRight size={18} aria-hidden="true" />
-            </span>
-          </button>
+          {!exchangeDepositAsset ? (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--coal)] p-4 text-[11px] leading-relaxed text-[var(--muted)]">Exchange deposits are temporarily unavailable.</div>
+          ) : exchangeDepositOptions.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {exchangeDepositOptions.map(option => {
+                const accent = option.exchange === 'bybit' ? '#f7a600' : option.exchange === 'bitget' ? '#00d6a3' : option.exchange === 'mexc' ? '#2e9bff' : option.exchange === 'gateio' ? '#77baff' : '#ffffff'
+                return (
+                  <button
+                    key={option.exchange}
+                    type="button"
+                    onClick={() => depositFromExchange(option.exchange)}
+                    className="flex w-full items-center gap-3 rounded-xl border bg-[var(--coal)] px-3.5 py-3 text-left transition-all hover:bg-[var(--clay)] active:scale-[0.99]"
+                    style={{ borderColor: `${accent}70` }}
+                  >
+                    <CexLogo exchange={option.exchange} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12px] font-bold text-[var(--text)]">{cexExchangeLabel(option.exchange)}</span>
+                      <span className="mt-0.5 block text-[9px] text-[var(--muted)]">USDT or USDC · internal transfer</span>
+                    </span>
+                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-semibold ${option.linked ? 'border-[var(--green2)]/30 bg-[var(--green2)]/10 text-[var(--green2)]' : 'border-[var(--border)] text-[var(--text2)]'}`}>
+                      {option.linked ? 'Linked' : 'Set up'}
+                    </span>
+                    <ArrowRight size={16} className="shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                  </button>
+                )
+              })}
+            </div>
           ) : (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--coal)] p-4 text-[11px] leading-relaxed text-[var(--muted)]">Exchange deposits are temporarily unavailable.</div>
           )}
