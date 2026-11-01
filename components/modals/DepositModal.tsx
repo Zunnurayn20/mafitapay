@@ -255,7 +255,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
         <div className="relative pt-1">
           <div className="mb-1 flex items-center gap-2 text-[11px] text-[#7c6a4b]">
             <Building2 size={14} className="text-[#8c6b31]" />
-            <span className="truncate font-medium">{account.bank}</span>
+            <span className="truncate"><span className="font-bold uppercase tracking-[0.06em]">Bank name:</span> <span className="font-medium">{account.bank}</span></span>
             <span className="ml-auto shrink-0 rounded-full border border-[rgba(140,107,49,.25)] bg-[rgba(255,255,255,.7)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.5px] text-[#8c6b31]">
               {providerLabel(account.provider)}
             </span>
