@@ -1,4 +1,4 @@
-import { createHash, X509Certificate as NodeX509Certificate } from 'node:crypto'
+import { X509Certificate as NodeX509Certificate } from 'node:crypto'
 import { AsnParser } from '@peculiar/asn1-schema'
 import {
   AttestationApplicationId,
@@ -29,10 +29,6 @@ function decodeBase64(value: string) {
     throw new Error('Android key attestation data is invalid.')
   }
   return Buffer.from(value, 'base64')
-}
-
-function sha256Hex(value: Buffer) {
-  return createHash('sha256').update(value).digest('hex')
 }
 
 function normalizeFingerprint(value: string) {
@@ -162,8 +158,13 @@ function parseKeyDescription(certificateChain: NodeX509Certificate[]) {
 function assertAppIdentity(applicationId: AttestationApplicationId) {
   const expectedSigners = allowedAppSigners()
   const packageMatches = applicationId.packageInfos.some(info => bufferFromAsnOctets(info.packageName).toString('utf8') === MAFITAPAY_ANDROID_PACKAGE)
-  const signerMatches = applicationId.signatureDigests.some(digest => expectedSigners.has(sha256Hex(bufferFromAsnOctets(digest))))
-  if (!packageMatches || !signerMatches) {
+  if (!packageMatches) {
+    throw new Error('Android key attestation package does not match MafitaPay.')
+  }
+  // Android's signatureDigests already contain SHA-256 certificate fingerprints.
+  // Compare those bytes directly; hashing them again rejects every valid signer.
+  const signerMatches = applicationId.signatureDigests.some(digest => expectedSigners.has(bufferFromAsnOctets(digest).toString('hex')))
+  if (!signerMatches) {
     throw new Error('Android device attestation does not match the MafitaPay app signing certificate.')
   }
 }
