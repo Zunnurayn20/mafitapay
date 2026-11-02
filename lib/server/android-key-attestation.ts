@@ -186,7 +186,9 @@ export async function verifyAndroidKeyAttestation(input: {
     || !authorization.purpose?.includes(2) // Keymaster SIGN
     || !authorization.digest?.includes(4) // Keymaster SHA-256
     || authorization.userAuthType !== 2 // BIOMETRIC_STRONG
-    || authorization.authTimeout !== 0 // Auth-per-use
+    // Android encodes auth-per-use by omitting AUTH_TIMEOUT. Some implementations
+    // may encode the equivalent zero explicitly, so accept either representation.
+    || (authorization.authTimeout !== undefined && authorization.authTimeout !== 0)
     || authorization.noAuthRequired !== undefined
     || authorization.allApplications !== undefined
     || authorization.rootOfTrust?.deviceLocked !== true
