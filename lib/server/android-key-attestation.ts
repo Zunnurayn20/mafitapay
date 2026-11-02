@@ -8,6 +8,7 @@ import {
   VerifiedBootState,
 } from '@peculiar/asn1-android'
 import { X509Certificate as PeculiarX509Certificate } from '@peculiar/x509'
+import { DEBUG_ANDROID_CERT_SHA256 } from './webauthn-origin'
 
 const ANDROID_ATTESTATION_ROOTS_URL = 'https://android.googleapis.com/attestation/root'
 const ANDROID_ATTESTATION_STATUS_URL = 'https://android.googleapis.com/attestation/status'
@@ -163,13 +164,13 @@ function assertAppIdentity(applicationId: AttestationApplicationId) {
   }
   // Android's signatureDigests already contain SHA-256 certificate fingerprints.
   // Compare those bytes directly; hashing them again rejects every valid signer.
-  const signerMatches = applicationId.signatureDigests.some(digest => expectedSigners.has(bufferFromAsnOctets(digest).toString('hex')))
+  const attestedSigners = applicationId.signatureDigests.map(digest => bufferFromAsnOctets(digest).toString('hex'))
+  const signerMatches = attestedSigners.some(digest => expectedSigners.has(digest))
   if (!signerMatches) {
-    console.warn('[android-attestation] app signer mismatch', {
-      packageMatches,
-      attestedSignerSha256: applicationId.signatureDigests.map(digest => bufferFromAsnOctets(digest).toString('hex')),
-      configuredSignerSha256: [...expectedSigners],
-    })
+    const debugSigner = normalizeFingerprint(DEBUG_ANDROID_CERT_SHA256)
+    if (debugSigner && attestedSigners.includes(debugSigner)) {
+      throw new Error('This MafitaPay debug build cannot enable transaction biometrics. Uninstall it and install the official app from mafitapay.com.')
+    }
     throw new Error('Android device attestation does not match the MafitaPay app signing certificate.')
   }
 }
