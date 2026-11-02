@@ -523,6 +523,7 @@ export function SellModal({ open, onClose }: { open: boolean; onClose: () => voi
                     </label>
                     <input
                       id="cex-sender-uid"
+                      type={selectedExchange === 'bybit' || selectedExchange === 'gateio' ? 'tel' : 'text'}
                       inputMode={selectedExchange === 'bybit' || selectedExchange === 'gateio' ? 'numeric' : 'text'}
                       autoComplete="off"
                       value={cexSenderUid}

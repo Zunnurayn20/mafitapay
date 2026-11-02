@@ -408,7 +408,8 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
                 {amountMode === 'ngn' ? '₦' : amountMode === 'usd' ? '$' : asset.symbol}
               </div>
               <input
-                type="text"
+                type={amountMode === 'ngn' ? 'tel' : 'number'}
+                step={amountMode === 'ngn' ? undefined : 'any'}
                 inputMode={amountMode === 'ngn' ? 'numeric' : 'decimal'}
                 pattern={amountMode === 'ngn' ? '[0-9]*' : undefined}
                 placeholder={`Min ${amountMode === 'asset'

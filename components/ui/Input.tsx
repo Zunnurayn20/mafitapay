@@ -23,6 +23,13 @@ const suffixClass = 'bg-[var(--clay)] border-l border-[var(--border)] px-3.5 fle
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ label, prefix, suffix, onSuffixClick, error, hint, hintTone = 'muted', leadingIcon, trailing, variant = 'default', status = 'default', id, className, containerClassName, ...props }, ref) => {
     const { 'aria-describedby': externalDescribedBy, ...inputProps } = props
+    // Android WebView/Gboard can ignore inputMode on plain text inputs. Use native
+    // input types as well so numeric fields open the number keypad in the APK.
+    const inputType = inputProps.inputMode === 'numeric' && (!inputProps.type || inputProps.type === 'text')
+      ? 'tel'
+      : inputProps.inputMode === 'decimal' && (!inputProps.type || inputProps.type === 'text')
+        ? 'number'
+        : inputProps.type
     const generatedId = useId()
     const inputId = id ?? `input-${generatedId}`
     const messageId = `${inputId}-message`
@@ -38,8 +45,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           )}>
             {leadingIcon && <span aria-hidden="true" className={cn('flex shrink-0', error ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]')}>{leadingIcon}</span>}
             {prefix}
-            <input ref={ref} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedBy}
-              className={cn('h-full min-w-0 flex-1 bg-transparent text-[16px] text-[var(--text)] outline-none placeholder:text-[var(--muted)]', className)} {...inputProps} />
+            <input ref={ref} id={inputId} {...inputProps} type={inputType} aria-invalid={error ? true : undefined} aria-describedby={describedBy}
+              className={cn('h-full min-w-0 flex-1 bg-transparent text-[16px] text-[var(--text)] outline-none placeholder:text-[var(--muted)]', className)} />
             {trailing}
           </div>
           {error ? <p id={messageId} role="alert" className="text-[13.5px] font-medium text-[var(--danger-text)]">{error}</p>
@@ -54,8 +61,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         <div className={cn('flex border focus-within:border-[var(--gold)] transition-colors', error ? 'border-[var(--red2)]' : status === 'success' ? 'border-[var(--green2)]' : 'border-[var(--border)]')}>
           {prefix && <div className="flex shrink-0 items-center bg-[var(--clay2)] px-3 text-lg font-black text-[var(--ngn)]">{prefix}</div>}
           {leadingIcon && <span aria-hidden="true" className="flex items-center pl-3 text-[var(--muted)]">{leadingIcon}</span>}
-          <input ref={ref} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedBy}
-            className={cn('flex-1 border-none bg-[var(--clay2)] px-3.5 py-3 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]', className)} {...inputProps} />
+          <input ref={ref} id={inputId} {...inputProps} type={inputType} aria-invalid={error ? true : undefined} aria-describedby={describedBy}
+            className={cn('flex-1 border-none bg-[var(--clay2)] px-3.5 py-3 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]', className)} />
           {trailing}
           {suffix && (onSuffixClick ? <button type="button" onMouseDown={event => event.preventDefault()} onClick={onSuffixClick} className={cn(suffixClass, 'cursor-pointer transition-colors hover:text-[var(--gold2)]')}>{suffix}</button> : <div className={suffixClass}>{suffix}</div>)}
         </div>
