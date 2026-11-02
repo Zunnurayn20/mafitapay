@@ -52,8 +52,16 @@ function allowedAppSigners() {
   return new Set(fingerprints)
 }
 
-function bufferFromArrayBuffer(value: ArrayBuffer) {
-  return Buffer.from(new Uint8Array(value))
+function bufferFromAsnOctets(value: unknown) {
+  if (value instanceof ArrayBuffer) return Buffer.from(value)
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView
+    return Buffer.from(new Uint8Array(view.buffer as ArrayBuffer, view.byteOffset, view.byteLength))
+  }
+  if (value && typeof value === 'object' && 'buffer' in value && value.buffer instanceof ArrayBuffer) {
+    return Buffer.from(value.buffer)
+  }
+  throw new Error('Android attestation contains invalid octet-string data.')
 }
 
 async function fetchJson<T>(url: string) {
@@ -153,8 +161,8 @@ function parseKeyDescription(certificateChain: NodeX509Certificate[]) {
 
 function assertAppIdentity(applicationId: AttestationApplicationId) {
   const expectedSigners = allowedAppSigners()
-  const packageMatches = applicationId.packageInfos.some(info => Buffer.from(info.packageName.buffer).toString('utf8') === MAFITAPAY_ANDROID_PACKAGE)
-  const signerMatches = applicationId.signatureDigests.some(digest => expectedSigners.has(sha256Hex(bufferFromArrayBuffer(digest.buffer))))
+  const packageMatches = applicationId.packageInfos.some(info => bufferFromAsnOctets(info.packageName).toString('utf8') === MAFITAPAY_ANDROID_PACKAGE)
+  const signerMatches = applicationId.signatureDigests.some(digest => expectedSigners.has(sha256Hex(bufferFromAsnOctets(digest))))
   if (!packageMatches || !signerMatches) {
     throw new Error('Android device attestation does not match the MafitaPay app signing certificate.')
   }
@@ -198,7 +206,7 @@ export async function verifyAndroidKeyAttestation(input: {
     throw new Error('Android key attestation does not meet MafitaPay biometric security requirements.')
   }
 
-  const applicationId = AsnParser.parse(bufferFromArrayBuffer(attestationApplicationId.buffer), AttestationApplicationId)
+  const applicationId = AsnParser.parse(bufferFromAsnOctets(attestationApplicationId), AttestationApplicationId)
   assertAppIdentity(applicationId)
 
   const publicKey = decodeBase64(input.publicKey)
