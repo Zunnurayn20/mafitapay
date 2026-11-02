@@ -20,7 +20,9 @@ const config: CapacitorConfig = {
   },
   android: {
     allowMixedContent: false,
-    captureInput: true,
+    // Let Android WebView provide the IME connection so inputMode/type hints
+    // select the right keyboard (numeric, email, etc.) inside the APK.
+    captureInput: false,
     webContentsDebuggingEnabled: process.env.NODE_ENV !== 'production',
   },
   plugins: {
