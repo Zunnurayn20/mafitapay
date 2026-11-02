@@ -165,6 +165,11 @@ function assertAppIdentity(applicationId: AttestationApplicationId) {
   // Compare those bytes directly; hashing them again rejects every valid signer.
   const signerMatches = applicationId.signatureDigests.some(digest => expectedSigners.has(bufferFromAsnOctets(digest).toString('hex')))
   if (!signerMatches) {
+    console.warn('[android-attestation] app signer mismatch', {
+      packageMatches,
+      attestedSignerSha256: applicationId.signatureDigests.map(digest => bufferFromAsnOctets(digest).toString('hex')),
+      configuredSignerSha256: [...expectedSigners],
+    })
     throw new Error('Android device attestation does not match the MafitaPay app signing certificate.')
   }
 }
