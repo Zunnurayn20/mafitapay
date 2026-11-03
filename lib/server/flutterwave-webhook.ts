@@ -17,8 +17,6 @@ import {
 import { processSettlementEvent } from '@/lib/server/settlements'
 
 const FLUTTERWAVE_WEBHOOK_LOGGING_ENABLED = process.env.MAFITAPAY_DEBUG_FLUTTERWAVE === '1'
-const MAX_FLUTTERWAVE_DEPOSIT_FEE_NGN = 50
-
 function readString(value: unknown) {
   if (typeof value === 'string') return value.trim()
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
@@ -348,9 +346,10 @@ export async function handleFlutterwaveWebhook(input: {
           ? amountSettled
           : amount
         const providerFee = Math.max(0, grossAmount - (providerNetAmount ?? 0))
-        const fee = Math.min(providerFee, MAX_FLUTTERWAVE_DEPOSIT_FEE_NGN)
-        const creditedAmount = grossAmount - fee
-        const platformFeeSubsidy = Math.max(0, creditedAmount - (providerNetAmount ?? 0))
+        // Deposit fee is waived for customers; MafitaPay absorbs the provider's full fee.
+        const fee = 0
+        const creditedAmount = grossAmount
+        const platformFeeSubsidy = providerFee
         const deposit = await createSettledDepositFromProvider({
           userId: user.id,
           reference: uniqueReference,
