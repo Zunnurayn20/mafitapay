@@ -3995,7 +3995,7 @@ export async function getUserByVirtualAccountNumber(accountNumber: string): Prom
   return null
 }
 
-export async function getUserByVirtualAccountReference(reference: string): Promise<StoredUser | null> {
+export async function getUserByVirtualAccountReference(reference: string, provider?: 'billstack'): Promise<StoredUser | null> {
   await ensureDbReady()
   const normalized = reference.trim()
   if (!normalized) return null
@@ -4006,6 +4006,13 @@ export async function getUserByVirtualAccountReference(reference: string): Promi
       const accounts = parseJson(wallet.virtual_accounts, [] as Wallet['virtualAccounts'])
       if (!accounts.some(item => typeof item.reference === 'string' && item.reference.trim() === normalized)) continue
       return getUserById(wallet.user_id)
+    }
+    if (provider === 'billstack') {
+      const provisioning = await queryPostgres<{ user_id: string }>(
+        "SELECT user_id FROM static_virtual_account_provisioning WHERE provider = 'billstack' AND reference = ? AND status = 'ready' LIMIT 1",
+        [normalized],
+      )
+      if (provisioning.rows[0]) return getUserById(provisioning.rows[0].user_id)
     }
     return null
   }
@@ -4023,6 +4030,13 @@ export async function getUserByVirtualAccountReference(reference: string): Promi
       .prepare('SELECT * FROM users WHERE id = ? LIMIT 1')
       .get(row.user_id) as UserRow | undefined
     if (userRow) return userRow
+  }
+
+  if (provider === 'billstack') {
+    const provisioning = getDb()
+      .prepare("SELECT user_id FROM static_virtual_account_provisioning WHERE provider = 'billstack' AND reference = ? AND status = 'ready' LIMIT 1")
+      .get(normalized) as { user_id: string } | undefined
+    if (provisioning) return getUserById(provisioning.user_id)
   }
 
   return null

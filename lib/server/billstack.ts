@@ -119,7 +119,7 @@ export async function createBillStackVirtualAccount(input: {
   }
 }
 
-export function verifyBillStackWebhookSignature(input: {
+export function getBillStackWebhookSignatureFailure(input: {
   rawBody: string
   timestamp: string | null
   signature: string | null
@@ -128,16 +128,27 @@ export function verifyBillStackWebhookSignature(input: {
   const secretKey = getSecretKey()
   const timestamp = input.timestamp?.trim() ?? ''
   const signature = input.signature?.trim().toLowerCase() ?? ''
-  if (!secretKey || !/^\d{10,13}$/.test(timestamp) || !/^[a-f0-9]{64}$/.test(signature)) return false
+  if (!secretKey) return 'missing_secret' as const
+  if (!/^\d{10,13}$/.test(timestamp)) return 'invalid_timestamp' as const
+  if (!/^[a-f0-9]{64}$/.test(signature)) return 'invalid_signature_format' as const
 
   const timestampSeconds = Number(timestamp)
   const timestampMs = timestamp.length === 13 ? timestampSeconds : timestampSeconds * 1000
   const now = input.nowMs ?? Date.now()
-  if (!Number.isFinite(timestampMs) || Math.abs(now - timestampMs) > 5 * 60 * 1000) return false
+  if (!Number.isFinite(timestampMs) || Math.abs(now - timestampMs) > 5 * 60 * 1000) return 'stale_timestamp' as const
 
   const expected = createHmac('sha256', secretKey).update(`${timestamp}.${input.rawBody}`).digest()
   const received = Buffer.from(signature, 'hex')
-  return received.length === expected.length && timingSafeEqual(received, expected)
+  return received.length === expected.length && timingSafeEqual(received, expected) ? null : 'signature_mismatch' as const
+}
+
+export function verifyBillStackWebhookSignature(input: {
+  rawBody: string
+  timestamp: string | null
+  signature: string | null
+  nowMs?: number
+}) {
+  return getBillStackWebhookSignatureFailure(input) === null
 }
 
 export async function getBillStackTransaction(sessionId: string) {

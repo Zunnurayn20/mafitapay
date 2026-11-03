@@ -95,7 +95,7 @@ export async function handleBillStackWebhook(rawBody: string) {
     return { status: 400, body: { status: false, message: 'BillStack payment amount did not match.' } } as const
   }
 
-  const user = await getUserByVirtualAccountReference(providerAccountReference)
+  const user = await getUserByVirtualAccountReference(providerAccountReference, 'billstack')
   if (!user) {
     console.error('[billstack-webhook] no user owns the reserved account reference')
     return { status: 404, body: { status: false, message: 'Deposit account could not be matched.' } } as const
@@ -104,7 +104,7 @@ export async function handleBillStackWebhook(rawBody: string) {
   const ownedAccount = wallet?.virtualAccounts.find(item =>
     item.provider === 'billstack'
     && item.isPermanent
-    && item.reference === providerAccountReference
+    && (item.reference === providerAccountReference || Boolean(verifiedAccountNumber && item.accountNumber === verifiedAccountNumber))
     && (!verifiedAccountNumber || item.accountNumber === verifiedAccountNumber)
   )
   if (!ownedAccount) {

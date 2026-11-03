@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { handleBillStackWebhook } from '@/lib/server/billstack-webhook'
-import { isBillStackEnabled, verifyBillStackWebhookSignature } from '@/lib/server/billstack'
+import { getBillStackWebhookSignatureFailure, isBillStackEnabled } from '@/lib/server/billstack'
 
 export const runtime = 'nodejs'
 
@@ -12,7 +12,9 @@ export async function POST(req: Request) {
   const rawBody = await req.text()
   const timestamp = req.headers.get('x-wiaxy-timestamp')
   const signature = req.headers.get('x-wiaxy-signature-256')
-  if (!verifyBillStackWebhookSignature({ rawBody, timestamp, signature })) {
+  const signatureFailure = getBillStackWebhookSignatureFailure({ rawBody, timestamp, signature })
+  if (signatureFailure) {
+    console.warn(`[billstack-webhook] signature rejected reason=${signatureFailure}`)
     return NextResponse.json({ status: false, message: 'Invalid webhook signature.' }, { status: 401 })
   }
 

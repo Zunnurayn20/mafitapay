@@ -277,7 +277,9 @@ export async function POST(req: Request) {
       accountName: providerAccount.accountName,
       provider: 'billstack',
       isPermanent: true,
-      reference: providerAccount.providerReference,
+      // The webhook's merchant_reference is the reference MafitaPay sent
+      // when reserving the account, not BillStack's separate response ref.
+      reference,
     }
     const completed = await finishStaticVirtualAccountProvisioning({
       userId: user.id,
