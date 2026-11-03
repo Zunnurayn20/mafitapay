@@ -855,8 +855,8 @@ export default function SecurityPage() {
             <Button variant="danger" className="w-full py-2.5 text-[11px]" onClick={deactivateAccount} disabled={deactivating || user?.accountStatus === 'deactivated'}>
               {deactivating ? 'Deactivating…' : user?.accountStatus === 'deactivated' ? 'Account Deactivated' : 'Deactivate Account'}
             </Button>
-            <Button variant="danger" className="w-full py-2.5 text-[11px] opacity-70" onClick={() => showToast('Permanent deletion remains an admin/support-only workflow.', 'info')}>
-              Delete Account Permanently
+            <Button variant="danger" className="w-full py-2.5 text-[11px] opacity-90" onClick={() => router.push('/delete-account')}>
+              Request Account Deletion
             </Button>
           </div>
         </Card>
