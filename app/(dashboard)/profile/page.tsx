@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAppStore } from '@/store'
-import { Headphones } from 'lucide-react'
+import { FileText, Headphones, ShieldCheck } from 'lucide-react'
 import { phoneFromChipInput } from '@/lib/auth/validation'
 export default function ProfilePage() {
   const { refreshSession, showToast, user, wallet } = useAppStore()
@@ -148,6 +148,18 @@ export default function ProfilePage() {
               sub: 'Get help from the MafitaPay support team',
               action: () => router.push('/support'),
             },
+            {
+              icon: 'privacy',
+              title: 'Privacy Policy',
+              sub: 'How MafitaPay handles your information',
+              action: () => router.push('/privacy'),
+            },
+            {
+              icon: 'terms',
+              title: 'Terms of Service',
+              sub: 'Terms for using MafitaPay services',
+              action: () => router.push('/terms'),
+            },
             ...(user?.isAdmin ? [{
               icon: 'Admin',
               title: 'Admin Workspace',
@@ -161,8 +173,8 @@ export default function ProfilePage() {
               onClick={item.action}
               className="flex w-full items-center gap-4 border-b border-[var(--border)] px-5 py-4 text-left transition-colors hover:bg-[var(--clay)] last:border-0"
             >
-              <span className={item.icon === 'Admin' ? 'text-[9px] font-black uppercase tracking-[.8px] text-[var(--gold2)]' : item.icon === 'support' ? 'text-[var(--gold2)]' : 'text-lg'}>
-                {item.icon === 'support' ? <Headphones size={18} /> : item.icon}
+              <span className={item.icon === 'Admin' ? 'text-[9px] font-black uppercase tracking-[.8px] text-[var(--gold2)]' : ['support', 'privacy', 'terms'].includes(item.icon) ? 'text-[var(--gold2)]' : 'text-lg'}>
+                {item.icon === 'support' ? <Headphones size={18} /> : item.icon === 'privacy' ? <ShieldCheck size={18} /> : item.icon === 'terms' ? <FileText size={18} /> : item.icon}
               </span>
               <div className="flex-1">
                 <div className="text-[13px] font-semibold text-[var(--text)]">{item.title}</div>
