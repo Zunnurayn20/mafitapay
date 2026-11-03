@@ -17,8 +17,6 @@ import { PrivyAuthAction } from '@/components/auth/PrivyAuthAction'
 import { phoneFromChipInput, validateProfileFields, isPasswordValid } from '@/lib/auth/validation'
 
 const privyEnabled = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID)
-const TERMS_URL = process.env.NEXT_PUBLIC_TERMS_URL?.trim() || ''
-const PRIVACY_URL = process.env.NEXT_PUBLIC_PRIVACY_URL?.trim() || ''
 
 export default function RegisterPage() {
   const { authResolved, isAuthenticated, register, theme } = useAppStore()
@@ -125,7 +123,7 @@ export default function RegisterPage() {
         <PasswordInput label="Create password" autoComplete="new-password" placeholder="Create a password" aria-describedby="password-strength" value={password} onChange={event => { setPassword(event.target.value); setError('') }} onBlur={() => markTouched('password')} error={touched.password && !isPasswordValid(password) ? 'Use at least 8 characters with a letter and a number.' : undefined} />
         <PasswordStrength id="password-strength" password={password} />
         <PasswordInput label="Confirm password" autoComplete="new-password" placeholder="Enter password again" status={match ? 'success' : 'default'} statusIcon={match ? <CheckCircle2 size={20} className="text-[var(--success-text)]" /> : undefined} hint={match ? <><Check size={16} />Passwords match</> : undefined} hintTone="success" error={touched.confirmPassword && !match ? "Passwords don't match" : undefined} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} onBlur={() => markTouched('confirmPassword')} />
-        <label className="flex cursor-pointer items-start gap-3 text-[14px] leading-[1.5] text-[var(--text2)]"><input type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)} className="mt-1 h-[22px] w-[22px] shrink-0 accent-[var(--gold)]" /><span>I agree to MafitaPay&apos;s {TERMS_URL ? <a href={TERMS_URL} className="font-semibold text-[var(--gold2)] underline underline-offset-2">Terms of Service</a> : <span>Terms of Service</span>} and {PRIVACY_URL ? <a href={PRIVACY_URL} className="font-semibold text-[var(--gold2)] underline underline-offset-2">Privacy Policy</a> : <span>Privacy Policy</span>}.</span></label>
+      <label className="flex cursor-pointer items-start gap-3 text-[14px] leading-[1.5] text-[var(--text2)]"><input type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)} className="mt-1 h-[22px] w-[22px] shrink-0 accent-[var(--gold)]" /><span>I agree to MafitaPay&apos;s <a href="/terms" className="font-semibold text-[var(--gold2)] underline underline-offset-2">Terms of Service</a> and <a href="/privacy" className="font-semibold text-[var(--gold2)] underline underline-offset-2">Privacy Policy</a>.</span></label>
       </>}
       {error ? <div role="alert" className="text-[13.5px] text-[var(--danger-text)]">{error}</div> : null}
       <Button type="submit" variant="gold" size="xl" loading={loading} className="w-full">{step === 1 ? <>Continue <span aria-hidden="true">→</span></> : 'Create account'}</Button>
@@ -138,7 +136,7 @@ export default function RegisterPage() {
         {showReferralCode && !refFromLink ? <Input variant="auth" label="Referral code" value={referralCode} onChange={event => setReferralCode(event.target.value.toUpperCase())} /> : null}
       </> : null}
       <PrivyAuthAction intent="register" email={email.trim().toLowerCase()} onCodeSentChange={setEmailCodeSent} profile={{ name, email, phone: phoneFromChipInput(phone), referralCode }} />
-      {!emailCodeSent ? <p className="text-[13px] leading-relaxed text-[var(--muted)]">By creating an account, you agree to our {TERMS_URL ? <a href={TERMS_URL} className="text-[var(--gold2)] underline">Terms of Service</a> : <span>Terms of Service</span>} and {PRIVACY_URL ? <a href={PRIVACY_URL} className="text-[var(--gold2)] underline">Privacy Policy</a> : <span>Privacy Policy</span>}.</p> : null}
+      {!emailCodeSent ? <p className="text-[13px] leading-relaxed text-[var(--muted)]">By creating an account, you agree to our <a href="/terms" className="text-[var(--gold2)] underline">Terms of Service</a> and <a href="/privacy" className="text-[var(--gold2)] underline">Privacy Policy</a>.</p> : null}
     </div>}
 
     {privyEnabled ? <button type="button" onClick={() => switchMode(!passwordMode)} className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-[14.5px] font-semibold text-[var(--gold2)]">Use {passwordMode ? 'email code' : 'password'} instead</button> : null}
