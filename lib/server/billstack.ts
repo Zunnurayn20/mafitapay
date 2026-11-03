@@ -18,6 +18,14 @@ export function isBillStackEnabled() {
   return Boolean(getSecretKey())
 }
 
+export function normalizeBillStackPhone(value: string) {
+  let digits = value.replace(/\D/g, '')
+  if (digits.startsWith('2340') && digits.length === 14) digits = digits.slice(3)
+  else if (digits.startsWith('234') && digits.length === 13) digits = `0${digits.slice(3)}`
+  else if (digits.length === 10) digits = `0${digits}`
+  return /^0\d{10}$/.test(digits) ? digits : null
+}
+
 export function getBillStackVirtualAccountBank(): BillStackBank | null {
   const configured = readString(process.env.BILLSTACK_VIRTUAL_ACCOUNT_BANK)
   if (!configured) return 'PALMPAY'
@@ -101,7 +109,8 @@ export async function createBillStackVirtualAccount(input: {
   }
 
   const failureMessage = readString(envelope.message) || `BillStack account request failed (${response.status}).`
-  const definitiveRejection = /merchant keys disabled|api key.{0,20}(disabled|invalid)|(?:disabled|invalid).{0,20}api key/i.test(failureMessage)
+  const definitiveRejection = envelope.status === false
+    || /merchant keys disabled|api key.{0,20}(disabled|invalid)|(?:disabled|invalid).{0,20}api key/i.test(failureMessage)
   return {
     status: 'failed' as const,
     indeterminate: !definitiveRejection && (response.status >= 500 || response.ok),

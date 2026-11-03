@@ -305,6 +305,14 @@ type StaticVirtualAccountProvisioningRow = {
   updated_at: string
 }
 
+function isDefinitiveBillStackProvisioningRejection(reason: string | null | undefined) {
+  const normalized = reason?.toLowerCase() ?? ''
+  return normalized.includes('merchant keys disabled')
+    || normalized.includes('phone should be 11 digit long')
+    || normalized.includes('invalid phone')
+    || normalized.includes('phone number is invalid')
+}
+
 type CryptoDepositAddressRow = {
   id: string
   user_id: string
@@ -6663,9 +6671,9 @@ export async function claimStaticVirtualAccountProvisioning(userId: string, prov
         return { state: 'in_progress' as const }
       }
       if (claim.status === 'uncertain') {
-        const providerRejectedDisabledKey = provider === 'billstack'
-          && claim.failure_reason?.toLowerCase().includes('merchant keys disabled')
-        if (!providerRejectedDisabledKey) return { state: 'uncertain' as const }
+        const providerRejected = provider === 'billstack'
+          && isDefinitiveBillStackProvisioningRejection(claim.failure_reason)
+        if (!providerRejected) return { state: 'uncertain' as const }
       }
 
       await queryPostgresClient(client, `
@@ -6711,9 +6719,9 @@ export async function claimStaticVirtualAccountProvisioning(userId: string, prov
       return { state: 'in_progress' as const }
     }
     if (claim.status === 'uncertain') {
-      const providerRejectedDisabledKey = provider === 'billstack'
-        && claim.failure_reason?.toLowerCase().includes('merchant keys disabled')
-      if (!providerRejectedDisabledKey) {
+      const providerRejected = provider === 'billstack'
+        && isDefinitiveBillStackProvisioningRejection(claim.failure_reason)
+      if (!providerRejected) {
         db.exec('COMMIT')
         return { state: 'uncertain' as const }
       }

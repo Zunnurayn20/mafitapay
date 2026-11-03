@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { createFlutterwaveStaticVirtualAccount, isFlutterwaveCollectionsEnabled } from '@/lib/server/flutterwave-collections'
 import { createPalmPayVirtualAccount, isPalmPayVirtualAccountsEnabled } from '@/lib/server/palmpay'
-import { createBillStackVirtualAccount, getBillStackVirtualAccountBank, isBillStackEnabled } from '@/lib/server/billstack'
+import { createBillStackVirtualAccount, getBillStackVirtualAccountBank, isBillStackEnabled, normalizeBillStackPhone } from '@/lib/server/billstack'
 import {
   getLatestKycSubmissionByUserId,
   getLatestSensitiveKycIdentityByUserId,
@@ -219,6 +219,10 @@ export async function POST(req: Request) {
     if (!bank) {
       return NextResponse.json({ error: 'BillStack bank configuration is invalid.', success: false }, { status: 503 })
     }
+    const billStackPhone = normalizeBillStackPhone(user.phone)
+    if (!billStackPhone) {
+      return NextResponse.json({ error: 'Add a valid Nigerian phone number with 11 digits before creating a BillStack account.', success: false }, { status: 400 })
+    }
     const claim = await claimStaticVirtualAccountProvisioning(user.id, 'billstack')
     if (claim.state === 'ready') {
       return NextResponse.json({ data: { wallet: await getWalletByUserId(user.id) ?? wallet, virtualAccount: claim.virtualAccount, existing: true, provider }, success: true })
@@ -238,7 +242,7 @@ export async function POST(req: Request) {
     const providerAccount = await createBillStackVirtualAccount({
       reference,
       email: user.email,
-      phone: user.phone,
+      phone: billStackPhone,
       firstName: firstName || user.name.trim() || 'User',
       lastName: restNames.join(' ') || 'Mafitapay',
       bank,
