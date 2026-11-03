@@ -35,7 +35,7 @@ import androidx.webkit.WebViewFeature;
 
 public class MainActivity extends BridgeActivity {
     private static final String OFFLINE_ASSET = "file:///android_asset/public/offline.html";
-    private static final String APP_URL = "https://mafitapay.vercel.app/";
+    private static final String APP_URL = "https://www.mafitapay.com/";
     private static final long RESTORE_COOLDOWN_MS = 2500;
 
     /** Reloading past this many consecutive failures is hammering a host that is not coming back. */
@@ -64,7 +64,7 @@ public class MainActivity extends BridgeActivity {
      * MAFITAPAY_MOBILE_SERVER_URL recovers to that host instead of bouncing to production.
      */
     private String appLaunchUrl = APP_URL;
-    private String appHost = "mafitapay.vercel.app";
+    private String appHost = "www.mafitapay.com";
 
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;

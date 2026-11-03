@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer'
  * A passkey RP ID has to be this host, or a parent of it. Anything else makes the
  * browser throw "The RP ID … is invalid for this domain".
  */
-export const MOBILE_APP_HOST = 'mafitapay.vercel.app'
+export const MOBILE_APP_HOST = 'www.mafitapay.com'
 
 /** Production website domain and its www subdomain. */
 const PRODUCTION_WEB_HOSTS = ['mafitapay.com']
