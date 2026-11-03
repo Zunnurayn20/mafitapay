@@ -4672,6 +4672,51 @@ export async function getWalletByUserId(userId: string): Promise<Wallet | null> 
   return buildWalletFromRow(row, balances)
 }
 
+/**
+ * Load wallet snapshots and ledger-derived balances for several users in two queries.
+ * This is used by admin summaries to avoid a per-user query fan-out that can exhaust
+ * the app's small PostgreSQL pool during a server render.
+ */
+export async function getWalletsByUserIds(userIds: string[]): Promise<Map<string, Wallet>> {
+  await ensureDbReady()
+  const ids = Array.from(new Set(userIds.map(id => id.trim()).filter(Boolean)))
+  if (ids.length === 0) return new Map()
+
+  const placeholders = ids.map(() => '?').join(', ')
+  const walletSql = `SELECT * FROM wallets WHERE user_id IN (${placeholders})`
+  const balanceSql = `
+    SELECT user_id, COALESCE(asset, 'NGN') AS asset, account,
+      COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE -amount END), 0) AS balance
+    FROM ledger_entries
+    WHERE user_id IN (${placeholders})
+    GROUP BY user_id, COALESCE(asset, 'NGN'), account
+  `
+
+  const [walletRows, balanceRows] = isPostgresEnabled()
+    ? await Promise.all([
+        queryPostgres<WalletRow>(walletSql, ids),
+        queryPostgres<{ user_id: string; asset: string; account: 'available' | 'locked'; balance: number }>(balanceSql, ids),
+      ])
+    : [
+        { rows: getDb().prepare(walletSql).all(...ids) as WalletRow[] },
+        { rows: getDb().prepare(balanceSql).all(...ids) as Array<{ user_id: string; asset: string; account: 'available' | 'locked'; balance: number }> },
+      ]
+
+  const balancesByUserId = new Map<string, AssetBalanceSummary>()
+  for (const row of balanceRows.rows) {
+    const balances = balancesByUserId.get(row.user_id) ?? emptyAssetBalances()
+    const asset: AssetBalanceKey = row.asset === 'RESERVE' ? 'RESERVE' : 'NGN'
+    if (row.account === 'available') balances[asset].available = Number(row.balance)
+    if (row.account === 'locked') balances[asset].locked = Number(row.balance)
+    balancesByUserId.set(row.user_id, balances)
+  }
+
+  return new Map(walletRows.rows.map(row => [
+    row.user_id,
+    buildWalletFromRow(row, balancesByUserId.get(row.user_id) ?? emptyAssetBalances()),
+  ]))
+}
+
 export async function getTransactionsForUser(userId: string): Promise<Transaction[]> {
   await ensureDbReady()
   if (isPostgresEnabled()) {

@@ -19,14 +19,16 @@ export function isPostgresEnabled() {
 
 export function getPostgresPool() {
   if (!globalThis.__mafitapayPostgresPool) {
+    const configuredMax = Number(process.env.MAFITAPAY_POSTGRES_POOL_MAX)
+    const defaultMax = process.env.VERCEL ? 1 : 5
     globalThis.__mafitapayPostgresPool = new Pool({
       connectionString: getConnectionString(),
       // Railway's private service connection is TLS-free. Public URLs are TLS-enabled.
       ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined,
-      // Vercel functions scale horizontally, so keep each warm instance's pool
-      // small by default. Persistent hosts can use the larger default, and an
-      // explicit environment value still overrides either default.
-      max: Math.max(1, Number(process.env.MAFITAPAY_POSTGRES_POOL_MAX ?? (process.env.VERCEL ? 1 : 10)) || 10),
+      // Serverless instances scale horizontally, so default to one connection each.
+      // Persistent hosts use a modest pool for concurrent server renders without
+      // consuming the Supabase session pooler's connection budget too quickly.
+      max: Number.isFinite(configuredMax) && configuredMax > 0 ? Math.floor(configuredMax) : defaultMax,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
     })

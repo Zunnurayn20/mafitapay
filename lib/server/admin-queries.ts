@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { requireAdminUser } from '@/lib/server/auth'
 import {
   getTotalWalletLiability,
-  getWalletByUserId,
+  getWalletsByUserIds,
   listAuditLogs,
   listDepositIntents,
   listPayoutRequests,
@@ -184,20 +184,21 @@ export async function requireAdminPageUser() {
 
 export type AdminWalletRow = { user: User; wallet: Wallet | null }
 
-export async function listAdminWalletRows(limit = 100): Promise<AdminWalletRow[]> {
-  const users = (await listUsers()).slice(0, limit)
-  return Promise.all(
-    users.map(async user => ({
-      user,
-      wallet: await getWalletByUserId(user.id),
-    })),
-  )
+export async function listAdminWalletRows(limit = 100, allUsers?: User[]): Promise<AdminWalletRow[]> {
+  const users = (allUsers ?? await listUsers()).slice(0, limit)
+  const walletsByUserId = await getWalletsByUserIds(users.map(user => user.id))
+  return users.map(user => ({
+    user,
+    wallet: walletsByUserId.get(user.id) ?? null,
+  }))
 }
 
 export async function loadAdminOverviewData() {
+  const usersPromise = listUsers()
+  const walletsPromise = usersPromise.then(users => listAdminWalletRows(100, users))
   const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance, bardetechBalance, cryptoTreasury, baseTreasury, tonTreasury] = await Promise.all([
-    listUsers(),
-    listAdminWalletRows(100),
+    usersPromise,
+    walletsPromise,
     listRecentTransactions(100),
     listProviderEvents({ limit: 50 }),
     listRecentNotifications(80),
