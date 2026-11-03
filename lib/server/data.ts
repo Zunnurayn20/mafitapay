@@ -6662,7 +6662,11 @@ export async function claimStaticVirtualAccountProvisioning(userId: string, prov
         }
         return { state: 'in_progress' as const }
       }
-      if (claim.status === 'uncertain') return { state: 'uncertain' as const }
+      if (claim.status === 'uncertain') {
+        const providerRejectedDisabledKey = provider === 'billstack'
+          && claim.failure_reason?.toLowerCase().includes('merchant keys disabled')
+        if (!providerRejectedDisabledKey) return { state: 'uncertain' as const }
+      }
 
       await queryPostgresClient(client, `
         UPDATE static_virtual_account_provisioning
@@ -6707,8 +6711,12 @@ export async function claimStaticVirtualAccountProvisioning(userId: string, prov
       return { state: 'in_progress' as const }
     }
     if (claim.status === 'uncertain') {
-      db.exec('COMMIT')
-      return { state: 'uncertain' as const }
+      const providerRejectedDisabledKey = provider === 'billstack'
+        && claim.failure_reason?.toLowerCase().includes('merchant keys disabled')
+      if (!providerRejectedDisabledKey) {
+        db.exec('COMMIT')
+        return { state: 'uncertain' as const }
+      }
     }
     db.prepare("UPDATE static_virtual_account_provisioning SET reference = ?, status = 'creating', virtual_account = NULL, failure_reason = NULL, created_at = ?, updated_at = ? WHERE user_id = ? AND provider = ?").run(reference, now, now, userId, provider)
     db.exec('COMMIT')

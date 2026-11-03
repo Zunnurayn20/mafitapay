@@ -100,10 +100,12 @@ export async function createBillStackVirtualAccount(input: {
     }
   }
 
+  const failureMessage = readString(envelope.message) || `BillStack account request failed (${response.status}).`
+  const definitiveRejection = /merchant keys disabled|api key.{0,20}(disabled|invalid)|(?:disabled|invalid).{0,20}api key/i.test(failureMessage)
   return {
     status: 'failed' as const,
-    indeterminate: response.status >= 500 || response.ok,
-    reason: readString(envelope.message) || `BillStack account request failed (${response.status}).`,
+    indeterminate: !definitiveRejection && (response.status >= 500 || response.ok),
+    reason: failureMessage,
     rawStatus: response.status,
   }
 }
