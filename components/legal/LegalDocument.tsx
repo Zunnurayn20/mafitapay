@@ -12,7 +12,7 @@ export function LegalDocument({
   children: ReactNode
 }) {
   return (
-    <main className="min-h-screen bg-[var(--char)] px-4 py-8 text-[var(--text)] sm:py-12">
+    <main className="app-scroll flex-1 bg-[var(--char)] px-4 py-8 text-[var(--text)] sm:py-12">
       <article className="mx-auto w-full max-w-3xl border border-[var(--border)] bg-[var(--clay)] px-5 py-6 sm:px-9 sm:py-9">
         <header className="border-b border-[var(--border)] pb-6">
           <Link href="/register" className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--text2)] hover:text-[var(--text)]">
