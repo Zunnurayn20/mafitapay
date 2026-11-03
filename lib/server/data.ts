@@ -296,7 +296,7 @@ type StaticVirtualAccountProvisioningStatus = 'creating' | 'ready' | 'failed' | 
 
 type StaticVirtualAccountProvisioningRow = {
   user_id: string
-  provider: 'palmpay' | 'flutterwave'
+  provider: 'palmpay' | 'flutterwave' | 'billstack'
   reference: string
   status: StaticVirtualAccountProvisioningStatus
   virtual_account: string | null
@@ -1883,7 +1883,7 @@ function initSchema(db: DatabaseSync) {
 
     CREATE TABLE IF NOT EXISTS static_virtual_account_provisioning (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL CHECK (provider IN ('palmpay', 'flutterwave')),
+      provider TEXT NOT NULL CHECK (provider IN ('palmpay', 'flutterwave', 'billstack')),
       reference TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL CHECK (status IN ('creating', 'ready', 'failed', 'uncertain')),
       virtual_account TEXT,
@@ -2785,6 +2785,33 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, definitio
 }
 
 function migrateSchema(db: DatabaseSync) {
+  // SQLite cannot alter a CHECK constraint in place. Rebuild the local-only
+  // provisioning table once so newly supported account providers are accepted.
+  const provisioningSql = String((db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'static_virtual_account_provisioning'").get() as { sql?: string } | undefined)?.sql ?? '')
+  if (provisioningSql && !provisioningSql.includes("'billstack'")) {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE static_virtual_account_provisioning_new (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK (provider IN ('palmpay', 'flutterwave', 'billstack')),
+        reference TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('creating', 'ready', 'failed', 'uncertain')),
+        virtual_account TEXT,
+        failure_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, provider),
+        CHECK ((status = 'ready') = (virtual_account IS NOT NULL))
+      );
+      INSERT INTO static_virtual_account_provisioning_new
+        (user_id, provider, reference, status, virtual_account, failure_reason, created_at, updated_at)
+      SELECT user_id, provider, reference, status, virtual_account, failure_reason, created_at, updated_at
+      FROM static_virtual_account_provisioning;
+      DROP TABLE static_virtual_account_provisioning;
+      ALTER TABLE static_virtual_account_provisioning_new RENAME TO static_virtual_account_provisioning;
+      COMMIT;
+    `)
+  }
   const addedBuyEnabled = ensureColumn(db, 'crypto_pairs', 'buy_enabled', 'INTEGER NOT NULL DEFAULT 1')
   const addedSellEnabled = ensureColumn(db, 'crypto_pairs', 'sell_enabled', 'INTEGER NOT NULL DEFAULT 1')
   if (addedBuyEnabled || addedSellEnabled) {
@@ -6589,11 +6616,12 @@ function orderVirtualAccountsForDisplay(accounts: Wallet['virtualAccounts']) {
   const rank = (account: Wallet['virtualAccounts'][number]) =>
     account.provider === 'palmpay' && account.isPermanent ? 0
       : account.provider === 'flutterwave' && account.isPermanent ? 1
-        : 2
+        : account.provider === 'billstack' && account.isPermanent ? 2
+          : 3
   return [...accounts].sort((left, right) => rank(left) - rank(right))
 }
 
-export async function claimStaticVirtualAccountProvisioning(userId: string, provider: 'palmpay' | 'flutterwave') {
+export async function claimStaticVirtualAccountProvisioning(userId: string, provider: 'palmpay' | 'flutterwave' | 'billstack') {
   await ensureDbReady()
   const reference = `static_va_${generateRef()}`
   const now = new Date().toISOString()
@@ -6693,7 +6721,7 @@ export async function claimStaticVirtualAccountProvisioning(userId: string, prov
 
 export async function finishStaticVirtualAccountProvisioning(input: {
   userId: string
-  provider: 'palmpay' | 'flutterwave'
+  provider: 'palmpay' | 'flutterwave' | 'billstack'
   reference: string
   outcome: 'ready' | 'failed' | 'uncertain'
   virtualAccount?: Wallet['virtualAccounts'][number]

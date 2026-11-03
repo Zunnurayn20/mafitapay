@@ -128,7 +128,7 @@ export interface VirtualAccount {
   bank: string
   accountNumber: string
   accountName: string
-  provider: 'flutterwave' | 'moniepoint' | 'opay' | 'palmpay'
+  provider: 'flutterwave' | 'moniepoint' | 'opay' | 'palmpay' | 'billstack'
   isPermanent?: boolean
   reference?: string
   expiresAt?: string

@@ -13,7 +13,7 @@ import { groupCryptoAssetsBySymbol, isDepositableCryptoAsset } from '@/lib/crypt
 import type { CexExchange, CryptoAsset, Wallet } from '@/types'
 
 type FundingAccount = Wallet['virtualAccounts'][number]
-type FundingProvider = 'palmpay' | 'flutterwave'
+type FundingProvider = 'palmpay' | 'flutterwave' | 'billstack'
 type DepositTab = 'bank' | 'crypto' | 'exchanges'
 type ExchangeDepositOption = { exchange: CexExchange; linked: boolean }
 
@@ -28,6 +28,7 @@ const DEPOSIT_TABS: Array<{ id: DepositTab; label: string; Icon: typeof Building
 function providerLabel(provider: FundingProvider | FundingAccount['provider']) {
   if (provider === 'palmpay') return 'PalmPay'
   if (provider === 'flutterwave') return 'Flutterwave'
+  if (provider === 'billstack') return 'BillStack'
   return provider
 }
 
@@ -47,7 +48,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const setModalData = useAppStore(state => state.setModalData)
   const palmpayAccount = wallet?.virtualAccounts.find(item => item.provider === 'palmpay' && item.isPermanent)
   const flutterwaveAccount = wallet?.virtualAccounts.find(item => item.provider === 'flutterwave' && item.isPermanent)
-  const primaryAccount = palmpayAccount ?? flutterwaveAccount ?? null
+  const billstackAccount = wallet?.virtualAccounts.find(item => item.provider === 'billstack' && item.isPermanent)
   const [loadingProvider, setLoadingProvider] = useState<FundingProvider | null>(null)
   const [copiedNumber, setCopiedNumber] = useState<string | null>(null)
   const [selectedProvider, setSelectedProvider] = useState<FundingProvider>('palmpay')
@@ -90,8 +91,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     }
     if (flutterwaveAccount) {
       setSelectedProvider('flutterwave')
+      return
     }
-  }, [open, palmpayAccount, flutterwaveAccount])
+    if (billstackAccount) setSelectedProvider('billstack')
+  }, [open, palmpayAccount, flutterwaveAccount, billstackAccount])
 
   useEffect(() => {
     if (!open) {
@@ -117,8 +120,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
     return () => { cancelled = true }
   }, [open])
 
-  const selectedAccount = selectedProvider === 'palmpay' ? palmpayAccount : flutterwaveAccount
-  const hasAnyAccount = Boolean(palmpayAccount || flutterwaveAccount)
+  const selectedAccount = selectedProvider === 'palmpay'
+    ? palmpayAccount
+    : selectedProvider === 'flutterwave' ? flutterwaveAccount : billstackAccount
+  const hasAnyAccount = Boolean(palmpayAccount || flutterwaveAccount || billstackAccount)
 
   async function generatePermanentAccount(provider: FundingProvider) {
     if (provider === 'flutterwave' && !fundingAccountEligibility.eligible) {
@@ -335,16 +340,16 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
             Fund via bank transfer
           </div>
-          <div className="inline-flex rounded-full border border-[var(--border)] bg-[var(--clay)] p-0.5">
-            {(['palmpay', 'flutterwave'] as FundingProvider[]).map(id => {
+          <div className="inline-flex max-w-full rounded-full border border-[var(--border)] bg-[var(--clay)] p-0.5">
+            {(['palmpay', 'flutterwave', 'billstack'] as FundingProvider[]).map(id => {
               const active = selectedProvider === id
-              const hasAccount = id === 'palmpay' ? Boolean(palmpayAccount) : Boolean(flutterwaveAccount)
+              const hasAccount = id === 'palmpay' ? Boolean(palmpayAccount) : id === 'flutterwave' ? Boolean(flutterwaveAccount) : Boolean(billstackAccount)
               return (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setSelectedProvider(id)}
-                  className={`rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                  className={`rounded-full px-2 py-1.5 text-[10px] font-semibold transition-colors sm:px-3 sm:text-[11px] ${
                     active
                       ? 'bg-[var(--text)] text-[var(--char)]'
                       : 'text-[var(--text2)]'
@@ -371,13 +376,23 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
               ? 'Your BVN or NIN was rejected. Submit a valid BVN or NIN to unlock PalmPay.'
               : 'Submit a BVN or NIN to unlock PalmPay.',
           })
-        ) : (
+        ) : selectedProvider === 'flutterwave' ? (
           renderGeneratePanel({
             title: 'Flutterwave funding account',
             description: 'Optional second funding route.',
             provider: 'flutterwave',
             eligible: fundingAccountEligibility.eligible,
             blockedMessage: fundingAccountEligibility.message,
+          })
+        ) : (
+          renderGeneratePanel({
+            title: 'BillStack funding account',
+            description: 'Additional reserved account route. Your assigned bank appears on the account card.',
+            provider: 'billstack',
+            eligible: hasSubmittedFundingIdentity,
+            blockedMessage: hasRejectedFundingIdentity
+              ? 'Your BVN or NIN was rejected. Submit a valid BVN or NIN to unlock BillStack.'
+              : 'Submit a BVN or NIN to unlock BillStack.',
           })
         )}
         {hasAnyAccount && (

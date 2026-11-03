@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { createFlutterwaveStaticVirtualAccount, isFlutterwaveCollectionsEnabled } from '@/lib/server/flutterwave-collections'
 import { createPalmPayVirtualAccount, isPalmPayVirtualAccountsEnabled } from '@/lib/server/palmpay'
+import { createBillStackVirtualAccount, getBillStackVirtualAccountBank, isBillStackEnabled } from '@/lib/server/billstack'
 import {
   getLatestKycSubmissionByUserId,
   getLatestSensitiveKycIdentityByUserId,
@@ -74,7 +75,7 @@ export async function POST(req: Request) {
 
   const parsed = await req.json().catch(() => null)
   const body = isRecord(parsed) ? parsed : {}
-  const provider = body.provider === 'flutterwave' ? 'flutterwave' : 'palmpay'
+  const provider = body.provider === 'flutterwave' || body.provider === 'billstack' ? body.provider : 'palmpay'
   // logDepositAccount('request', { ... }) // bank logger silenced for crypto deposit focus
 
   const wallet = await getWalletByUserId(user.id)
@@ -199,6 +200,113 @@ export async function POST(req: Request) {
         existing: false,
         provider,
       },
+      success: true,
+    })
+  }
+
+  if (provider === 'billstack') {
+    if (!isBillStackEnabled()) {
+      return NextResponse.json({ error: 'BillStack funding accounts are not configured.', success: false }, { status: 503 })
+    }
+
+    const identity = getFundingIdentityPayload(submittedIdentity, sensitiveIdentity)
+    if (!identity) {
+      const eligibility = getFundingIdentityError(submittedIdentity, sensitiveIdentity)
+      return NextResponse.json({ error: eligibility.error, success: false }, { status: eligibility.status })
+    }
+
+    const bank = getBillStackVirtualAccountBank()
+    if (!bank) {
+      return NextResponse.json({ error: 'BillStack bank configuration is invalid.', success: false }, { status: 503 })
+    }
+    const claim = await claimStaticVirtualAccountProvisioning(user.id, 'billstack')
+    if (claim.state === 'ready') {
+      return NextResponse.json({ data: { wallet: await getWalletByUserId(user.id) ?? wallet, virtualAccount: claim.virtualAccount, existing: true, provider }, success: true })
+    }
+    if (claim.state !== 'claimed') {
+      const uncertain = claim.state === 'uncertain'
+      return NextResponse.json({
+        error: uncertain
+          ? 'BillStack may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
+          : 'A BillStack funding account request is already being processed. Please check again shortly.',
+        code: uncertain ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : 'VIRTUAL_ACCOUNT_PROVISIONING',
+        success: false,
+      }, { status: 409 })
+    }
+
+    const reference = claim.reference
+    const providerAccount = await createBillStackVirtualAccount({
+      reference,
+      email: user.email,
+      phone: user.phone,
+      firstName: firstName || user.name.trim() || 'User',
+      lastName: restNames.join(' ') || 'Mafitapay',
+      bank,
+      ...(bank === 'PALMPAY' ? {
+        idType: identity.documentType,
+        idNumber: identity.documentNumber,
+      } : {}),
+    })
+
+    if (providerAccount.status === 'failed') {
+      const indeterminate = Boolean(providerAccount.indeterminate)
+      console.error(`[deposit-account] BillStack provisioning failed ref=${reference}:`, sanitizeErrorForLogs(providerAccount.reason))
+      await finishStaticVirtualAccountProvisioning({
+        userId: user.id,
+        provider: 'billstack',
+        reference,
+        outcome: indeterminate ? 'uncertain' : 'failed',
+        failureReason: providerAccount.reason,
+      })
+      return NextResponse.json({
+        error: indeterminate
+          ? 'BillStack may have created this funding account, but MafitaPay did not receive a confirmed response. Contact support before retrying.'
+          : `We couldn't create a BillStack funding account right now. Please try again later. Reference ${reference}.`,
+        code: indeterminate ? 'VIRTUAL_ACCOUNT_OUTCOME_UNCERTAIN' : undefined,
+        success: false,
+      }, { status: indeterminate ? 202 : 502 })
+    }
+
+    const nextAccount: Wallet['virtualAccounts'][number] = {
+      bank: providerAccount.bankName,
+      accountNumber: providerAccount.accountNumber,
+      accountName: providerAccount.accountName,
+      provider: 'billstack',
+      isPermanent: true,
+      reference: providerAccount.providerReference,
+    }
+    const completed = await finishStaticVirtualAccountProvisioning({
+      userId: user.id,
+      provider: 'billstack',
+      reference,
+      outcome: 'ready',
+      virtualAccount: nextAccount,
+    })
+    if (!completed) throw new Error('Unable to save the BillStack funding account.')
+
+    await insertAuditLog({
+      userId: user.id,
+      actorUserId: user.id,
+      action: 'wallet.static_virtual_account_created',
+      entityType: 'wallet',
+      entityId: user.id,
+      metadata: {
+        provider: 'billstack',
+        bank,
+        accountNumber: nextAccount.accountNumber,
+        bankName: nextAccount.bank,
+      },
+    })
+
+    await appendNotification(user.id, createNotification({
+      userId: user.id,
+      title: 'BillStack funding account ready',
+      message: `${nextAccount.accountNumber} at ${nextAccount.bank} is now available in your wallet funding accounts.`,
+      type: 'success',
+    }))
+
+    return NextResponse.json({
+      data: { wallet: completed.wallet, virtualAccount: completed.virtualAccount, existing: false, provider },
       success: true,
     })
   }
