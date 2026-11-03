@@ -48,12 +48,17 @@ export async function handleBillStackWebhook(rawBody: string) {
   }
 
   const account = isRecord(eventData.account) ? eventData.account : {}
+  // BillStack's webhook fields have distinct purposes:
+  // `reference` is the BillStack transaction reference, `merchant_reference`
+  // is the reserved-account reference we created, and `wiaxy_ref` is the
+  // session ID accepted by getTransaction.
+  const transactionReference = readString(eventData.reference)
+  const providerAccountReference = readString(eventData.merchant_reference)
   const sessionId = readString(eventData.wiaxy_ref) || readString(eventData.transaction_ref)
-  const providerAccountReference = readString(eventData.reference) || readString(eventData.merchant_reference)
   const webhookAmount = readAmount(eventData.amount)
   const accountNumber = readString(account.account_number)
 
-  if (!sessionId || !providerAccountReference) {
+  if (!sessionId || !transactionReference || !providerAccountReference) {
     return { status: 400, body: { status: false, message: 'Deposit reference is missing.' } } as const
   }
 
@@ -71,7 +76,7 @@ export async function handleBillStackWebhook(rawBody: string) {
   const amount = readAmount(verified.amount)
   const status = readString(verified.status).toUpperCase()
   if (
-    verifiedReference !== providerAccountReference
+    verifiedReference !== transactionReference
     || verifiedSessionId !== sessionId
     || (accountNumber && verifiedAccountNumber && accountNumber !== verifiedAccountNumber)
   ) {
@@ -79,8 +84,11 @@ export async function handleBillStackWebhook(rawBody: string) {
     return { status: 400, body: { status: false, message: 'BillStack payment details did not match.' } } as const
   }
 
-  if (status !== 'SUCCESS' || verified.is_settled !== true) {
-    return { status: 503, body: { status: false, message: 'BillStack payment is not settled yet. Please retry.' } } as const
+  // BillStack's transaction lookup reports successful reserved-account
+  // transfers as PAID. `is_settled` refers to downstream settlement and can
+  // still be false after the customer's transfer has been received.
+  if (status !== 'PAID' && !(status === 'SUCCESS' && verified.is_settled === true)) {
+    return { status: 503, body: { status: false, message: 'BillStack has not confirmed this payment as paid yet. Please retry.' } } as const
   }
   if (amount == null || amount <= 0 || (webhookAmount != null && Math.abs(webhookAmount - amount) > 0.01)) {
     console.error('[billstack-webhook] verified payment amount is invalid or mismatched')
