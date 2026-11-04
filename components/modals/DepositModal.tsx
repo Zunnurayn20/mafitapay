@@ -37,6 +37,7 @@ function cexExchangeLabel(exchange: CexExchange) {
 
 export function DepositModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter()
+  const user = useAppStore(state => state.user)
   const wallet = useAppStore(state => state.wallet)
   const kycSubmission = useAppStore(state => state.kycSubmission)
   const fundingAccountEligibility = useAppStore(state => state.fundingAccountEligibility)
@@ -231,6 +232,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   function renderAccountCard(account: FundingAccount) {
     const copied = copiedNumber === account.accountNumber
     const bankName = account.bank.replace(/\s*\(Formerly OK MFB\)/i, '').trim()
+    const customerAccountName = user?.name?.trim()
+      ? `${user.name.trim()} MAFITAPAY`
+      : account.accountName
+    const displayAccountName = account.provider === 'billstack' ? customerAccountName : account.accountName
 
     return (
       <div className="relative overflow-hidden rounded-2xl border border-[rgba(202,165,96,.26)] bg-[linear-gradient(180deg,#fcf7ec_0%,#f6efdd_100%)] p-4 text-[#2c2418] shadow-[0_12px_28px_rgba(0,0,0,.14)]">
@@ -249,8 +254,13 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
 
           <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
             <span className="flex shrink-0 items-center gap-2 font-bold"><UserRound size={14} className="text-[#8c6b31]" />Account name:</span>
-            <span className="min-w-0 truncate text-right text-sm font-semibold text-[#1f1a12]">{account.accountName}</span>
+            <span className="min-w-0 truncate text-right text-sm font-semibold text-[#1f1a12]">{displayAccountName}</span>
           </div>
+          {account.provider === 'billstack' && account.accountName !== displayAccountName && (
+            <div className="mt-1 text-right text-[10px] leading-relaxed text-[#7c6a4b]">
+              Bank may show the recipient as {account.accountName}.
+            </div>
+          )}
 
           <div className="mt-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[1px] text-[#8c6b31]"><Hash size={14} />Account number</div>
           <div className="mt-0.5 flex items-center justify-between gap-2">
