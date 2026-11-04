@@ -16,9 +16,10 @@ import { getFlutterwaveBalance } from '@/lib/server/flutterwave-collections'
 import { getAmigoBalance } from '@/lib/server/amigo-bills'
 import { getAsbdataBalance } from '@/lib/server/asbdata-bills'
 import { getBardetechBalance } from '@/lib/server/bardetech-bills'
-import { runEvmTreasuryBatchConversion } from '@/lib/server/crypto-deposit-sweeper'
+import { getSolanaTreasuryBalances, runEvmTreasuryBatchConversion } from '@/lib/server/crypto-deposit-sweeper'
 import { getBaseTreasuryBalances } from '@/lib/server/base-executor'
 import { getTonTreasuryBalances } from '@/lib/server/ton-executor'
+import { isBillStackEnabled } from '@/lib/server/billstack'
 import type { ProviderBalance } from '@/lib/server/provider-balance'
 import type { ProviderEvent, Transaction, User, Wallet } from '@/types'
 
@@ -196,7 +197,7 @@ export async function listAdminWalletRows(limit = 100, allUsers?: User[]): Promi
 export async function loadAdminOverviewData() {
   const usersPromise = listUsers()
   const walletsPromise = usersPromise.then(users => listAdminWalletRows(100, users))
-  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance, bardetechBalance, cryptoTreasury, baseTreasury, tonTreasury] = await Promise.all([
+  const [users, wallets, transactions, events, notifications, deposits, payouts, totalLiability, flutterwaveBalance, amigoBalance, asbdataBalance, bardetechBalance, cryptoTreasury, baseTreasury, tonTreasury, solanaTreasury] = await Promise.all([
     usersPromise,
     walletsPromise,
     listRecentTransactions(100),
@@ -212,6 +213,11 @@ export async function loadAdminOverviewData() {
     runEvmTreasuryBatchConversion({ dryRun: true, allowBelowThreshold: true }).catch(() => null),
     getBaseTreasuryBalances().catch(() => null),
     getTonTreasuryBalances().catch(() => null),
+    getSolanaTreasuryBalances().catch(() => ({
+      walletAddress: process.env.MAFITAPAY_SOLANA_EXECUTOR_ADDRESS?.trim() ?? '',
+      solLamports: null,
+      usdcUnits: null,
+    })),
   ])
 
   const today = new Date()
@@ -250,6 +256,13 @@ export async function loadAdminOverviewData() {
     amigoBalance,
     asbdataBalance,
     bardetechBalance,
+    {
+      provider: 'billstack',
+      label: 'BillStack NGN',
+      configured: isBillStackEnabled(),
+      balance: null,
+      message: 'BillStack’s published API does not document a merchant balance endpoint. Check the BillStack dashboard for the current balance.',
+    },
   ]
 
   // Only providers we could actually read count toward the total. A configured provider that
@@ -285,6 +298,7 @@ export async function loadAdminOverviewData() {
       cryptoTreasury,
       baseTreasury,
       tonTreasury,
+      solanaTreasury,
     },
     stats: {
       usersToday,

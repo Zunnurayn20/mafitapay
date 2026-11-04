@@ -192,7 +192,7 @@ export default async function AdminOverviewPage() {
                     title={entry.balance == null ? (entry.message ?? '') : undefined}
                   >
                     {entry.balance == null
-                      ? (entry.configured ? 'Error' : 'Off')
+                      ? (entry.configured ? (entry.provider === 'billstack' ? 'Dashboard' : 'Error') : 'Off')
                       : formatNaira(entry.balance)}
                   </span>
                 </div>
@@ -209,7 +209,7 @@ export default async function AdminOverviewPage() {
         )}
         <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--clay)] p-3">
           <div className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Crypto treasury balances</div>
-          <p className="mt-1 text-xs text-[var(--muted)]">Base USDC is the primary crypto liquidity treasury; TON has a separate treasury for TON network payouts. Local BSC and Polygon inventory is shown below with its estimated Base-USDC conversion value. Crypto is not included in NGN coverage until deliberately converted.</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Base USDC is the primary crypto liquidity treasury. TON and Solana have separate network treasuries. Local BSC and Polygon inventory is shown below with its estimated Base-USDC conversion value. Crypto is not included in NGN coverage until deliberately converted.</p>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-[rgba(46,170,92,.28)] bg-[rgba(46,170,92,.08)] p-3">
               <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--green2)]">Primary · Base treasury</div>
@@ -246,10 +246,29 @@ export default async function AdminOverviewPage() {
               <div className="mt-1 text-[10px] text-[#60a5fa]">Live TON gas and USDT payout balances</div>
             </div>
           </div>
-          {cryptoTreasuryItems.length === 0 ? (
-            <div className="mt-2 text-xs text-[var(--muted)]">No readable BSC or Polygon treasury balance.</div>
-          ) : (
+          {(cryptoTreasuryItems.length > 0 || liquidity.solanaTreasury) && (
             <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              {liquidity.solanaTreasury ? (
+                <div className="rounded-md border border-[rgba(153,69,255,.28)] bg-[rgba(153,69,255,.08)] p-2">
+                  <div className="text-[11px] font-bold text-[#c084fc]">Solana treasury · additional inventory</div>
+                  <div className="mt-1 font-mono text-xs font-bold text-[var(--text)]">
+                    {liquidity.solanaTreasury.solLamports == null
+                      ? 'Balance unavailable'
+                      : `${(Number(liquidity.solanaTreasury.solLamports) / 1_000_000_000).toFixed(5)} SOL`}
+                    {liquidity.solanaTreasury.usdcUnits != null && (
+                      <span className="ml-2">{(Number(liquidity.solanaTreasury.usdcUnits) / 1_000_000).toFixed(4)} USDC</span>
+                    )}
+                  </div>
+                  {liquidity.solanaTreasury.walletAddress && (
+                    <div className="mt-1 truncate font-mono text-[10px] text-[var(--muted)]" title={liquidity.solanaTreasury.walletAddress}>
+                      {liquidity.solanaTreasury.walletAddress}
+                    </div>
+                  )}
+                  <div className="mt-1 text-[10px] text-[#c084fc]">
+                    {liquidity.solanaTreasury.solLamports == null ? 'Solana RPC balance unavailable' : 'Live Solana gas and USDC balance'}
+                  </div>
+                </div>
+              ) : null}
               {cryptoTreasuryItems.map((item: any) => (
                 <div key={item.pairId} className="rounded-md bg-[var(--coal)] p-2">
                   <div className="text-[11px] font-bold text-[var(--text2)]">{item.pairId}</div>
@@ -258,6 +277,9 @@ export default async function AdminOverviewPage() {
                 </div>
               ))}
             </div>
+          )}
+          {cryptoTreasuryItems.length === 0 && !liquidity.solanaTreasury && (
+            <div className="mt-2 text-xs text-[var(--muted)]">No readable Solana, BSC, or Polygon treasury balance.</div>
           )}
         </div>
       </div>

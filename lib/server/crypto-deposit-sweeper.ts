@@ -394,6 +394,35 @@ function parseSolanaKeypairSecret(secret: string) {
   throw new Error('Solana private key must be a 32-byte seed or 64-byte secret key.')
 }
 
+export async function getSolanaTreasuryBalances() {
+  const configuredAddress = process.env.MAFITAPAY_SOLANA_EXECUTOR_ADDRESS?.trim()
+  const privateKey = process.env.MAFITAPAY_SOLANA_EXECUTOR_PRIVATE_KEY?.trim()
+  const walletAddress = configuredAddress
+    || (privateKey ? parseSolanaKeypairSecret(privateKey).publicKey.toBase58() : '')
+  if (!walletAddress) throw new Error('Solana treasury address is not configured.')
+
+  const owner = new PublicKey(walletAddress)
+  const connection = new Connection(
+    process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
+    'confirmed',
+  )
+  const usdcMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+  const [solLamports, tokenAccounts] = await Promise.all([
+    connection.getBalance(owner, 'confirmed'),
+    connection.getParsedTokenAccountsByOwner(owner, { mint: usdcMint }, 'confirmed'),
+  ])
+  const usdcUnits = tokenAccounts.value.reduce((sum, account) => {
+    const parsed = account.account.data.parsed as { info?: { tokenAmount?: { amount?: string } } }
+    return sum + BigInt(parsed.info?.tokenAmount?.amount ?? '0')
+  }, BigInt(0))
+
+  return {
+    walletAddress: owner.toBase58(),
+    solLamports: String(solLamports),
+    usdcUnits: usdcUnits.toString(),
+  }
+}
+
 async function createSolanaSweepFromSecret(secret: string) {
   const keypair = parseSolanaKeypairSecret(secret)
   const conn = new Connection(process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com', 'confirmed')
