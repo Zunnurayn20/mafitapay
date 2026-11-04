@@ -16,7 +16,7 @@ import { getFlutterwaveBalance } from '@/lib/server/flutterwave-collections'
 import { getAmigoBalance } from '@/lib/server/amigo-bills'
 import { getAsbdataBalance } from '@/lib/server/asbdata-bills'
 import { getBardetechBalance } from '@/lib/server/bardetech-bills'
-import { getSolanaTreasuryBalances, runEvmTreasuryBatchConversion } from '@/lib/server/crypto-deposit-sweeper'
+import { getSolanaTreasuryConversionQuotes, runEvmTreasuryBatchConversion } from '@/lib/server/crypto-deposit-sweeper'
 import { getBaseTreasuryBalances } from '@/lib/server/base-executor'
 import { getTonTreasuryBalances } from '@/lib/server/ton-executor'
 import { isBillStackEnabled } from '@/lib/server/billstack'
@@ -213,10 +213,13 @@ export async function loadAdminOverviewData() {
     runEvmTreasuryBatchConversion({ dryRun: true, allowBelowThreshold: true }).catch(() => null),
     getBaseTreasuryBalances().catch(() => null),
     getTonTreasuryBalances().catch(() => null),
-    getSolanaTreasuryBalances().catch(() => ({
+    getSolanaTreasuryConversionQuotes().catch(() => ({
       walletAddress: process.env.MAFITAPAY_SOLANA_EXECUTOR_ADDRESS?.trim() ?? '',
-      solLamports: null,
-      usdcUnits: null,
+      thresholdUsdcUnits: null,
+      conversions: [
+        { pairId: 'SOL_SOLANA', error: 'Solana treasury balance or quote unavailable.' },
+        { pairId: 'USDC_SOLANA', error: 'Solana treasury balance or quote unavailable.' },
+      ],
     })),
   ])
 
@@ -261,7 +264,7 @@ export async function loadAdminOverviewData() {
       label: 'BillStack NGN',
       configured: isBillStackEnabled(),
       balance: null,
-      message: 'BillStack’s published API does not document a merchant balance endpoint. Check the BillStack dashboard for the current balance.',
+      message: 'BillStack’s published API does not document a merchant balance endpoint, so no live naira balance is available here.',
     },
   ]
 
@@ -298,7 +301,7 @@ export async function loadAdminOverviewData() {
       cryptoTreasury,
       baseTreasury,
       tonTreasury,
-      solanaTreasury,
+      solanaTreasuryQuotes: solanaTreasury,
     },
     stats: {
       usersToday,

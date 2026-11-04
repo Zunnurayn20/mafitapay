@@ -423,6 +423,62 @@ export async function getSolanaTreasuryBalances() {
   }
 }
 
+export async function getSolanaTreasuryConversionQuotes() {
+  const balances = await getSolanaTreasuryBalances()
+  const baseConfig = getBaseExecutorConfig()
+  const sources = [
+    {
+      pairId: 'SOL_SOLANA',
+      fromToken: '11111111111111111111111111111111',
+      fromAmount: balances.solLamports,
+    },
+    {
+      pairId: 'USDC_SOLANA',
+      fromToken: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      fromAmount: balances.usdcUnits,
+    },
+  ]
+  const conversions: Array<Record<string, unknown>> = []
+
+  for (const source of sources) {
+    if (BigInt(source.fromAmount) <= BigInt(0)) {
+      conversions.push({ pairId: source.pairId, skipped: 'empty', quotedUsdcUnits: '0' })
+      continue
+    }
+    try {
+      const quote = await getLifiQuoteForConversion({
+        fromChain: 1151111081099710,
+        fromToken: source.fromToken,
+        toChain: 8453,
+        toToken: baseConfig.usdcAddress,
+        fromAmount: source.fromAmount,
+        fromAddress: balances.walletAddress,
+        toAddress: baseConfig.configuredAddress,
+      })
+      const quotedUsdcUnits = BigInt(quote?.estimate?.toAmountMin || quote?.estimate?.toAmount || '0')
+      conversions.push({
+        pairId: source.pairId,
+        sourceAmountUnits: source.fromAmount,
+        quotedUsdcUnits: quotedUsdcUnits.toString(),
+        quotedUsdcMinUnits: quote?.estimate?.toAmountMin ?? null,
+        belowThreshold: quotedUsdcUnits < EVM_TREASURY_BATCH_MIN_USDC_UNITS,
+        tool: quote?.tool ?? null,
+      })
+    } catch (error) {
+      conversions.push({
+        pairId: source.pairId,
+        error: error instanceof Error ? error.message : 'LI.FI quote unavailable',
+      })
+    }
+  }
+
+  return {
+    walletAddress: balances.walletAddress,
+    thresholdUsdcUnits: EVM_TREASURY_BATCH_MIN_USDC_UNITS.toString(),
+    conversions,
+  }
+}
+
 async function createSolanaSweepFromSecret(secret: string) {
   const keypair = parseSolanaKeypairSecret(secret)
   const conn = new Connection(process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com', 'confirmed')
