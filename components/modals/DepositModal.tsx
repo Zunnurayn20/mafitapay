@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { ArrowLeftRight, ArrowRight, Building2, Check, Coins, Copy, Hash, Shield, UserRound } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
@@ -29,6 +30,52 @@ function providerLabel(provider: FundingProvider | FundingAccount['provider']) {
   if (provider === 'flutterwave') return 'Flutterwave'
   if (provider === 'billstack') return 'BillStack'
   return provider
+}
+
+function BankMark({ name, provider }: { name: string; provider: FundingProvider | FundingAccount['provider'] }) {
+  const normalized = name.toLowerCase()
+  const logo = provider === 'flutterwave' || normalized.includes('flutterwave')
+    ? '/bank-logos/flutterwave.svg'
+    : normalized.includes('palmpay')
+      ? '/bank-logos/palmpay.png'
+      : null
+
+  if (logo) {
+    return (
+      <Image
+        aria-hidden="true"
+        src={logo}
+        alt=""
+        width={20}
+        height={20}
+        unoptimized
+        className="h-5 w-5 shrink-0 rounded-md object-contain"
+      />
+    )
+  }
+
+  const mark = normalized.includes('palmpay')
+    ? { initials: 'P', color: 'bg-[#00a85a]' }
+    : normalized.includes('9psb')
+      ? { initials: '9', color: 'bg-[#3154a4]' }
+      : normalized.includes('providus')
+        ? { initials: 'P', color: 'bg-[#6c3c91]' }
+        : normalized.includes('safehaven') || normalized.includes('safe haven')
+          ? { initials: 'S', color: 'bg-[#16828a]' }
+          : normalized.includes('moniepoint')
+            ? { initials: 'M', color: 'bg-[#df3b36]' }
+            : normalized.includes('flutterwave')
+              ? { initials: 'F', color: 'bg-[#f59e0b]' }
+              : { initials: name.trim().charAt(0).toUpperCase() || 'B', color: 'bg-[#8c6b31]' }
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-extrabold leading-none text-white shadow-sm ${mark.color}`}
+    >
+      {mark.initials}
+    </span>
+  )
 }
 
 function cexExchangeLabel(exchange: CexExchange) {
@@ -249,7 +296,10 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
           <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
             <span className="flex shrink-0 items-center gap-2 font-bold"><Building2 size={14} className="text-[#8c6b31]" />Bank name:</span>
-            <span className="min-w-0 truncate text-right text-sm font-semibold text-[#1f1a12]">{bankName}</span>
+            <span className="flex min-w-0 items-center justify-end gap-1.5 text-right text-sm font-semibold text-[#1f1a12]">
+              <BankMark name={bankName} provider={account.provider} />
+              <span className="min-w-0 truncate">{bankName}</span>
+            </span>
           </div>
 
           <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
