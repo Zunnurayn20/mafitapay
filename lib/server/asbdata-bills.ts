@@ -277,9 +277,8 @@ async function asbdataRequest(
       return { status: response.status, json, text }
     } catch (error) {
       lastError = error
-      // Only the catalog read is safe to retry blindly; purchases pass through here too, so retry
-      // only on transport errors, where no response was ever produced.
-      if (!isTransportError(error) || attempt === ASBDATA_MAX_ATTEMPTS) throw error
+      // Only catalog GETs are safe to retry. A timed-out purchase POST may still have been fulfilled.
+      if (method !== 'GET' || !isTransportError(error) || attempt === ASBDATA_MAX_ATTEMPTS) throw error
       await new Promise(resolve => setTimeout(resolve, 400 * attempt))
     }
   }
