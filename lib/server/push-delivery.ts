@@ -140,6 +140,7 @@ export async function sendPushNotification(input: PushNotificationInput): Promis
       // 404 UNREGISTERED means the app was uninstalled or the token rotated; 400 INVALID_ARGUMENT
       // on the token field means it was never valid. Both are permanent -- prune rather than retry.
       const tokenInvalid = response.status === 404
+        || (response.status === 403 && errorText.includes('SENDER_ID_MISMATCH'))
         || (response.status === 400 && errorText.includes('INVALID_ARGUMENT') && errorText.includes('token'))
 
       return {
