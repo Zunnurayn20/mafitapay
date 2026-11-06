@@ -5,6 +5,7 @@ import { createFlutterwaveVirtualAccount, isFlutterwaveCollectionsEnabled } from
 import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export const runtime = 'nodejs'
+const MAX_FLUTTERWAVE_DEPOSIT_FEE_NGN = 50
 
 export async function POST(req: Request) {
   const user = await requireUser()
@@ -27,9 +28,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Flutterwave deposit collections are not configured.', success: false }, { status: 503 })
   }
 
-  // MafitaPay covers Flutterwave's collection fee; customers receive the full deposit amount.
-  const fee = 0
-  const creditedAmount = numericAmount
+  const fee = Math.min(MAX_FLUTTERWAVE_DEPOSIT_FEE_NGN, Math.round(numericAmount * 0.02))
+  const creditedAmount = numericAmount - fee
+
+  if (creditedAmount <= 0) {
+    return NextResponse.json({ error: 'Deposit amount is too small after fees.', success: false }, { status: 400 })
+  }
 
   const ref = generateRef()
   const [firstName, ...restNames] = user.name.trim().split(/\s+/).filter(Boolean)
