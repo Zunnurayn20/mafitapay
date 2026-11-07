@@ -225,16 +225,15 @@
         var button = document.getElementById('retry')
         var status = document.getElementById('status')
 
-        var HOME = 'https://mafitapay.vercel.app/'
+        var HOME = 'https://www.mafitapay.com/'
 
-        // MainActivity passes the route the user was on, plus why this screen is up. Only the
-        // production origin or a local dev server is accepted, so the parameter cannot point the
+        // MainActivity passes the route the user was on, plus why this screen is up. Only MafitaPay
+        // production origins or a local dev server are accepted, so the parameter cannot point the
         // WebView at an arbitrary host.
         function isAllowedTarget(parsed) {
           var host = parsed.hostname
           if (parsed.protocol === 'https:') {
-            if (host === 'mafitapay.vercel.app') return true
-            if (host.endsWith('.mafitapay.vercel.app')) return true
+            if (host === 'www.mafitapay.com' || host === 'mafitapay.com') return true
           }
           // Dev builds run against MAFITAPAY_MOBILE_SERVER_URL, e.g. http://10.0.2.2:3000.
           if (parsed.protocol === 'http:') {
