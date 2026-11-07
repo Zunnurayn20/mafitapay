@@ -1,7 +1,7 @@
 'use client'
 
 import { getIdentityToken, useLoginWithEmail, usePrivy } from '@privy-io/react-auth'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAppStore, type SessionData } from '@/store'
 import { Button } from '@/components/ui/Button'
@@ -26,14 +26,25 @@ export function PrivyAuthAction({ intent, email = '', onCodeSentChange, profile 
   const [code, setCode] = useState('')
   const [codeSent, setCodeSent] = useState(false)
   const [codeEmail, setCodeEmail] = useState('')
+  const [signInPhase, setSignInPhase] = useState<'idle' | 'verifying' | 'finishing'>('idle')
+  const completionStarted = useRef(false)
 
   const { sendCode, loginWithCode } = useLoginWithEmail({
-    onComplete: () => { void finishSignIn() },
-    onError: () => setError('The email code could not be verified. Check the code and try again.'),
+    onComplete: () => {
+      completionStarted.current = true
+      setSignInPhase('finishing')
+      void finishSignIn()
+    },
+    onError: () => {
+      completionStarted.current = false
+      setLoading(false)
+      setSignInPhase('idle')
+      setError('The email code could not be verified. Check the code and try again.')
+    },
   })
 
   async function finishSignIn() {
-    setLoading(true); setError('')
+    setLoading(true); setSignInPhase('finishing'); setError('')
     try {
       const identityToken = await getIdentityToken()
       if (!identityToken) throw new Error('Privy did not return a sign-in token. Please try again.')
@@ -50,7 +61,11 @@ export function PrivyAuthAction({ intent, email = '', onCodeSentChange, profile 
       if (intent === 'login') window.dispatchEvent(new Event(DEVICE_LOGIN_ENROLL_EVENT))
       router.replace('/dashboard')
       void refreshSession()
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to sign in with Privy.') }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to sign in with Privy.')
+      setSignInPhase('idle')
+      completionStarted.current = false
+    }
     finally { setLoading(false) }
   }
 
@@ -77,16 +92,36 @@ export function PrivyAuthAction({ intent, email = '', onCodeSentChange, profile 
 
   async function verifyEmailCode() {
     if (!code.trim()) { setError('Enter the code we sent to your email.'); return }
-    setLoading(true); setError('')
+    completionStarted.current = false
+    setLoading(true); setSignInPhase('verifying'); setError('')
     try { await loginWithCode({ code: code.trim() }) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : 'That code could not be verified. Please try again.') }
-    finally { setLoading(false) }
+    catch (caught) {
+      if (!completionStarted.current) {
+        setLoading(false)
+        setSignInPhase('idle')
+        setError(caught instanceof Error ? caught.message : 'That code could not be verified. Please try again.')
+      }
+    }
   }
 
   function changeEmail() { setError(''); setCode(''); setCodeSent(false); setCodeEmail(''); onCodeSentChange(false) }
 
   return <div className="flex flex-col gap-3">
-    {!codeSent ? <Button type="button" variant="gold" size="xl" className="w-full" loading={loading} onClick={startSignIn}>{intent === 'register' ? 'Create account with email code' : 'Continue with email code'}</Button> : <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
+    {!codeSent ? <Button type="button" variant="gold" size="xl" className="w-full" loading={loading} onClick={startSignIn}>{intent === 'register' ? 'Create account with email code' : 'Continue with email code'}</Button> : signInPhase !== 'idle' ? <section role="status" aria-live="polite" aria-busy="true" className="flex min-h-36 items-center gap-4 rounded-2xl border border-[var(--gold)]/30 bg-[var(--coal)] p-5">
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-[var(--gold)]/30 bg-[var(--gold-tint)]">
+        <span className="spinner !h-5 !w-5 !border-2" aria-hidden="true" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[15px] font-semibold text-[var(--text)]">
+          {signInPhase === 'verifying' ? 'Checking your code' : 'Email confirmed'}
+        </span>
+        <span className="mt-1 block text-[13.5px] leading-relaxed text-[var(--text2)]">
+          {signInPhase === 'verifying'
+            ? 'Please wait while we verify your email.'
+            : 'Finishing your secure sign-in. Your dashboard is opening now.'}
+        </span>
+      </span>
+    </section> : <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
       <div className="text-[15px] font-semibold text-[var(--text)]">Check your email</div>
       <p className="text-[13.5px] text-[var(--text2)]">Enter the verification code sent to {codeEmail}.</p>
       <Input variant="auth" label="Email code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={8} autoFocus value={code} onChange={event => setCode(event.target.value.replace(/\s/g, ''))} placeholder="Enter code" />
