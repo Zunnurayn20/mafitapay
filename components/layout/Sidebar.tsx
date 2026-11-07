@@ -83,7 +83,7 @@ export function Sidebar() {
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center flex-shrink-0 overflow-hidden">
             <img
-              src="/mafitapay-logo.png"
+              src="/mafitapay-logo.webp"
               alt="MafitaPay logo"
               className="h-11 w-11 object-contain"
             />

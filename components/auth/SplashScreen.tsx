@@ -13,7 +13,7 @@ export function BrandSplash() {
         <div className="splash-ring" />
         <div className="splash-ring" />
         <div className="splash-mark" aria-hidden>
-          <img src="/mafitapay-logo.png" alt="" />
+          <img src="/mafitapay-logo.webp" alt="" />
         </div>
       </div>
 
