@@ -113,12 +113,16 @@ export function PrivyAuthAction({ intent, email = '', onCodeSentChange, profile 
       </span>
       <span className="min-w-0">
         <span className="block text-[15px] font-semibold text-[var(--text)]">
-          {signInPhase === 'verifying' ? 'Checking your code' : 'Email confirmed'}
+          {signInPhase === 'verifying'
+            ? (intent === 'register' ? 'Verifying your email' : 'Checking your code')
+            : (intent === 'register' ? 'Email verified' : 'Email confirmed')}
         </span>
         <span className="mt-1 block text-[13.5px] leading-relaxed text-[var(--text2)]">
           {signInPhase === 'verifying'
-            ? 'Please wait while we verify your email.'
-            : 'Finishing your secure sign-in. Your dashboard is opening now.'}
+            ? (intent === 'register' ? 'Please wait while we confirm your email address.' : 'Please wait while we verify your email.')
+            : (intent === 'register'
+              ? 'Setting up your MafitaPay account. Your dashboard will open shortly.'
+              : 'Finishing your secure sign-in. Your dashboard is opening now.')}
         </span>
       </span>
     </section> : <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
