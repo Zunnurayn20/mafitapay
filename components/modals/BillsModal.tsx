@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval, isBiometricApprovalEnabled } from '@/lib/client/biometric'
-import { refreshBillCatalog, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
+import { refreshBillCatalog, useBillCatalogLoading, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
 import {
   getBillServiceConfig,
   getDetectedNetworkProviderName,
@@ -256,6 +256,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const { modalData, refreshSession, showToast, transactions, securitySettings } = useAppStore()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
+  const billCatalogLoading = useBillCatalogLoading()
   const orderedNetworkProviders = [...networkProviders].sort((a, b) => getNetworkProviderOrder(a.name) - getNetworkProviderOrder(b.name))
   const service = (modalData.service as string) || 'Airtime'
   const selectedBillProvider = billProviders.find(item => item.name === service || item.id === service) ?? billProviders[0]
@@ -772,6 +773,19 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         {isDataService ? (
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
+            {billCatalogLoading && dataBundles.length === 0 ? (
+              <div role="status" aria-live="polite" aria-busy="true" className="flex min-h-44 flex-col items-center justify-center border border-[var(--border)] bg-[var(--coal)] px-5 py-6 text-center">
+                <div className="flex h-12 w-12 animate-pulse items-center justify-center rounded-full bg-[var(--clay2)] ring-1 ring-[var(--border)]">
+                  <Image src="/mafitapay-logo.webp" alt="" width={34} height={34} className="h-[34px] w-[34px] rounded-lg object-cover" />
+                </div>
+                <div className="mt-3 text-[11px] font-bold text-[var(--text)]">Loading {provider.split(' ')[0]} data plans</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Fetching current bundles and prices…</div>
+                <div className="mt-4 h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-[var(--clay2)]">
+                  <div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--gold)]" />
+                </div>
+              </div>
+            ) : (
+              <>
             {showPlanVendorPicker && (
               <div className="mb-3 border border-[var(--border)] bg-[var(--clay2)] px-3">
                 <select
@@ -885,12 +899,19 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 )
               })}
             </div>
+            {!billCatalogLoading && shownDataBundles.length === 0 && (
+              <div className="border border-[var(--border)] bg-[var(--coal)] px-4 py-5 text-center text-[10px] leading-relaxed text-[var(--muted)]">
+                No data plans are available for {provider} right now. Please try again shortly.
+              </div>
+            )}
             {activeDataBundleGroup?.key === 'special' && (
               <div className="mt-2 text-[10px] text-[var(--muted)]">
                 Some special plans do not include an explicit expiry in the provider catalog. We only show validity when the network states it.
               </div>
             )}
             {touched.amount && amountError && <div className="text-[10px] text-[var(--red2)] mt-1">{amountError}</div>}
+              </>
+            )}
           </div>
         ) : isPackageBillService ? (
           <div className="space-y-4">
