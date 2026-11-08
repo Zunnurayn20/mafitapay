@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Delete, Fingerprint, Sparkles, XCircle } from 'lucide-react'
+import Image from 'next/image'
+import { CheckCircle2, Delete, Fingerprint, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isNativeBiometricPlatform } from '@/lib/client/native-biometric'
 
@@ -80,8 +81,14 @@ function StatusPanel({
           {progress === undefined ? (
             <div className="spinner mx-auto" />
           ) : (
-            <div className="mx-auto flex h-14 w-14 animate-pulse items-center justify-center rounded-full bg-[rgba(202,165,96,.14)] text-[var(--gold2)]">
-              <Sparkles size={25} className="animate-bounce" />
+            <div className="mx-auto flex h-14 w-14 animate-pulse items-center justify-center rounded-full bg-[var(--coal)] ring-1 ring-[var(--border)]">
+              <Image
+                src="/mafitapay-logo.webp"
+                alt=""
+                width={38}
+                height={38}
+                className="h-[38px] w-[38px] rounded-[10px] object-cover"
+              />
             </div>
           )}
           <div className="mt-4 text-sm font-semibold text-[var(--text)]">{heading}</div>
