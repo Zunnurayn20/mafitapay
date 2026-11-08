@@ -335,6 +335,19 @@ function normalizeSize(size: string) {
   return trimmed
 }
 
+function normalizePlanSizeForMatching(size: string) {
+  return normalizeSize(size).toLowerCase().replace(/\s+/g, '')
+}
+
+function normalizeValidityForMatching(validity: string) {
+  return validity
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/days?/g, 'day')
+    .replace(/hours?/g, 'hour')
+}
+
 function parsePlanRow(row: Record<string, unknown>): AsbdataPlan | null {
   const planId =
     readNumber(row.id)
@@ -502,6 +515,35 @@ export async function getAsbdataPlanForPurchase(
   return priced.find(plan => plan.networkId === networkId && String(plan.planId) === String(planId)) ?? null
 }
 
+/**
+ * Find available ASBDATA SME alternatives that vend the same network, data size, and validity.
+ * Only the SME 1/SME 2 categories are interchangeable; other plan types are never substituted.
+ * Candidates that would cost the customer more than their selected plan are excluded.
+ */
+export async function getEquivalentAsbdataSmePlans(
+  selectedPlan: PricedAsbdataPlan,
+  maxRetailNgn: number,
+): Promise<PricedAsbdataPlan[]> {
+  const alternateType = selectedPlan.planTypeNormalized === 'SME'
+    ? 'SME2'
+    : selectedPlan.planTypeNormalized === 'SME2'
+      ? 'SME'
+      : null
+  if (!alternateType) return []
+
+  const plans = await getPricedAsbdataPlans()
+  return plans
+    .filter(plan => (
+      plan.networkId === selectedPlan.networkId
+      && plan.planTypeNormalized === alternateType
+      && normalizePlanSizeForMatching(plan.size) === normalizePlanSizeForMatching(selectedPlan.size)
+      && normalizeValidityForMatching(plan.validity) === normalizeValidityForMatching(selectedPlan.validity)
+      && plan.retailNgn <= maxRetailNgn
+      && plan.planId !== selectedPlan.planId
+    ))
+    .sort((left, right) => left.retailNgn - right.retailNgn || left.costNgn - right.costNgn)
+}
+
 export async function listAsbdataDataBundleNetworkProviders(
   networkProviders: NetworkProvider[],
   options?: { forceRefresh?: boolean },
@@ -598,7 +640,7 @@ function mapPurchaseResult(
     || readString(record.api_response).toLowerCase().includes('success')
 
   const looksFailed =
-    status >= 400
+    (status >= 400 && status < 500)
     || statusText.includes('fail')
     || statusText.includes('error')
     || statusText.includes('insufficient')
@@ -617,7 +659,9 @@ function mapPurchaseResult(
     networkId: context.networkId,
     planId: context.planId,
     // A 2xx with no readable status means we cannot prove either outcome.
-    indeterminate: !looksFailed && !looksSuccessful && status < 400,
+    // A server error may happen after a vendor has accepted the order. Do not let the
+    // caller retry with another plan unless ASBDATA gave an explicit rejection.
+    indeterminate: status >= 500 || (!looksFailed && !looksSuccessful && status < 400),
   }
 }
 
