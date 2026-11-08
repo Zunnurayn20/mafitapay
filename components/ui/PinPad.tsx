@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Delete, Fingerprint, XCircle } from 'lucide-react'
+import { CheckCircle2, Delete, Fingerprint, Sparkles, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isNativeBiometricPlatform } from '@/lib/client/native-biometric'
 
@@ -31,6 +31,8 @@ interface PinPadProps {
   status?: PinPadStatus
   statusTitle?: string
   statusMessage?: string
+  /** Simulated progress for a request with an unknown completion time; omit for the default pulse. */
+  statusProgress?: number
   statusReference?: string
   onRetry?: () => void
   onDone?: () => void
@@ -43,6 +45,7 @@ function StatusPanel({
   status,
   title,
   message,
+  progress,
   reference,
   onRetry,
   onDone,
@@ -53,6 +56,7 @@ function StatusPanel({
   status: Exclude<PinPadStatus, 'pin'>
   title?: string
   message?: string
+  progress?: number
   reference?: string
   onRetry?: () => void
   onDone?: () => void
@@ -73,11 +77,30 @@ function StatusPanel({
     <section className="px-1 pb-2 pt-1 text-center" aria-live="polite" aria-busy={status === 'processing'}>
       {status === 'processing' && (
         <>
-          <div className="spinner mx-auto" />
+          {progress === undefined ? (
+            <div className="spinner mx-auto" />
+          ) : (
+            <div className="mx-auto flex h-14 w-14 animate-pulse items-center justify-center rounded-full bg-[rgba(202,165,96,.14)] text-[var(--gold2)]">
+              <Sparkles size={25} className="animate-bounce" />
+            </div>
+          )}
           <div className="mt-4 text-sm font-semibold text-[var(--text)]">{heading}</div>
           <p className="mx-auto mt-2 max-w-[22rem] text-xs leading-relaxed text-[var(--muted)]">{copy}</p>
-          <div className="mx-auto mt-5 h-1.5 max-w-[16rem] overflow-hidden rounded-full bg-[var(--clay2)]">
-            <div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--gold)]" />
+          <div
+            className="mx-auto mt-5 h-2 max-w-[18rem] overflow-hidden rounded-full bg-[var(--clay2)]"
+            role="progressbar"
+            aria-label="Payment progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress === undefined ? undefined : Math.round(progress)}
+          >
+            <div
+              className={cn(
+                'h-full rounded-full bg-gradient-to-r from-[var(--gold)] via-[var(--gold2)] to-[var(--gold)] transition-[width] duration-1000 ease-out',
+                progress === undefined && 'w-1/2 animate-pulse',
+              )}
+              style={progress === undefined ? undefined : { width: `${Math.max(0, Math.min(100, progress))}%` }}
+            />
           </div>
         </>
       )}
@@ -163,6 +186,7 @@ export function PinPad({
   status = 'pin',
   statusTitle,
   statusMessage,
+  statusProgress,
   statusReference,
   onRetry,
   onDone,
@@ -218,6 +242,7 @@ export function PinPad({
           status={status}
           title={statusTitle}
           message={statusMessage}
+          progress={statusProgress}
           reference={statusReference}
           onRetry={onRetry}
           onDone={onDone}
