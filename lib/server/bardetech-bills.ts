@@ -11,13 +11,13 @@ import {
 } from '@/lib/server/data-pricing'
 
 /**
- * Bardetech VTU API — data bundles and airtime.
+ * Legacy Bardetech VTU API — data bundles and airtime.
  *
- * Docs: https://bardetech.com/documentation/ (live token rendered into the cURL examples)
+ * Docs: https://documenter.getpostman.com/view/12429346/UUxtFWYY?version=latest
  * Auth: Authorization: Token <token>
  *
- * API host: https://bardetech.com. The API paths, auth header, and request payloads remain the
- * same as the previous Bardetech API host.
+ * Use bardetechapi.com while Bardetech's replacement API is not ready. The newer bardetech.com
+ * deployment has a separate account system and may not accept the legacy API token.
  *
  *   GET  /api/user/           account / balance
  *   GET  /api/get/network/    network list
@@ -148,7 +148,7 @@ function readNumber(value: unknown): number | null {
 
 function getBardetechConfig() {
   return {
-    baseUrl: (process.env.MAFITAPAY_BARDETECH_BASE_URL?.trim() || 'https://bardetech.com').replace(/\/+$/, ''),
+    baseUrl: (process.env.MAFITAPAY_BARDETECH_BASE_URL?.trim() || 'https://bardetechapi.com').replace(/\/+$/, ''),
     token: process.env.MAFITAPAY_BARDETECH_TOKEN?.trim() || '',
     airtimeType: process.env.MAFITAPAY_BARDETECH_AIRTIME_TYPE?.trim() || 'VTU',
   }
