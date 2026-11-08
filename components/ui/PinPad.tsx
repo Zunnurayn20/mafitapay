@@ -96,7 +96,7 @@ function StatusPanel({
           <div
             className="mx-auto mt-5 h-2 max-w-[18rem] overflow-hidden rounded-full bg-[var(--clay2)]"
             role="progressbar"
-            aria-label="Payment progress"
+            aria-label="Request processing progress"
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progress === undefined ? undefined : Math.round(progress)}

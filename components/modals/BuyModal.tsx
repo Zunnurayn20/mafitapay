@@ -18,6 +18,11 @@ type Step = 'form' | 'pin'
 type AmountMode = 'ngn' | 'usd' | 'asset'
 const QUICK_NGN_AMOUNTS = [1000, 2000, 5000, 10000]
 const LAST_USED_BUY_ADDRESS_KEY = 'mafitapay:last-buy-addresses'
+const BUY_PROCESSING_MESSAGES = [
+  'Your purchase request is processing securely.',
+  'We’re waiting for the crypto provider to respond.',
+  'We’ll show the order outcome as soon as it’s confirmed.',
+]
 
 function getCustomerUsdNgnRate(asset?: CryptoAsset) {
   if (!asset) return 0
@@ -81,10 +86,26 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const [lockingQuote, setLockingQuote] = useState(false)
   const [submittingOrder, setSubmittingOrder] = useState(false)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [processingElapsedMs, setProcessingElapsedMs] = useState(0)
   const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [lastUsedAddress, setLastUsedAddress] = useState('')
   const addressInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (confirmStatus !== 'processing') {
+      setProcessingElapsedMs(0)
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setProcessingElapsedMs(elapsed => elapsed + 250)
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [confirmStatus])
+
+  const processingMessage = BUY_PROCESSING_MESSAGES[Math.floor(processingElapsedMs / 2400) % BUY_PROCESSING_MESSAGES.length]
+  const processingProgress = Math.min(92, 8 + Math.floor(processingElapsedMs / 250))
 
   const modalAsset = modalData.cryptoAsset as CryptoAsset | undefined
   const asset = buyableAssets.find(a => a.id === pairId)
@@ -515,10 +536,11 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? 'Order placed!' : undefined}
           statusMessage={confirmStatus === 'processing'
-            ? `Submitting ${asset.symbol} purchase and reserving your NGN balance.`
+            ? processingMessage
             : confirmStatus === 'success'
               ? `${formatCrypto(crypto, asset.symbol)} on ${asset.network} has been booked. NGN funds are locked until fulfillment or failure.`
               : confirmError}
+          statusProgress={confirmStatus === 'processing' ? processingProgress : undefined}
           statusReference={ref}
           onRetry={() => {
             if (!quote) {

@@ -14,6 +14,11 @@ import { formatNGN, generateRef } from '@/lib/utils'
 import type { Beneficiary } from '@/types'
 
 type Step = 'form' | 'pin'
+const WITHDRAW_PROCESSING_MESSAGES = [
+  'Your withdrawal request is being sent securely.',
+  'The payout provider may take a moment to respond.',
+  'We’ll show the payout status as soon as we hear back.',
+]
 
 export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const refreshSession = useAppStore(state => state.refreshSession)
@@ -33,11 +38,27 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [processingElapsedMs, setProcessingElapsedMs] = useState(0)
   const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [formError, setFormError] = useState('')
   const [reference, setReference] = useState('')
   const [settlementStatus, setSettlementStatus] = useState<'pending' | 'success'>('pending')
+
+  useEffect(() => {
+    if (confirmStatus !== 'processing') {
+      setProcessingElapsedMs(0)
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setProcessingElapsedMs(elapsed => elapsed + 250)
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [confirmStatus])
+
+  const processingMessage = WITHDRAW_PROCESSING_MESSAGES[Math.floor(processingElapsedMs / 2400) % WITHDRAW_PROCESSING_MESSAGES.length]
+  const processingProgress = Math.min(92, 8 + Math.floor(processingElapsedMs / 250))
 
   useEffect(() => {
     if (!open) return
@@ -260,12 +281,13 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
               ? settlementStatus === 'success' ? 'Withdrawal complete!' : 'Withdrawal submitted!'
               : undefined}
           statusMessage={confirmStatus === 'processing'
-            ? 'Submitting your bank payout. Funds stay locked until it settles.'
+            ? processingMessage
             : confirmStatus === 'success'
               ? settlementStatus === 'success'
                 ? `₦${(parseFloat(amount) || 0).toLocaleString()} has been sent to ${accountName}.`
                 : `₦${(parseFloat(amount) || 0).toLocaleString()} bank withdrawal to ${accountName} is pending payout settlement.`
               : confirmError}
+          statusProgress={confirmStatus === 'processing' ? processingProgress : undefined}
           statusReference={reference}
           onRetry={() => {
             setConfirmError('')
