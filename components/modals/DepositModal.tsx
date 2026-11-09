@@ -314,8 +314,8 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
             <span className="flex shrink-0 items-center gap-2 font-bold"><Building2 size={14} className="text-[#8c6b31]" />Bank name:</span>
             <span className="flex min-w-0 items-center justify-end gap-1.5 text-right text-sm font-semibold text-[#1f1a12]">
-              <BankMark name={bankName} provider={account.provider} />
               <span className="min-w-0 truncate">{bankName}</span>
+              <BankMark name={bankName} provider={account.provider} />
             </span>
           </div>
 
