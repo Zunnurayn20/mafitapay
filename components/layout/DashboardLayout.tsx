@@ -43,10 +43,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     (tx.status === 'pending' || tx.status === 'processing')
     && (tx.metadata?.settlementKind === 'bank_transfer_out' || tx.metadata?.settlementKind === 'bank_payout')
   ))
-  const hasPendingFlutterwaveBill = useAppStore(state => state.transactions.some(tx =>
+  const hasPendingBillStatusCheck = useAppStore(state => state.transactions.some(tx =>
     tx.status === 'pending'
     && tx.metadata?.settlementKind === 'provider_bill'
-    && tx.metadata?.providerName === 'flutterwave'
+    && (tx.metadata?.providerName === 'flutterwave' || tx.metadata?.providerName === 'bardetech')
   ))
   const hasPendingCryptoBuy = useAppStore(state => state.transactions.some(tx =>
     (tx.status === 'pending' || tx.status === 'processing')
@@ -63,7 +63,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const pendingBillSyncRef = useRef(false)
   const pendingCryptoSyncRef = useRef(false)
   pendingPayoutSyncRef.current = hasPendingBankPayout
-  pendingBillSyncRef.current = hasPendingFlutterwaveBill
+  pendingBillSyncRef.current = hasPendingBillStatusCheck
   pendingCryptoSyncRef.current = hasPendingCryptoBuy
   const isAdminRoute = pathname.startsWith('/admin')
   const isAnalyticsRoute = pathname.startsWith('/analytics')
@@ -158,7 +158,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       })()
     }
 
-    if (hasPendingCryptoBuy || hasPendingBankPayout || hasPendingFlutterwaveBill) refreshNow()
+    if (hasPendingCryptoBuy || hasPendingBankPayout || hasPendingBillStatusCheck) refreshNow()
 
     const interval = setInterval(refreshNow, 20_000)
     const handleVisibility = () => {
@@ -176,7 +176,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleFocus)
     }
-  }, [authResolved, hasPendingBankPayout, hasPendingCryptoBuy, hasPendingFlutterwaveBill, isAuthenticated, refreshSession])
+  }, [authResolved, hasPendingBankPayout, hasPendingCryptoBuy, hasPendingBillStatusCheck, isAuthenticated, refreshSession])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return

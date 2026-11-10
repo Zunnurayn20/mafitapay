@@ -54,6 +54,14 @@ export type BardetechPaymentResult = {
   indeterminate?: boolean
 }
 
+export type BardetechTransactionLookup = {
+  status: 'success' | 'failed' | 'pending' | 'unknown'
+  rawStatus: string | null
+  providerReference: string
+  reason?: string
+  payload?: Record<string, unknown>
+}
+
 type BardetechPlan = {
   networkId: number
   planId: number
@@ -156,6 +164,55 @@ function getBardetechConfig() {
 
 export function isBardetechBillsEnabled() {
   return Boolean(getBardetechConfig().token)
+}
+
+function normalizeTransactionStatus(value: unknown): BardetechTransactionLookup['status'] {
+  const status = readString(value).toLowerCase().trim()
+  if ([ 'success', 'successful', 'completed', 'complete', 'delivered', 'done' ].includes(status)) return 'success'
+  if ([ 'failed', 'failure', 'fail', 'rejected', 'cancelled', 'canceled' ].includes(status)) return 'failed'
+  if ([ 'pending', 'processing', 'queued', 'initiated', 'in progress', 'in_progress', 'new' ].includes(status)) return 'pending'
+  return 'unknown'
+}
+
+/**
+ * Read an existing transaction from Bardetech. This is a GET-only status check; it never
+ * resubmits a purchase. The legacy Postman docs publish the query route as /api/data/{id} for
+ * both data and airtime records.
+ */
+export async function getBardetechTransactionStatus(
+  providerReference: string,
+): Promise<BardetechTransactionLookup> {
+  const id = providerReference.trim()
+  if (!id || id.length > 160 || /[/?#]/.test(id)) throw new Error('A valid Bardetech transaction ID is required.')
+
+  const { status, json } = await bardetechRequest('GET', `/api/data/${encodeURIComponent(id)}`)
+  const envelope = isRecord(json) ? json : {}
+  const data = isRecord(envelope.data) ? envelope.data : {}
+  const transaction = isRecord(data.transaction) ? data.transaction : isRecord(envelope.transaction) ? envelope.transaction : {}
+  const rawStatus = [
+    transaction.Status, transaction.status, transaction.status_code,
+    data.Status, data.status, data.status_code,
+    envelope.Status, envelope.status_code,
+  ].map(readString).find(Boolean) ?? ''
+  const normalized = normalizeTransactionStatus(rawStatus)
+  const message = readString(transaction.api_response)
+    || readString(data.api_response)
+    || readString(envelope.api_response)
+    || readString(transaction.message)
+    || readString(data.message)
+    || readString(envelope.message)
+
+  if (status >= 400) {
+    throw new Error(`Bardetech status lookup failed (${status}).`)
+  }
+
+  return {
+    status: normalized,
+    rawStatus: rawStatus || null,
+    providerReference: id,
+    reason: normalized === 'failed' ? message || undefined : undefined,
+    payload: isRecord(json) ? json : undefined,
+  }
 }
 
 /**

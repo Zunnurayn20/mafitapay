@@ -8,6 +8,7 @@ import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetwor
 import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
+import { ensureBardetechBillSyncScheduler } from '@/lib/server/bardetech-bill-sync'
 import { generateRef } from '@/lib/utils'
 import type { AmigoDataPaymentResult } from '@/lib/server/amigo-bills'
 import type { AsbdataPaymentResult, PricedAsbdataPlan } from '@/lib/server/asbdata-bills'
@@ -34,6 +35,7 @@ function hasProviderForBillType(type: BillProvider['type']) {
 
 export async function GET(req: Request) {
   ensureFlutterwaveBillSyncScheduler()
+  ensureBardetechBillSyncScheduler()
   const user = await requireUser()
   if (!user) return unauthorized()
 
@@ -119,6 +121,7 @@ async function handleBillPayment(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
+  ensureBardetechBillSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   const body = await req.json()
   const user = await requireUser()
@@ -643,7 +646,7 @@ async function handleBillPayment(req: Request) {
     const pendingTransaction = await updatePendingTransactionMetadata(user.id, ref, {
       ...reservationTransaction.metadata,
       providerName: providerResult.provider,
-      providerReference: providerResult.providerReference || ref,
+      providerReference: providerResult.providerReference || (providerResult.provider === 'flutterwave' ? ref : undefined),
       providerStatus: providerResult.rawStatus || 'INDETERMINATE',
       ...(providerResult.provider === 'asbdata' && selectedProvider.type === 'data' && providerResult.planId !== undefined
         ? {

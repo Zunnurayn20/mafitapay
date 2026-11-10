@@ -19,6 +19,7 @@ import {
 } from '@/lib/server/data'
 import { getActualNativeFee, getPlatformCryptoCost, getProviderFeeEstimate } from '@/lib/server/crypto-platform-cost'
 import { getCryptoDisplaySymbolFromPairId } from '@/lib/crypto-symbols'
+import { AdminBillStatusCheck } from '@/components/admin/AdminBillStatusCheck'
 
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -72,6 +73,10 @@ export default async function AdminTransactionDetailPage({
     .filter((event, index, events) => events.findIndex(candidate => candidate.id === event.id) === index)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   const transaction = record.transaction
+  const isPendingBardetechBill = transaction.status === 'pending'
+    && (transaction.type === 'data' || transaction.type === 'airtime')
+    && transaction.metadata?.settlementKind === 'provider_bill'
+    && transaction.metadata?.providerName === 'bardetech'
   const isCredit = ['deposit', 'transfer_in', 'crypto_sell', 'referral_bonus', 'reward_bonus', 'admin_credit', 'p2p_deposit'].includes(transaction.type)
   const platformCost = cryptoOrder?.side === 'buy' ? getPlatformCryptoCost(cryptoOrder) : null
   const providerFees = cryptoOrder?.side === 'buy' ? getProviderFeeEstimate(cryptoOrder) : []
@@ -127,6 +132,18 @@ export default async function AdminTransactionDetailPage({
           </div>
         ) : null}
       </section>
+
+      {isPendingBardetechBill ? (
+        <AdminPageCard title="Provider status check" description="Pending Bardetech data and airtime purchases are checked automatically. You can also request a fresh lookup now.">
+          <div className="p-4">
+            {typeof transaction.metadata?.providerReference === 'string'
+              && transaction.metadata.providerReference.trim()
+              && transaction.metadata.providerReference !== transaction.reference
+              ? <AdminBillStatusCheck transactionId={transaction.id} />
+              : <p className="text-sm text-[var(--muted)]">Bardetech did not return a provider transaction ID for this request. Automatic lookup is unavailable for this purchase; support may need to confirm it directly with Bardetech.</p>}
+          </div>
+        </AdminPageCard>
+      ) : null}
 
       {transaction.type === 'crypto_buy' && (
         <AdminPageCard

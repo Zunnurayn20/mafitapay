@@ -5129,8 +5129,8 @@ export async function listTransactionsByStatuses(
 export async function listPendingBillTransactions(limit = 50, userId?: string): Promise<Array<{ userId: string; transaction: Transaction }>> {
   await ensureDbReady()
   const resultLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50
-  // Fetch extra rows because pending bills from other providers are intentionally excluded below.
-  // Keep the provider filter identical for PostgreSQL and SQLite.
+  // Fetch extra rows so the provider-specific status syncers can select their own pending items.
+  // Keep the bill-type filter identical for PostgreSQL and SQLite.
   const queryLimit = Math.min(resultLimit * 5, 250)
   const userClause = userId ? 'AND user_id = ?' : ''
   const params = userId ? [userId, queryLimit] : [queryLimit]
@@ -5161,7 +5161,7 @@ export async function listPendingBillTransactions(limit = 50, userId?: string): 
       userId: row.user_id,
       transaction: mapTransactionRow(row),
     }))
-    .filter(item => item.transaction.metadata?.providerName === 'flutterwave' && item.transaction.metadata?.settlementKind === 'provider_bill')
+    .filter(item => item.transaction.metadata?.settlementKind === 'provider_bill')
     .slice(0, resultLimit)
 }
 
