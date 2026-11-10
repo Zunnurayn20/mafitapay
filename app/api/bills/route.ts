@@ -9,6 +9,7 @@ import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetech
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { ensureBardetechBillSyncScheduler } from '@/lib/server/bardetech-bill-sync'
+import { ensureAsbdataBillSyncScheduler, syncAsbdataBill } from '@/lib/server/asbdata-bill-sync'
 import { generateRef } from '@/lib/utils'
 import type { AmigoDataPaymentResult } from '@/lib/server/amigo-bills'
 import type { AsbdataPaymentResult, PricedAsbdataPlan } from '@/lib/server/asbdata-bills'
@@ -36,6 +37,7 @@ function hasProviderForBillType(type: BillProvider['type']) {
 export async function GET(req: Request) {
   ensureFlutterwaveBillSyncScheduler()
   ensureBardetechBillSyncScheduler()
+  ensureAsbdataBillSyncScheduler()
   const user = await requireUser()
   if (!user) return unauthorized()
 
@@ -122,6 +124,7 @@ async function handleBillPayment(req: Request) {
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
   ensureBardetechBillSyncScheduler()
+  ensureAsbdataBillSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   const body = await req.json()
   const user = await requireUser()
@@ -663,6 +666,11 @@ async function handleBillPayment(req: Request) {
     })
     if (!pendingTransaction) throw new Error('Unable to preserve pending bill payment details.')
     if (providerResult.provider === 'flutterwave') void kickPendingFlutterwaveBillSync()
+    if (providerResult.provider === 'asbdata' && providerResult.providerReference) {
+      void syncAsbdataBill(ref).catch(error => {
+        console.warn('[bills] ASBDATA follow-up status lookup failed:', error instanceof Error ? error.message : 'unknown error')
+      })
+    }
     return NextResponse.json({
       data: { transaction: pendingTransaction, wallet: reservation.wallet },
       message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',

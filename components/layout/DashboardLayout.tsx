@@ -46,7 +46,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const hasPendingBillStatusCheck = useAppStore(state => state.transactions.some(tx =>
     tx.status === 'pending'
     && tx.metadata?.settlementKind === 'provider_bill'
-    && (tx.metadata?.providerName === 'flutterwave' || tx.metadata?.providerName === 'bardetech')
+    && (tx.metadata?.providerName === 'flutterwave' || tx.metadata?.providerName === 'bardetech' || tx.metadata?.providerName === 'asbdata')
   ))
   const hasPendingCryptoBuy = useAppStore(state => state.transactions.some(tx =>
     (tx.status === 'pending' || tx.status === 'processing')

@@ -43,6 +43,14 @@ export type AsbdataPaymentResult = {
   indeterminate?: boolean
 }
 
+export type AsbdataTransactionLookup = {
+  status: 'success' | 'failed' | 'pending' | 'unknown'
+  rawStatus: string | null
+  providerReference: string
+  reason?: string
+  payload?: Record<string, unknown>
+}
+
 type AsbdataPlan = {
   networkId: number
   planId: number
@@ -139,6 +147,54 @@ function getAsbdataConfig() {
 
 export function isAsbdataBillsEnabled() {
   return Boolean(getAsbdataConfig().token)
+}
+
+function normalizeTransactionStatus(value: unknown): AsbdataTransactionLookup['status'] {
+  const status = readString(value).toLowerCase().trim()
+  if (['success', 'successful', 'completed', 'complete', 'delivered', 'done'].includes(status)) return 'success'
+  if (['failed', 'failure', 'fail', 'rejected', 'cancelled', 'canceled', 'error'].includes(status)) return 'failed'
+  if (['pending', 'processing', 'queued', 'initiated', 'in progress', 'in_progress', 'new'].includes(status)) return 'pending'
+  return 'unknown'
+}
+
+/**
+ * Retrieve an existing ASBDATA data or airtime transaction. The published Postman collection
+ * documents GET /api/data/{id} for both transaction-query operations. This never submits a vend.
+ */
+export async function getAsbdataTransactionStatus(
+  providerReference: string,
+): Promise<AsbdataTransactionLookup> {
+  const id = providerReference.trim()
+  if (!id || id.length > 160 || /[/?#]/.test(id)) throw new Error('A valid ASBDATA transaction ID is required.')
+
+  const { status, json } = await asbdataRequest('GET', `/api/data/${encodeURIComponent(id)}`)
+  const envelope = isRecord(json) ? json : {}
+  const data = isRecord(envelope.data) ? envelope.data : {}
+  const transaction = isRecord(data.transaction) ? data.transaction : isRecord(envelope.transaction) ? envelope.transaction : data
+  const rawStatus = [
+    transaction.Status, transaction.status, transaction.status_code,
+    data.Status, data.status, data.status_code,
+    envelope.Status, envelope.status_code,
+  ].map(readString).find(Boolean) ?? ''
+  const normalized = normalizeTransactionStatus(rawStatus)
+  const message = readString(transaction.api_response)
+    || readString(transaction.response)
+    || readString(transaction.message)
+    || readString(data.api_response)
+    || readString(data.response)
+    || readString(data.message)
+    || readString(envelope.api_response)
+    || readString(envelope.message)
+
+  if (status >= 400) throw new Error(`ASBDATA status lookup failed (${status}).`)
+
+  return {
+    status: normalized,
+    rawStatus: rawStatus || null,
+    providerReference: id,
+    reason: normalized === 'failed' ? message || undefined : undefined,
+    payload: isRecord(json) ? json : undefined,
+  }
 }
 
 /**
@@ -625,8 +681,12 @@ function mapPurchaseResult(
     || readString(record.reference)
     || readString(record.transid)
     || readString(record.transaction_id)
+    || readString(record['request-id'])
+    || readString(record.request_id)
     || readString(record.id)
     || readString(isRecord(record.data) ? record.data.ident : undefined)
+    || readString(isRecord(record.data) ? record.data['request-id'] : undefined)
+    || readString(isRecord(record.data) ? record.data.request_id : undefined)
     || undefined
 
   const looksSuccessful =

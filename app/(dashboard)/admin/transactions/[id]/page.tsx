@@ -73,10 +73,13 @@ export default async function AdminTransactionDetailPage({
     .filter((event, index, events) => events.findIndex(candidate => candidate.id === event.id) === index)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   const transaction = record.transaction
-  const isPendingBardetechBill = transaction.status === 'pending'
+  const billProviderName = transaction.metadata?.providerName === 'asbdata' || transaction.metadata?.providerName === 'bardetech'
+    ? transaction.metadata.providerName
+    : null
+  const isPendingProviderBill = transaction.status === 'pending'
     && (transaction.type === 'data' || transaction.type === 'airtime')
     && transaction.metadata?.settlementKind === 'provider_bill'
-    && transaction.metadata?.providerName === 'bardetech'
+    && billProviderName !== null
   const isCredit = ['deposit', 'transfer_in', 'crypto_sell', 'referral_bonus', 'reward_bonus', 'admin_credit', 'p2p_deposit'].includes(transaction.type)
   const platformCost = cryptoOrder?.side === 'buy' ? getPlatformCryptoCost(cryptoOrder) : null
   const providerFees = cryptoOrder?.side === 'buy' ? getProviderFeeEstimate(cryptoOrder) : []
@@ -133,14 +136,14 @@ export default async function AdminTransactionDetailPage({
         ) : null}
       </section>
 
-      {isPendingBardetechBill ? (
-        <AdminPageCard title="Provider status check" description="Pending Bardetech data and airtime purchases are checked automatically. You can also request a fresh lookup now.">
+      {isPendingProviderBill ? (
+        <AdminPageCard title="Provider status check" description={`Pending ${billProviderName === 'asbdata' ? 'ASBDATA' : 'Bardetech'} data and airtime purchases are checked automatically. You can also request a fresh lookup now.`}>
           <div className="p-4">
             {typeof transaction.metadata?.providerReference === 'string'
               && transaction.metadata.providerReference.trim()
               && transaction.metadata.providerReference !== transaction.reference
-              ? <AdminBillStatusCheck transactionId={transaction.id} />
-              : <p className="text-sm text-[var(--muted)]">Bardetech did not return a provider transaction ID for this request. Automatic lookup is unavailable for this purchase; support may need to confirm it directly with Bardetech.</p>}
+              ? <AdminBillStatusCheck transactionId={transaction.id} providerName={billProviderName} />
+              : <p className="text-sm text-[var(--muted)]">{billProviderName === 'asbdata' ? 'ASBDATA' : 'Bardetech'} did not return a provider transaction ID for this request. Automatic lookup is unavailable for this purchase; support may need to confirm it directly with the provider.</p>}
           </div>
         </AdminPageCard>
       ) : null}
