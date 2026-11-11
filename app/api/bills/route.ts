@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { appendNotification, createNotification, requireUser, unauthorized } from '@/lib/server/auth'
 import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPhoneNumber, normalizeNigerianPhoneNumber } from '@/lib/bill-config'
-import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
+import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getAnyTransactionById, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getTransactionById, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
@@ -16,6 +16,67 @@ import type { FlutterwaveBillPaymentResult } from '@/lib/server/flutterwave-bill
 import type { BillProvider, Transaction } from '@/types'
 
 type AirtimeProvider = 'bardetech' | 'asbdata'
+
+const BILL_REQUEST_ID_PATTERN = /^bill_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function buildBillRequestFingerprint(input: {
+  serviceId: string
+  serviceType: BillProvider['type']
+  provider?: string
+  account: string
+  amount: number
+  billerCode?: string
+  itemCode?: string
+  providerPlanId?: string
+  providerNetworkId?: number
+  providerName?: string
+}) {
+  return JSON.stringify({
+    serviceId: input.serviceId,
+    serviceType: input.serviceType,
+    provider: input.provider ?? null,
+    account: input.account,
+    amount: input.amount,
+    billerCode: input.billerCode ?? null,
+    itemCode: input.itemCode ?? null,
+    providerPlanId: input.providerPlanId ?? null,
+    providerNetworkId: input.providerNetworkId ?? null,
+    providerName: input.providerName ?? null,
+  })
+}
+
+async function getBillRequestReplay(userId: string, requestId: string, fingerprint: string) {
+  const existing = await getTransactionById(userId, requestId)
+  if (existing) {
+    const wallet = await getWalletByUserId(userId)
+    const matchesRequest = existing.metadata?.billRequestFingerprint === fingerprint
+    const error = !matchesRequest
+      ? 'An earlier purchase attempt already uses this request. Its transaction status is included below; no new purchase was submitted.'
+      : existing.status === 'failed'
+        ? 'This purchase attempt already failed. Start a new attempt if you want to retry.'
+        : null
+
+    return NextResponse.json({
+      ...(error ? { error } : {}),
+      data: { transaction: existing, wallet, idempotentReplay: true },
+      success: !error,
+      code: !matchesRequest ? 'BILL_REQUEST_KEY_REUSED' : existing.status === 'failed' ? 'BILL_REQUEST_ALREADY_FAILED' : undefined,
+    }, {
+      status: error ? 409 : existing.status === 'pending' || existing.status === 'processing' ? 202 : 200,
+    })
+  }
+
+  const existingAny = await getAnyTransactionById(requestId)
+  if (existingAny) {
+    return NextResponse.json({
+      error: 'This purchase request could not be matched safely. Check transaction history before trying again.',
+      success: false,
+      code: 'BILL_REQUEST_KEY_REUSED',
+    }, { status: 409 })
+  }
+
+  return null
+}
 
 function getConfiguredAirtimeProviders(): AirtimeProvider[] {
   return [
@@ -138,6 +199,11 @@ async function handleBillPayment(req: Request) {
   // Older app builds omit this; fall back to the previous inference in that case.
   const providerName = typeof body.providerName === 'string' ? body.providerName.trim() : undefined
   const rawAccount = typeof body.account === 'string' ? body.account.trim() : ''
+  const rawRequestId = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : ''
+  if (rawRequestId && !BILL_REQUEST_ID_PATTERN.test(rawRequestId)) {
+    return NextResponse.json({ error: 'Invalid purchase request. Please restart this payment.', success: false }, { status: 400 })
+  }
+  const requestId = rawRequestId || undefined
   const [providers, billTypeSettings] = await Promise.all([getBillProviders(), getBillTypeSettings()])
   const selectedProvider = providers.find(item => item.name === service || item.id === service)
 
@@ -201,6 +267,23 @@ async function handleBillPayment(req: Request) {
 
   if ((selectedProvider.type === 'airtime' || selectedProvider.type === 'data') && !isValidNigerianPhoneNumber(account)) {
     return NextResponse.json({ error: 'Enter a valid phone number.', success: false }, { status: 400 })
+  }
+
+  const requestFingerprint = buildBillRequestFingerprint({
+    serviceId: selectedProvider.id,
+    serviceType: selectedProvider.type,
+    provider,
+    account,
+    amount: numericAmount,
+    billerCode,
+    itemCode,
+    providerPlanId,
+    providerNetworkId,
+    providerName,
+  })
+  if (requestId) {
+    const replay = await getBillRequestReplay(user.id, requestId, requestFingerprint)
+    if (replay) return replay
   }
 
   const airtimeNetworkIds = new Map<AirtimeProvider, number>()
@@ -335,6 +418,7 @@ async function handleBillPayment(req: Request) {
   }
 
   const ref = generateRef()
+  const transactionId = requestId || ref
 
   const flutterwaveInput = {
     type: selectedProvider.type,
@@ -357,7 +441,7 @@ async function handleBillPayment(req: Request) {
       ? resolvedDataProvider
       : 'flutterwave'
   const reservationTransaction: Transaction = {
-    id: ref,
+    id: transactionId,
     type: selectedProvider.type as Transaction['type'],
     status: 'pending',
     amount: -chargeAmount,
@@ -368,6 +452,7 @@ async function handleBillPayment(req: Request) {
     icon: selectedProvider.icon,
     metadata: {
       serviceId: selectedProvider.id,
+      billRequestFingerprint: requestFingerprint,
       serviceType: selectedProvider.type,
       serviceName: serviceConfig.displayName,
       provider: serviceConfig.requiresNetwork ? provider : undefined,
@@ -394,6 +479,10 @@ async function handleBillPayment(req: Request) {
       transaction: reservationTransaction,
     })
   } catch (error) {
+    if (requestId) {
+      const replay = await getBillRequestReplay(user.id, requestId, requestFingerprint)
+      if (replay) return replay
+    }
     if (error instanceof Error && error.message === 'Insufficient balance') {
       return NextResponse.json({ error: 'Insufficient balance', success: false }, { status: 400 })
     }
@@ -551,7 +640,7 @@ async function handleBillPayment(req: Request) {
       failureReason: providerResult.reason,
       payload: providerResult.payload,
     })
-    const pendingTransaction = await updatePendingTransactionMetadata(user.id, ref, {
+    const pendingTransaction = await updatePendingTransactionMetadata(user.id, transactionId, {
       ...reservationTransaction.metadata,
       providerName: providerResult.provider,
       providerReference: providerResult.providerReference || ref,
@@ -577,7 +666,7 @@ async function handleBillPayment(req: Request) {
       payload: providerResult.payload,
     })
 
-    const released = await resolvePendingTransaction(user.id, ref, 'failed')
+    const released = await resolvePendingTransaction(user.id, transactionId, 'failed')
     if (released && released.transaction.status !== 'failed') {
       return NextResponse.json({ error: 'The provider reported conflicting bill payment results. Please contact support.', success: false }, { status: 409 })
     }
@@ -599,7 +688,7 @@ async function handleBillPayment(req: Request) {
     && selectedProvider.type === 'data'
   )
   const transaction = {
-    id: ref,
+    id: transactionId,
     type: selectedProvider.type as Transaction['type'],
     status: 'pending',
     amount: -chargeAmount,
@@ -610,6 +699,7 @@ async function handleBillPayment(req: Request) {
     icon: selectedProvider.icon,
     metadata: {
       serviceId: selectedProvider.id,
+      billRequestFingerprint: requestFingerprint,
       serviceType: selectedProvider.type,
       serviceName: serviceConfig.displayName,
       provider: serviceConfig.requiresNetwork ? provider : undefined,
@@ -640,10 +730,10 @@ async function handleBillPayment(req: Request) {
     },
   }
 
-  const metadataUpdated = await updatePendingTransactionMetadata(user.id, ref, transaction.metadata)
+  const metadataUpdated = await updatePendingTransactionMetadata(user.id, transactionId, transaction.metadata)
   if (!metadataUpdated) throw new Error('Unable to update reserved bill payment details.')
   const result = providerResult.status === 'success'
-    ? await resolvePendingTransaction(user.id, ref, 'success')
+    ? await resolvePendingTransaction(user.id, transactionId, 'success')
     : { transaction: metadataUpdated, wallet: await getWalletByUserId(user.id) }
   if (!result) throw new Error('Unable to settle bill payment reservation.')
   if (providerResult.status === 'success' && result.transaction.status !== 'success') {

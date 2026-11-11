@@ -25,6 +25,16 @@ type Step = 'form' | 'phone' | 'pin'
 
 const INITIAL_TOUCHED: TouchedState = { amount: false, account: false, provider: false }
 
+function createBillRequestUuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+    const random = Math.floor(Math.random() * 16)
+    return (character === 'x' ? random : (random & 0x3) | 0x8).toString(16)
+  })
+}
+
 const DATA_BUNDLE_GROUPS: Array<{ key: DataBundleGroupKey; label: string }> = [
   { key: 'daily', label: 'Daily' },
   { key: 'few_days', label: '2-5 Days' },
@@ -241,7 +251,7 @@ function formatPlanCategoryLabel(category: string) {
 }
 
 export function BillsModal({ open, onClose }: BillsModalProps) {
-  const { modalData, refreshSession, showToast, transactions, securitySettings } = useAppStore()
+  const { modalData, refreshSession, showToast, transactions, securitySettings, user } = useAppStore()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
   const orderedNetworkProviders = [...networkProviders].sort((a, b) => getNetworkProviderOrder(a.name) - getNetworkProviderOrder(b.name))
@@ -261,6 +271,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
   const formAccountInputRef = useRef<HTMLInputElement>(null)
   const phoneAccountInputRef = useRef<HTMLInputElement>(null)
+  const billRequestKeyRef = useRef<string | null>(null)
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
@@ -277,6 +288,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     providerNetworkId?: number
     providerName?: 'flutterwave' | 'amigo' | 'asbdata' | 'bardetech'
   } | null>(null)
+  const billRequestStorageKey = user?.id ? `mafita:bill-request:${user.id}` : null
   const needsProvider = serviceConfig?.requiresNetwork ?? false
   const needsAccount = serviceConfig?.requiresAccount ?? true
   const amts = serviceConfig?.quickAmounts ?? [1000, 2000, 5000, 10000]
@@ -366,6 +378,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
 
   useEffect(() => {
     if (!open) return
+    if (billRequestStorageKey && !billRequestKeyRef.current) {
+      try {
+        billRequestKeyRef.current = sessionStorage.getItem(billRequestStorageKey)
+      } catch {
+        // The in-memory key still protects retries for this mounted modal.
+      }
+    }
     setAmount('')
     setAccount('')
     setSelectedBillerCode('')
@@ -384,7 +403,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setSuccessMessage('')
     setReference('')
     setRetryReturnsToForm(false)
-  }, [defaultNetworkProviderName, open, service])
+  }, [billRequestStorageKey, defaultNetworkProviderName, open, service])
 
   useEffect(() => {
     if (!isPackageBillService) return
@@ -565,6 +584,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     if (confirmStatus === 'processing') return
     setConfirmError('')
     setConfirmStatus('processing')
+    const idempotencyKey = billRequestKeyRef.current || `bill_${createBillRequestUuid()}`
+    billRequestKeyRef.current = idempotencyKey
+    try {
+      if (billRequestStorageKey) sessionStorage.setItem(billRequestStorageKey, idempotencyKey)
+    } catch {
+      // Keep the key in memory when storage is unavailable.
+    }
     try {
       const response = await fetch('/api/bills', {
         method: 'POST',
@@ -582,9 +608,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           providerPlanId: nextRequest.providerPlanId,
           providerNetworkId: nextRequest.providerNetworkId,
           providerName: nextRequest.providerName,
+          idempotencyKey,
         }),
       })
-      const payload = await parseJsonBody<{ transaction?: { reference?: string; status?: string } }>(response)
+      const payload = await parseJsonBody<{
+        transaction?: { id?: string; reference?: string; status?: string }
+        idempotentReplay?: boolean
+      }>(response)
 
       if (!response.ok || payload.success === false) {
         // Server re-priced the plan; show the new figure and send the user back to review.
@@ -592,9 +622,24 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           const nextAmount = Number(payload.amount)
           setAmount(String(nextAmount))
           setRetryReturnsToForm(true)
+          clearBillRequestKey()
           setConfirmError(typeof payload.error === 'string' ? payload.error : 'This plan\'s price changed. Please review and try again.')
           setConfirmStatus('error')
           return
+        }
+        const existingTransaction = payload.data?.transaction
+        if (existingTransaction?.status === 'success') {
+          setReference(existingTransaction.reference || '')
+          setSuccessMessage(`This payment was already completed successfully. Reference ${existingTransaction.reference || 'available in transaction history'}.`)
+          clearBillRequestKey()
+          setConfirmStatus('success')
+          await refreshSession()
+          return
+        }
+        if (existingTransaction?.status === 'pending' || existingTransaction?.status === 'processing') {
+          setReference(existingTransaction.reference || '')
+        } else if (response.status < 500 && payload.code !== 'BILL_REQUEST_KEY_REUSED') {
+          clearBillRequestKey()
         }
         throw new Error(typeof payload.error === 'string' && payload.error.trim()
           ? payload.error
@@ -609,6 +654,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
       await refreshSession()
       const txStatus = transaction.status
       setReference(transaction.reference || generateRef())
+      if (txStatus === 'success' || txStatus === 'failed') clearBillRequestKey()
       setSuccessMessage(txStatus === 'success'
         ? `₦${amt.toLocaleString()} ${serviceName} payment was successful.`
         : `₦${amt.toLocaleString()} ${serviceName} payment is being processed. We will update your transaction status shortly.`)
@@ -616,6 +662,15 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     } catch (error) {
       setConfirmError(toUserMessage(error, 'Bill payment failed.'))
       setConfirmStatus('error')
+    }
+  }
+
+  function clearBillRequestKey() {
+    billRequestKeyRef.current = null
+    try {
+      if (billRequestStorageKey) sessionStorage.removeItem(billRequestStorageKey)
+    } catch {
+      // Storage may be unavailable in restricted WebViews.
     }
   }
 
