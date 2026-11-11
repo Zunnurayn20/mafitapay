@@ -111,6 +111,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   const asset = buyableAssets.find(a => a.id === pairId)
     ?? (modalAsset?.id === pairId && modalAsset.buyEnabled !== false ? modalAsset : undefined)
     ?? buyableAssets[0]
+  const baseUsdcBuyRate = assets.find(item => item.id === 'USDC_BASE')?.buyRate
   const rawAmount = parseFloat(amount) || 0
   const usdNgnRate = getCustomerUsdNgnRate(asset)
   const amt = !asset ? 0 : amountMode === 'asset'
@@ -127,7 +128,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       ? getCryptoNetworkFeeNgn(asset, 'buy')
       : 0
   const totalDebit = orderNgn + fee
-  const minimumBuyNgn = asset ? getMinimumBuyNgnForAsset(asset) : 1000
+  const minimumBuyNgn = asset ? getMinimumBuyNgnForAsset(asset, baseUsdcBuyRate) : 1000
   const belowMinimum = amt > 0 && amt < minimumBuyNgn
   const addressValidation = asset ? validateWalletAddressForPair(asset.id, address) : { valid: false, error: 'Destination wallet address is required.' }
   const addressError = address.trim().length > 0 && !addressValidation.valid ? addressValidation.error : null
