@@ -3570,6 +3570,8 @@ async function seedPostgresCatalogTables() {
     if (cngnAsset) await insertSeedCryptoAssetPostgres(client, cngnAsset, now)
     const tonUsdtAsset = CRYPTO_ASSETS.find(asset => asset.id === 'USDT_TON')
     if (tonUsdtAsset) await insertSeedCryptoAssetPostgres(client, tonUsdtAsset, now)
+    const optimismEthAsset = CRYPTO_ASSETS.find(asset => asset.id === 'ETH_OP')
+    if (optimismEthAsset) await insertSeedCryptoAssetPostgres(client, optimismEthAsset, now)
 
     const billProviderCount = await queryPostgresClient<{ count: string }>(client, 'SELECT COUNT(*) AS count FROM bill_providers')
     if (Number(billProviderCount.rows[0]?.count ?? 0) === 0) {
