@@ -50,6 +50,32 @@ export const CRYPTO_ASSETS: CryptoAsset[] = [
   seedCrypto({ id: 'USDC_BASE', name: 'USD Coin', symbol: 'USDC', network: 'Base', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyNetworkFeeNgn: 60, sellNetworkFeeNgn: 100, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.2 }),
   seedCrypto({ id: 'USDC_SOLANA', name: 'USD Coin', symbol: 'USDC', network: 'Solana', icon: '/crypto-assets/usdc.png', marketSourceId: 'usd-coin', marketPriceUsd: 1, marketRate: 1595, buyNetworkFeeNgn: 40, sellNetworkFeeNgn: 70, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 0.2 }),
   seedCrypto({ id: 'ETH_BASE', name: 'Ethereum', symbol: 'ETH', network: 'Base', icon: '/crypto-assets/eth.png', marketSourceId: 'ethereum', marketPriceUsd: 3200, marketRate: 5_250_000, buyNetworkFeeNgn: 150, sellNetworkFeeNgn: 220, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: true, change24h: 1.8 }),
+  // Optimism ETH is delivered through the Base USDC treasury via LI.FI. Deposits are not enabled
+  // until the Optimism scanner and sweep path are supported.
+  seedCrypto({
+    id: 'ETH_OP',
+    name: 'Ethereum',
+    symbol: 'ETH',
+    network: 'Optimism',
+    icon: '/crypto-assets/eth.png',
+    marketSourceId: 'ethereum',
+    marketPriceUsd: 3200,
+    marketRate: 5_250_000,
+    buyNetworkFeeNgn: 140,
+    quoteTtlSeconds: 30,
+    isActive: true,
+    buyEnabled: true,
+    sellEnabled: false,
+    baseExecutionEnabled: true,
+    executionRail: 'routed_treasury',
+    routedToChain: '10',
+    routedToToken: '0x0000000000000000000000000000000000000000',
+    routedDecimals: 18,
+    routedAddressFamily: 'evm',
+    minimumBuyNgn: 500,
+    maxQuoteDriftPercent: 1,
+    change24h: 1.8,
+  }),
   seedCrypto({ id: 'ETH_ETHEREUM', name: 'Ethereum', symbol: 'ETH', network: 'Ethereum', icon: '/crypto-assets/eth.png', marketSourceId: 'ethereum', marketPriceUsd: 3200, marketRate: 5_250_000, buyNetworkFeeNgn: 3500, sellNetworkFeeNgn: 4500, quoteTtlSeconds: 30, isActive: true, baseExecutionEnabled: false, change24h: 1.8 }),
   // Robinhood Chain (Arbitrum Orbit L2, chain id 4663) — ETH gas, EVM addresses.
   seedCrypto({

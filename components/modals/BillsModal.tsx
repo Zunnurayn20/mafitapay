@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PinPad, type PinPadStatus } from '@/components/ui/PinPad'
 import { createBiometricApproval, isBiometricApprovalEnabled } from '@/lib/client/biometric'
-import { refreshBillCatalog, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
+import { refreshBillCatalog, useBillCatalogLoading, useBillProviders, useNetworkProviders } from '@/lib/client/catalogs'
 import {
   getBillServiceConfig,
   getDetectedNetworkProviderName,
@@ -46,6 +46,18 @@ const DATA_BUNDLE_GROUPS: Array<{ key: DataBundleGroupKey; label: string }> = [
   { key: 'special', label: 'Special' },
 ]
 const NETWORK_PROVIDER_DISPLAY_ORDER = ['mtn', 'airtel', 'glo', '9mobile'] as const
+const DATA_PURCHASE_PROCESSING_MESSAGES = [
+  'Getting your data bundle ready…',
+  'Sending your order to the network…',
+  'Giving the provider a moment to deliver…',
+  'Almost there—we’re checking the result…',
+]
+const SME_DATA_PURCHASE_PROCESSING_MESSAGES = [
+  'Getting your data bundle ready…',
+  'Sending your order to the network…',
+  'If this SME route is unavailable, we’ll try its matching alternative…',
+  'Almost there—we’re checking the result…',
+]
 
 /**
  * Tab selected when the list first opens. Empty groups are dropped before render, so this falls
@@ -254,6 +266,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const { modalData, refreshSession, showToast, transactions, securitySettings, user } = useAppStore()
   const billProviders = useBillProviders().filter(item => item.isActive !== false)
   const networkProviders = useNetworkProviders()
+  const billCatalogLoading = useBillCatalogLoading()
   const orderedNetworkProviders = [...networkProviders].sort((a, b) => getNetworkProviderOrder(a.name) - getNetworkProviderOrder(b.name))
   const service = (modalData.service as string) || 'Airtime'
   const selectedBillProvider = billProviders.find(item => item.name === service || item.id === service) ?? billProviders[0]
@@ -275,6 +288,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [step, setStep] = useState<Step>('form')
   const [pinVersion, setPinVersion] = useState(0)
   const [confirmStatus, setConfirmStatus] = useState<PinPadStatus>('pin')
+  const [processingElapsedMs, setProcessingElapsedMs] = useState(0)
   const [biometricBusy, setBiometricBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
@@ -337,6 +351,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const activeDataBundleGroup = groupedDataBundles.find(group => group.key === selectedDataBundleGroup) ?? groupedDataBundles[0]
   const shownDataBundles = activeDataBundleGroup?.bundles ?? []
   const selectedDataBundle = isDataService ? dataBundles.find(bundle => bundle.itemCode === selectedBundleCode) : null
+  const isAsbdataSmeBundle = selectedDataBundle?.provider === 'asbdata'
+    && (selectedDataBundle.planType === 'SME' || selectedDataBundle.planType === 'SME2')
+  const processingMessages = isAsbdataSmeBundle
+    ? SME_DATA_PURCHASE_PROCESSING_MESSAGES
+    : DATA_PURCHASE_PROCESSING_MESSAGES
+  const processingMessageIndex = Math.floor(processingElapsedMs / 2200) % processingMessages.length
+  const processingProgress = Math.min(92, 8 + Math.floor(processingElapsedMs / 250))
   const packageBillers = isPackageBillService ? (selectedBillProvider?.billers ?? []) : []
   const selectedPackageBiller = isPackageBillService
     ? packageBillers.find(biller => biller.billerCode === selectedBillerCode) ?? packageBillers[0]
@@ -404,6 +425,18 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setReference('')
     setRetryReturnsToForm(false)
   }, [billRequestStorageKey, defaultNetworkProviderName, open, service])
+
+  useEffect(() => {
+    if (confirmStatus !== 'processing' || !isDataService) {
+      setProcessingElapsedMs(0)
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setProcessingElapsedMs(elapsed => elapsed + 250)
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [confirmStatus, isDataService])
 
   useEffect(() => {
     if (!isPackageBillService) return
@@ -795,6 +828,19 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
         {isDataService ? (
           <div>
             <div className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-[1px] mb-2">Select Data Plan</div>
+            {billCatalogLoading && dataBundles.length === 0 ? (
+              <div role="status" aria-live="polite" aria-busy="true" className="flex min-h-44 flex-col items-center justify-center border border-[var(--border)] bg-[var(--coal)] px-5 py-6 text-center">
+                <div className="flex h-12 w-12 animate-pulse items-center justify-center rounded-full bg-[var(--clay2)] ring-1 ring-[var(--border)]">
+                  <Image src="/mafitapay-logo.webp" alt="" width={34} height={34} className="h-[34px] w-[34px] rounded-lg object-cover" />
+                </div>
+                <div className="mt-3 text-[11px] font-bold text-[var(--text)]">Loading {provider.split(' ')[0]} data plans</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">Fetching current bundles and prices…</div>
+                <div className="mt-4 h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-[var(--clay2)]">
+                  <div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--gold)]" />
+                </div>
+              </div>
+            ) : (
+              <>
             {showPlanVendorPicker && (
               <div className="mb-3 border border-[var(--border)] bg-[var(--clay2)] px-3">
                 <select
@@ -908,12 +954,19 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 )
               })}
             </div>
+            {!billCatalogLoading && shownDataBundles.length === 0 && (
+              <div className="border border-[var(--border)] bg-[var(--coal)] px-4 py-5 text-center text-[10px] leading-relaxed text-[var(--muted)]">
+                No data plans are available for {provider} right now. Please try again shortly.
+              </div>
+            )}
             {activeDataBundleGroup?.key === 'special' && (
               <div className="mt-2 text-[10px] text-[var(--muted)]">
                 Some special plans do not include an explicit expiry in the provider catalog. We only show validity when the network states it.
               </div>
             )}
             {touched.amount && amountError && <div className="text-[10px] text-[var(--red2)] mt-1">{amountError}</div>}
+              </>
+            )}
           </div>
         ) : isPackageBillService ? (
           <div className="space-y-4">
@@ -1175,10 +1228,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
           status={confirmStatus}
           statusTitle={confirmStatus === 'processing' ? 'Processing payment' : confirmStatus === 'success' ? `${serviceName} submitted` : undefined}
           statusMessage={confirmStatus === 'processing'
-            ? 'Stay on this screen. We’re confirming with the provider and updating your wallet.'
+            ? isDataService
+              ? processingMessages[processingMessageIndex]
+              : 'Stay on this screen. We’re confirming with the provider and updating your wallet.'
             : confirmStatus === 'success'
               ? successMessage
               : confirmError}
+          statusProgress={confirmStatus === 'processing' && isDataService ? processingProgress : undefined}
           statusReference={reference}
           onRetry={() => {
             if (retryReturnsToForm) {

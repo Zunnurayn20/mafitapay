@@ -92,7 +92,13 @@ export function getMinimumBuyNgn(pairId: CryptoPairId) {
 
 export function getMinimumBuyNgnForAsset(
   asset: Pick<CryptoAsset, 'id' | 'network' | 'executionRail' | 'routedToChain' | 'routedToToken' | 'routedDecimals' | 'routedAddressFamily' | 'minimumBuyNgn' | 'maxQuoteDriftPercent'>,
+  baseUsdcBuyRate?: number,
 ) {
+  // LI.FI receives Base USDC as the treasury input. Keep Optimism ETH at a true $1
+  // minimum by converting that dollar amount with the current Base USDC customer buy rate.
+  if (asset.id === 'ETH_OP' && Number.isFinite(baseUsdcBuyRate) && Number(baseUsdcBuyRate) > 0) {
+    return Math.ceil(Number(baseUsdcBuyRate))
+  }
   if (asset.executionRail === 'routed_treasury') {
     return getRoutedTreasuryPairConfigForAsset(asset).minimumBuyNgn
   }

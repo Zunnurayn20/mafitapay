@@ -68,7 +68,7 @@ export function AuthSplitShell({ children, compactHeader, centered = false }: Au
         <section className="relative pt-2">
           <div className="flex items-center gap-4">
             <div className="flex h-16 w-16 items-center justify-center overflow-hidden border border-[rgba(202,165,96,.2)] bg-[var(--coal)] shadow-[0_14px_34px_rgba(0,0,0,.18)]">
-              <img src="/mafitapay-logo.png" alt="MafitaPay logo" className="h-16 w-16 object-contain" />
+              <img src="/mafitapay-logo.webp" alt="MafitaPay logo" className="h-16 w-16 object-contain" />
             </div>
             <div>
               <div className="font-display text-3xl font-black tracking-[0.14em] text-[var(--gold2)]">

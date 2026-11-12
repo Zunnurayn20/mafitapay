@@ -246,8 +246,13 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]"
         />
         <div className="relative min-w-0 pt-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8c6b31]">
-            {options.title}
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8c6b31]">
+              {options.title}
+            </div>
+            <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${options.provider === 'billstack' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
+              {options.provider === 'billstack' ? 'No deposit fee' : 'Fee up to ₦50'}
+            </span>
           </div>
           <div className="mt-1 text-[12px] leading-relaxed text-[#7c6a4b]">{options.description}</div>
         </div>
@@ -298,14 +303,19 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(90deg,rgba(202,165,96,.55)_0_16px,transparent_16px_24px)]"
         />
         <div className="relative pt-1">
-          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8c6b31]">
-            {providerLabel(account.provider)} funding account
+          <div className="mb-3 flex items-start justify-between gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8c6b31]">
+              {providerLabel(account.provider)} funding account
+            </div>
+            <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold ${account.provider === 'billstack' ? 'bg-emerald-100 text-emerald-800' : account.provider === 'flutterwave' ? 'bg-amber-100 text-amber-900' : 'bg-stone-200 text-stone-700'}`}>
+              {account.provider === 'billstack' ? 'No deposit fee' : account.provider === 'flutterwave' ? 'Fee up to ₦50' : 'Fees may apply'}
+            </span>
           </div>
           <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-[#7c6a4b]">
             <span className="flex shrink-0 items-center gap-2 font-bold"><Building2 size={14} className="text-[#8c6b31]" />Bank name:</span>
             <span className="flex min-w-0 items-center justify-end gap-1.5 text-right text-sm font-semibold text-[#1f1a12]">
-              <BankMark name={bankName} provider={account.provider} />
               <span className="min-w-0 truncate">{bankName}</span>
+              <BankMark name={bankName} provider={account.provider} />
             </span>
           </div>
 
@@ -377,7 +387,7 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         ) : (
           <div className="rounded-xl border border-[rgba(202,165,96,0.18)] bg-[rgba(202,165,96,0.06)] px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--text2)]">
-            Transfer to your funding account. Wallet credit follows confirmed provider settlement.
+            BillStack deposits have no fee. Flutterwave deposits incur a fee of up to ₦50. Wallet credit follows confirmed provider settlement.
           </div>
         )}
 

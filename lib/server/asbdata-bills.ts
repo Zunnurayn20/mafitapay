@@ -43,6 +43,14 @@ export type AsbdataPaymentResult = {
   indeterminate?: boolean
 }
 
+export type AsbdataTransactionLookup = {
+  status: 'success' | 'failed' | 'pending' | 'unknown'
+  rawStatus: string | null
+  providerReference: string
+  reason?: string
+  payload?: Record<string, unknown>
+}
+
 type AsbdataPlan = {
   networkId: number
   planId: number
@@ -139,6 +147,54 @@ function getAsbdataConfig() {
 
 export function isAsbdataBillsEnabled() {
   return Boolean(getAsbdataConfig().token)
+}
+
+function normalizeTransactionStatus(value: unknown): AsbdataTransactionLookup['status'] {
+  const status = readString(value).toLowerCase().trim()
+  if (['success', 'successful', 'completed', 'complete', 'delivered', 'done'].includes(status)) return 'success'
+  if (['failed', 'failure', 'fail', 'rejected', 'cancelled', 'canceled', 'error'].includes(status)) return 'failed'
+  if (['pending', 'processing', 'queued', 'initiated', 'in progress', 'in_progress', 'new'].includes(status)) return 'pending'
+  return 'unknown'
+}
+
+/**
+ * Retrieve an existing ASBDATA data or airtime transaction. The published Postman collection
+ * documents GET /api/data/{id} for both transaction-query operations. This never submits a vend.
+ */
+export async function getAsbdataTransactionStatus(
+  providerReference: string,
+): Promise<AsbdataTransactionLookup> {
+  const id = providerReference.trim()
+  if (!id || id.length > 160 || /[/?#]/.test(id)) throw new Error('A valid ASBDATA transaction ID is required.')
+
+  const { status, json } = await asbdataRequest('GET', `/api/data/${encodeURIComponent(id)}`)
+  const envelope = isRecord(json) ? json : {}
+  const data = isRecord(envelope.data) ? envelope.data : {}
+  const transaction = isRecord(data.transaction) ? data.transaction : isRecord(envelope.transaction) ? envelope.transaction : data
+  const rawStatus = [
+    transaction.Status, transaction.status, transaction.status_code,
+    data.Status, data.status, data.status_code,
+    envelope.Status, envelope.status_code,
+  ].map(readString).find(Boolean) ?? ''
+  const normalized = normalizeTransactionStatus(rawStatus)
+  const message = readString(transaction.api_response)
+    || readString(transaction.response)
+    || readString(transaction.message)
+    || readString(data.api_response)
+    || readString(data.response)
+    || readString(data.message)
+    || readString(envelope.api_response)
+    || readString(envelope.message)
+
+  if (status >= 400) throw new Error(`ASBDATA status lookup failed (${status}).`)
+
+  return {
+    status: normalized,
+    rawStatus: rawStatus || null,
+    providerReference: id,
+    reason: normalized === 'failed' ? message || undefined : undefined,
+    payload: isRecord(json) ? json : undefined,
+  }
 }
 
 /**
@@ -335,6 +391,19 @@ function normalizeSize(size: string) {
   return trimmed
 }
 
+function normalizePlanSizeForMatching(size: string) {
+  return normalizeSize(size).toLowerCase().replace(/\s+/g, '')
+}
+
+function normalizeValidityForMatching(validity: string) {
+  return validity
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/days?/g, 'day')
+    .replace(/hours?/g, 'hour')
+}
+
 function parsePlanRow(row: Record<string, unknown>): AsbdataPlan | null {
   const planId =
     readNumber(row.id)
@@ -502,6 +571,35 @@ export async function getAsbdataPlanForPurchase(
   return priced.find(plan => plan.networkId === networkId && String(plan.planId) === String(planId)) ?? null
 }
 
+/**
+ * Find available ASBDATA SME alternatives that vend the same network, data size, and validity.
+ * Only the SME 1/SME 2 categories are interchangeable; other plan types are never substituted.
+ * Candidates that would cost the customer more than their selected plan are excluded.
+ */
+export async function getEquivalentAsbdataSmePlans(
+  selectedPlan: PricedAsbdataPlan,
+  maxRetailNgn: number,
+): Promise<PricedAsbdataPlan[]> {
+  const alternateType = selectedPlan.planTypeNormalized === 'SME'
+    ? 'SME2'
+    : selectedPlan.planTypeNormalized === 'SME2'
+      ? 'SME'
+      : null
+  if (!alternateType) return []
+
+  const plans = await getPricedAsbdataPlans()
+  return plans
+    .filter(plan => (
+      plan.networkId === selectedPlan.networkId
+      && plan.planTypeNormalized === alternateType
+      && normalizePlanSizeForMatching(plan.size) === normalizePlanSizeForMatching(selectedPlan.size)
+      && normalizeValidityForMatching(plan.validity) === normalizeValidityForMatching(selectedPlan.validity)
+      && plan.retailNgn <= maxRetailNgn
+      && plan.planId !== selectedPlan.planId
+    ))
+    .sort((left, right) => left.retailNgn - right.retailNgn || left.costNgn - right.costNgn)
+}
+
 export async function listAsbdataDataBundleNetworkProviders(
   networkProviders: NetworkProvider[],
   options?: { forceRefresh?: boolean },
@@ -583,8 +681,12 @@ function mapPurchaseResult(
     || readString(record.reference)
     || readString(record.transid)
     || readString(record.transaction_id)
+    || readString(record['request-id'])
+    || readString(record.request_id)
     || readString(record.id)
     || readString(isRecord(record.data) ? record.data.ident : undefined)
+    || readString(isRecord(record.data) ? record.data['request-id'] : undefined)
+    || readString(isRecord(record.data) ? record.data.request_id : undefined)
     || undefined
 
   const looksSuccessful =
@@ -598,7 +700,7 @@ function mapPurchaseResult(
     || readString(record.api_response).toLowerCase().includes('success')
 
   const looksFailed =
-    status >= 400
+    (status >= 400 && status < 500)
     || statusText.includes('fail')
     || statusText.includes('error')
     || statusText.includes('insufficient')
@@ -617,7 +719,9 @@ function mapPurchaseResult(
     networkId: context.networkId,
     planId: context.planId,
     // A 2xx with no readable status means we cannot prove either outcome.
-    indeterminate: !looksFailed && !looksSuccessful && status < 400,
+    // A server error may happen after a vendor has accepted the order. Do not let the
+    // caller retry with another plan unless ASBDATA gave an explicit rejection.
+    indeterminate: status >= 500 || (!looksFailed && !looksSuccessful && status < 400),
   }
 }
 

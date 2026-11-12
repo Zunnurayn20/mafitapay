@@ -43,10 +43,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     (tx.status === 'pending' || tx.status === 'processing')
     && (tx.metadata?.settlementKind === 'bank_transfer_out' || tx.metadata?.settlementKind === 'bank_payout')
   ))
-  const hasPendingFlutterwaveBill = useAppStore(state => state.transactions.some(tx =>
+  const hasPendingBillStatusCheck = useAppStore(state => state.transactions.some(tx =>
     tx.status === 'pending'
     && tx.metadata?.settlementKind === 'provider_bill'
-    && tx.metadata?.providerName === 'flutterwave'
+    && (tx.metadata?.providerName === 'flutterwave' || tx.metadata?.providerName === 'bardetech' || tx.metadata?.providerName === 'asbdata')
   ))
   const hasPendingCryptoBuy = useAppStore(state => state.transactions.some(tx =>
     (tx.status === 'pending' || tx.status === 'processing')
@@ -63,7 +63,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const pendingBillSyncRef = useRef(false)
   const pendingCryptoSyncRef = useRef(false)
   pendingPayoutSyncRef.current = hasPendingBankPayout
-  pendingBillSyncRef.current = hasPendingFlutterwaveBill
+  pendingBillSyncRef.current = hasPendingBillStatusCheck
   pendingCryptoSyncRef.current = hasPendingCryptoBuy
   const isAdminRoute = pathname.startsWith('/admin')
   const isAnalyticsRoute = pathname.startsWith('/analytics')
@@ -158,7 +158,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       })()
     }
 
-    if (hasPendingCryptoBuy || hasPendingBankPayout || hasPendingFlutterwaveBill) refreshNow()
+    if (hasPendingCryptoBuy || hasPendingBankPayout || hasPendingBillStatusCheck) refreshNow()
 
     const interval = setInterval(refreshNow, 20_000)
     const handleVisibility = () => {
@@ -176,7 +176,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleFocus)
     }
-  }, [authResolved, hasPendingBankPayout, hasPendingCryptoBuy, hasPendingFlutterwaveBill, isAuthenticated, refreshSession])
+  }, [authResolved, hasPendingBankPayout, hasPendingCryptoBuy, hasPendingBillStatusCheck, isAuthenticated, refreshSession])
 
   useEffect(() => {
     if (!authResolved || !isAuthenticated || !user || user.accountStatus !== 'active') return
@@ -184,8 +184,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (kycSubmission.status === 'rejected') return
 
     const permanentAccounts = wallet?.virtualAccounts.filter(item => item.isPermanent) ?? []
-    // PalmPay accounts are created only when the user explicitly requests one from Deposit Funds.
-    const missingProviders = (['flutterwave'] as const).filter(
+    // PalmPay accounts remain user-requested; Flutterwave and BillStack are provisioned after BVN/NIN submission.
+    const missingProviders = (['flutterwave', 'billstack'] as const).filter(
       provider => !permanentAccounts.some(item => item.provider === provider)
     )
     if (!missingProviders.length) return
@@ -196,7 +196,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
     let cancelled = false
     void (async () => {
-      const failedProviders: typeof missingProviders = []
+      const failedProviders: Array<(typeof missingProviders)[number]> = []
       for (const provider of missingProviders) {
         try {
           const response = await fetch('/api/wallet/deposit/account', {
@@ -216,8 +216,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
       if (!cancelled) {
         await refreshSession()
-        if (failedProviders.length === missingProviders.length) {
-          showToast("We couldn't create your Flutterwave funding account yet. Open Deposit Funds to retry.", 'error')
+        if (failedProviders.length > 0) {
+          const providerNames = failedProviders.map(provider => provider === 'billstack' ? 'BillStack' : 'Flutterwave')
+          const providerList = providerNames.length > 1
+            ? `${providerNames.slice(0, -1).join(', ')} and ${providerNames[providerNames.length - 1]}`
+            : providerNames[0]
+          showToast(`We couldn't create your ${providerList} funding account${providerNames.length > 1 ? 's' : ''} yet. Open Deposit Funds to retry.`, 'error')
         }
       }
     })()

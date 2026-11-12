@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import {
   Activity,
   ArrowDownRight,
@@ -10,14 +9,10 @@ import {
   Wallet,
 } from 'lucide-react'
 import {
-  AdminEmpty,
-  AdminPageCard,
-  AdminStatusPill,
-  AdminTable,
-  AdminThead,
   formatDate,
   formatNaira,
 } from '@/components/admin/AdminUi'
+import { RecentOverviewTabs } from './_components/RecentOverviewTabs'
 import { loadAdminOverviewData, requireAdminPageUser } from '@/lib/server/admin-queries'
 
 type MetricTone = 'blue' | 'emerald' | 'amber' | 'slate'
@@ -93,6 +88,33 @@ export default async function AdminOverviewPage() {
   const userById = new Map(users.map(user => [user.id, user]))
   const recentUsers = users.slice(0, 12)
   const recentTxns = transactions.slice(0, 12)
+  const recentUserRows = recentUsers.map(user => ({
+    id: user.id,
+    name: user.name,
+    referralCode: user.referralCode,
+    phone: user.phone,
+    email: user.email,
+    walletBalance: formatNaira(walletByUserId.get(user.id)?.balance ?? 0),
+    accountStatus: user.accountStatus,
+    kycStatus: user.kycStatus,
+    joinedAt: formatDate(user.createdAt),
+  }))
+  const recentTransactionRows = recentTxns.map(row => {
+    const user = userById.get(row.userId)
+    const txn = row.transaction
+    return {
+      id: txn.id,
+      customerName: user?.name || row.userId,
+      customerContact: user?.phone || user?.email || 'No contact',
+      description: txn.description || '',
+      type: txn.type,
+      reference: txn.reference,
+      amount: formatNaira(txn.amount),
+      isCredit: ['deposit', 'transfer_in', 'crypto_sell', 'referral_bonus', 'reward_bonus', 'admin_credit', 'p2p_deposit'].includes(txn.type),
+      status: txn.status,
+      createdAt: formatDate(txn.createdAt),
+    }
+  })
 
   const liquidityTone: 'emerald' | 'amber' | 'red' = liquidity.gap == null
     ? 'amber'
@@ -277,90 +299,7 @@ export default async function AdminOverviewPage() {
         <MiniMetric label="Unread notifications" value={String(stats.unreadNotifications)} Icon={Bell} tone="emerald" />
       </section>
 
-      <AdminPageCard
-        title="Recent users"
-        description="Newest customer accounts — inline list, same style as Users."
-        actions={(
-          <Link href="/admin/users" className="text-sm font-semibold text-[var(--gold2)] hover:underline">
-            View all
-          </Link>
-        )}
-      >
-        {recentUsers.length === 0 ? <AdminEmpty label="No users yet." /> : (
-          <AdminTable>
-            <AdminThead columns={['User', 'Contact', 'Wallet', 'Status', 'Joined']} />
-            <tbody className="divide-y divide-[var(--border)]">
-              {recentUsers.map(user => {
-                const wallet = walletByUserId.get(user.id)
-                return (
-                  <tr key={user.id} className="hover:bg-[var(--clay)]">
-                    <td className="px-4 py-3">
-                      <div className="font-semibold text-[var(--text)]">{user.name}</div>
-                      <div className="text-xs text-[var(--muted)]">{user.referralCode}</div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                      <div>{user.phone || 'No phone'}</div>
-                      <div>{user.email || 'No email'}</div>
-                    </td>
-                    <td className="px-4 py-3 font-mono font-semibold text-[var(--text)]">
-                      {formatNaira(wallet?.balance ?? 0)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        <AdminStatusPill status={user.accountStatus} />
-                        <AdminStatusPill status={user.kycStatus} />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-[var(--muted)]">{formatDate(user.createdAt)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </AdminTable>
-        )}
-      </AdminPageCard>
-
-      <AdminPageCard
-        title="Recent transactions"
-        description="Latest customer activity across the platform."
-        actions={(
-          <Link href="/admin/transactions" className="text-sm font-semibold text-[var(--gold2)] hover:underline">
-            View all
-          </Link>
-        )}
-      >
-        {recentTxns.length === 0 ? <AdminEmpty label="No transactions yet." /> : (
-          <AdminTable>
-            <AdminThead columns={['Customer', 'Transaction', 'Amount', 'Status', 'Date']} />
-            <tbody className="divide-y divide-[var(--border)]">
-              {recentTxns.map(row => {
-                const user = userById.get(row.userId)
-                const txn = row.transaction
-                const isCredit = ['deposit', 'transfer_in', 'crypto_sell', 'referral_bonus', 'reward_bonus', 'admin_credit', 'p2p_deposit'].includes(txn.type)
-                return (
-                  <tr key={txn.id} className="hover:bg-[var(--clay)]">
-                    <td className="px-4 py-3">
-                      <div className="font-semibold text-[var(--text)]">{user?.name || row.userId}</div>
-                      <div className="text-xs text-[var(--muted)]">{user?.phone || user?.email || 'No contact'}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-[var(--text)]">{txn.description || txn.type}</div>
-                      <div className="text-xs text-[var(--muted)]">{txn.type} / {txn.reference}</div>
-                    </td>
-                    <td className={`px-4 py-3 font-mono font-semibold ${isCredit ? 'text-[var(--green2)]' : 'text-[var(--red2)]'}`}>
-                      {isCredit ? '+' : '-'}{formatNaira(txn.amount)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <AdminStatusPill status={txn.status} />
-                    </td>
-                    <td className="px-4 py-3 text-xs text-[var(--muted)]">{formatDate(txn.createdAt)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </AdminTable>
-        )}
-      </AdminPageCard>
+      <RecentOverviewTabs users={recentUserRows} transactions={recentTransactionRows} />
     </div>
   )
 }

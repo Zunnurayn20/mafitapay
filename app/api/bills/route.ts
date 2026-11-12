@@ -4,13 +4,15 @@ import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPh
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getAnyTransactionById, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getTransactionById, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
-import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
+import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, getEquivalentAsbdataSmePlans, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
 import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
+import { ensureBardetechBillSyncScheduler } from '@/lib/server/bardetech-bill-sync'
+import { ensureAsbdataBillSyncScheduler, syncAsbdataBill } from '@/lib/server/asbdata-bill-sync'
 import { generateRef } from '@/lib/utils'
 import type { AmigoDataPaymentResult } from '@/lib/server/amigo-bills'
-import type { AsbdataPaymentResult } from '@/lib/server/asbdata-bills'
+import type { AsbdataPaymentResult, PricedAsbdataPlan } from '@/lib/server/asbdata-bills'
 import type { BardetechPaymentResult } from '@/lib/server/bardetech-bills'
 import type { FlutterwaveBillPaymentResult } from '@/lib/server/flutterwave-bills'
 import type { BillProvider, Transaction } from '@/types'
@@ -95,6 +97,8 @@ function hasProviderForBillType(type: BillProvider['type']) {
 
 export async function GET(req: Request) {
   ensureFlutterwaveBillSyncScheduler()
+  ensureBardetechBillSyncScheduler()
+  ensureAsbdataBillSyncScheduler()
   const user = await requireUser()
   if (!user) return unauthorized()
 
@@ -180,6 +184,8 @@ async function handleBillPayment(req: Request) {
   ensureCryptoMarketAutoRefreshScheduler()
   void kickCryptoMarketRefresh()
   ensureFlutterwaveBillSyncScheduler()
+  ensureBardetechBillSyncScheduler()
+  ensureAsbdataBillSyncScheduler()
   void kickPendingFlutterwaveBillSync()
   const body = await req.json()
   const user = await requireUser()
@@ -333,6 +339,7 @@ async function handleBillPayment(req: Request) {
   let platformFee = 0
   let providerBaseAmount = numericAmount
   let pricingRuleId: string | null = null
+  let asbdataPlan: PricedAsbdataPlan | null = null
 
   if (
     resolvedDataProvider === 'asbdata'
@@ -340,22 +347,22 @@ async function handleBillPayment(req: Request) {
     && providerPlanId
     && Number.isFinite(providerNetworkId)
   ) {
-    const plan = await getAsbdataPlanForPurchase(providerNetworkId, providerPlanId)
-    if (!plan) {
+    asbdataPlan = await getAsbdataPlanForPurchase(providerNetworkId, providerPlanId)
+    if (!asbdataPlan) {
       return NextResponse.json({ error: 'This data plan is no longer available.', success: false }, { status: 400 })
     }
-    if (Math.abs(numericAmount - plan.retailNgn) > 0.009) {
+    if (Math.abs(numericAmount - asbdataPlan.retailNgn) > 0.009) {
       return NextResponse.json({
         error: "This plan's price changed. Please review the new price and try again.",
         code: 'PRICE_CHANGED',
-        amount: plan.retailNgn,
+        amount: asbdataPlan.retailNgn,
         success: false,
       }, { status: 409 })
     }
-    chargeAmount = plan.retailNgn
-    platformFee = plan.marginNgn
-    providerBaseAmount = plan.costNgn
-    pricingRuleId = plan.ruleId
+    chargeAmount = asbdataPlan.retailNgn
+    platformFee = asbdataPlan.marginNgn
+    providerBaseAmount = asbdataPlan.costNgn
+    pricingRuleId = asbdataPlan.ruleId
   } else if (
     resolvedDataProvider === 'amigo'
     && isAmigoBillsEnabled()
@@ -611,6 +618,94 @@ async function handleBillPayment(req: Request) {
     }
   }
 
+  // ASBDATA can vend the same bundle under SME and SME 2 plan IDs. If the selected plan
+  // receives an explicit rejection, try only an enabled equivalent plan at the same or
+  // lower customer price. Never retry an indeterminate request because it may have delivered.
+  if (
+    selectedProvider.type === 'data'
+    && expectedProvider === 'asbdata'
+    && providerResult.provider === 'asbdata'
+    && providerResult.status === 'failed'
+    && !providerResult.indeterminate
+    && asbdataPlan
+  ) {
+    const primaryFailure = providerResult
+    const selectedAsbdataPlan = asbdataPlan
+    const alternatives = await getEquivalentAsbdataSmePlans(selectedAsbdataPlan, chargeAmount)
+    if (alternatives.length > 0) {
+      const primaryFailureEventId = `bill:${ref}:asbdata-sme-fallback:${primaryFailure.planId ?? providerPlanId}:${primaryFailure.rawStatus || 'FAILED'}`
+      await recordProviderEvent({
+        externalEventId: primaryFailureEventId,
+        provider: 'asbdata_data',
+        reference: ref,
+        status: primaryFailure.rawStatus || 'FAILED',
+        failureReason: primaryFailure.reason,
+        payload: primaryFailure.payload,
+      })
+      await markProviderEventProcessed(primaryFailureEventId)
+
+      for (const alternatePlan of alternatives) {
+        console.info('[bills] provider.fallback.start', JSON.stringify({
+          reference: ref,
+          type: 'data',
+          provider: 'asbdata',
+          selectedPlanId: selectedAsbdataPlan.planId,
+          alternatePlanId: alternatePlan.planId,
+          planType: alternatePlan.planTypeNormalized,
+        }))
+
+        let alternateResult: AsbdataPaymentResult
+        try {
+          alternateResult = await createAsbdataDataPayment({
+            networkId: alternatePlan.networkId,
+            mobileNumber: account,
+            planId: String(alternatePlan.planId),
+            reference: ref,
+          })
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : 'Equivalent ASBDATA plan request ended without a confirmed response.'
+          alternateResult = {
+            provider: 'asbdata',
+            reference: ref,
+            status: 'failed',
+            rawStatus: 'INDETERMINATE',
+            reason,
+            networkId: alternatePlan.networkId,
+            planId: alternatePlan.planId,
+            indeterminate: true,
+          }
+        }
+
+        providerResult = alternateResult
+        asbdataPlan = alternatePlan
+        providerBaseAmount = alternatePlan.costNgn
+        platformFee = chargeAmount - alternatePlan.costNgn
+        pricingRuleId = alternatePlan.ruleId
+        console.info('[bills] provider.fallback.completed', JSON.stringify({
+          reference: ref,
+          type: 'data',
+          provider: 'asbdata',
+          planId: alternatePlan.planId,
+          status: alternateResult.status,
+          providerStatus: alternateResult.rawStatus ?? null,
+        }))
+
+        if (alternateResult.status !== 'failed' || alternateResult.indeterminate) break
+
+        const alternateFailureEventId = `bill:${ref}:asbdata-sme-alternate:${alternatePlan.planId}:${alternateResult.rawStatus || 'FAILED'}`
+        await recordProviderEvent({
+          externalEventId: alternateFailureEventId,
+          provider: 'asbdata_data',
+          reference: ref,
+          status: alternateResult.rawStatus || 'FAILED',
+          failureReason: alternateResult.reason,
+          payload: alternateResult.payload,
+        })
+        await markProviderEventProcessed(alternateFailureEventId)
+      }
+    }
+  }
+
   console.info('[bills] provider.completed', JSON.stringify({
     reference: ref,
     type: selectedProvider.type,
@@ -643,11 +738,28 @@ async function handleBillPayment(req: Request) {
     const pendingTransaction = await updatePendingTransactionMetadata(user.id, transactionId, {
       ...reservationTransaction.metadata,
       providerName: providerResult.provider,
-      providerReference: providerResult.providerReference || ref,
+      providerReference: providerResult.providerReference || (providerResult.provider === 'flutterwave' ? ref : undefined),
       providerStatus: providerResult.rawStatus || 'INDETERMINATE',
+      ...(providerResult.provider === 'asbdata' && selectedProvider.type === 'data' && providerResult.planId !== undefined
+        ? {
+            providerPlanId: String(providerResult.planId),
+            providerNetworkId: providerResult.networkId ?? providerNetworkId,
+            requestedProviderPlanId: providerPlanId,
+            providerFallbackUsed: String(providerResult.planId) !== providerPlanId,
+            providerFallbackFromPlanId: String(providerResult.planId) !== providerPlanId ? providerPlanId : undefined,
+            providerBaseAmount,
+            platformFee,
+            pricingRuleId: pricingRuleId || undefined,
+          }
+        : {}),
     })
     if (!pendingTransaction) throw new Error('Unable to preserve pending bill payment details.')
     if (providerResult.provider === 'flutterwave') void kickPendingFlutterwaveBillSync()
+    if (providerResult.provider === 'asbdata' && providerResult.providerReference) {
+      void syncAsbdataBill(ref).catch(error => {
+        console.warn('[bills] ASBDATA follow-up status lookup failed:', error instanceof Error ? error.message : 'unknown error')
+      })
+    }
     return NextResponse.json({
       data: { transaction: pendingTransaction, wallet: reservation.wallet },
       message: 'Payment is awaiting provider confirmation. Reserved funds will be released if the provider confirms failure.',
@@ -687,6 +799,9 @@ async function handleBillPayment(req: Request) {
     (providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech')
     && selectedProvider.type === 'data'
   )
+  const completedPlanId = providerResult.provider === 'asbdata' && providerResult.planId !== undefined
+    ? String(providerResult.planId)
+    : providerPlanId
   const transaction = {
     id: transactionId,
     type: selectedProvider.type as Transaction['type'],
@@ -711,7 +826,14 @@ async function handleBillPayment(req: Request) {
       billerCode: 'billerCode' in providerResult ? providerResult.billerCode : undefined,
       itemCode: 'itemCode' in providerResult ? providerResult.itemCode : undefined,
       itemName: 'itemName' in providerResult ? providerResult.itemName : undefined,
-      providerPlanId: isPlanBasedProvider ? providerPlanId : undefined,
+      providerPlanId: isPlanBasedProvider ? completedPlanId : undefined,
+      requestedProviderPlanId: isPlanBasedProvider && providerPlanId ? providerPlanId : undefined,
+      providerFallbackUsed: isPlanBasedProvider && completedPlanId && providerPlanId
+        ? completedPlanId !== providerPlanId
+        : undefined,
+      providerFallbackFromPlanId: isPlanBasedProvider && completedPlanId && providerPlanId && completedPlanId !== providerPlanId
+        ? providerPlanId
+        : undefined,
       providerNetworkId: isPlanBasedProvider && Number.isFinite(providerNetworkId) ? providerNetworkId : undefined,
       providerBaseAmount: isPlanBasedProvider ? providerBaseAmount : chargeAmount,
       platformFee,

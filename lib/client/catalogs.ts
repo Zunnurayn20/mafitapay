@@ -5,6 +5,7 @@ import { enrichStockQuote } from '@/lib/stock-filters'
 import type { BankDirectoryEntry, BillProvider, CryptoAsset, NetworkProvider, StockQuote, StocksMarketSource, StocksMarketSummary } from '@/types'
 
 const CRYPTO_ASSETS_CACHE_KEY = 'mafitapay.cryptoAssets'
+const BILL_CATALOG_CACHE_KEY = 'mafitapay.billCatalog.v1'
 const CRYPTO_ASSETS_CLIENT_REFRESH_TTL_MS = 45 * 1000
 let cryptoAssetsSnapshot: CryptoAsset[] = []
 let cryptoAssetsFetchPromise: Promise<void> | null = null
@@ -16,9 +17,11 @@ const cryptoAssetRefreshListeners = new Set<(refreshing: boolean) => void>()
 let billProvidersSnapshot: BillProvider[] = BILL_PROVIDERS
 let networkProvidersSnapshot: NetworkProvider[] = NETWORK_PROVIDERS
 let billCatalogFetchPromise: Promise<void> | null = null
+let billCatalogLoading = false
 let lastForcedBillCatalogRefreshAt = 0
 const billProviderListeners = new Set<(providers: BillProvider[]) => void>()
 const networkProviderListeners = new Set<(providers: NetworkProvider[]) => void>()
+const billCatalogLoadingListeners = new Set<(loading: boolean) => void>()
 const BILL_CATALOG_FORCE_REFRESH_DEBOUNCE_MS = 60 * 1000
 const BILL_PROVIDER_DISPLAY_ORDER = ['airtime', 'data', 'cable', 'electric', 'education', 'gas', 'insurance', 'water'] as const
 let stocksSnapshot: StockQuote[] = NGX_STOCKS.map(enrichStockQuote)
@@ -131,6 +134,7 @@ function emitCryptoAssetsRefreshing(nextRefreshing: boolean) {
 function emitBillCatalog(nextProviders: BillProvider[], nextNetworkProviders: NetworkProvider[]) {
   billProvidersSnapshot = sortBillProviders(nextProviders)
   networkProvidersSnapshot = nextNetworkProviders
+  writeCachedBillCatalog(billProvidersSnapshot, networkProvidersSnapshot)
 
   for (const listener of billProviderListeners) {
     listener(billProvidersSnapshot)
@@ -139,6 +143,46 @@ function emitBillCatalog(nextProviders: BillProvider[], nextNetworkProviders: Ne
   for (const listener of networkProviderListeners) {
     listener(nextNetworkProviders)
   }
+}
+
+function readCachedBillCatalog() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(BILL_CATALOG_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { providers?: unknown; networkProviders?: unknown }
+    if (!Array.isArray(parsed.providers) || !Array.isArray(parsed.networkProviders)) return null
+    return {
+      providers: parsed.providers as BillProvider[],
+      networkProviders: parsed.networkProviders as NetworkProvider[],
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeCachedBillCatalog(providers: BillProvider[], networkProviders: NetworkProvider[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(BILL_CATALOG_CACHE_KEY, JSON.stringify({ providers, networkProviders }))
+  } catch {
+    // Keep the in-memory catalog when browser storage is unavailable or full.
+  }
+}
+
+function restoreCachedBillCatalog() {
+  const cached = readCachedBillCatalog()
+  if (!cached) return false
+  billProvidersSnapshot = sortBillProviders(cached.providers)
+  networkProvidersSnapshot = cached.networkProviders
+  for (const listener of billProviderListeners) listener(billProvidersSnapshot)
+  for (const listener of networkProviderListeners) listener(networkProvidersSnapshot)
+  return true
+}
+
+function emitBillCatalogLoading(nextLoading: boolean) {
+  billCatalogLoading = nextLoading
+  for (const listener of billCatalogLoadingListeners) listener(nextLoading)
 }
 
 function emitStocks(
@@ -174,6 +218,12 @@ function emitBankDirectory(country: string, nextBanks: BankDirectoryEntry[]) {
 async function loadBillCatalog(options?: { force?: boolean }) {
   if (billCatalogFetchPromise) return billCatalogFetchPromise
 
+  // Restore the last good catalog first so a repeat visit can render plans immediately while
+  // the server refreshes provider prices and availability in the background.
+  restoreCachedBillCatalog()
+  const hasCachedPlans = networkProvidersSnapshot.some(provider => (provider.dataBundles?.length ?? 0) > 0)
+  emitBillCatalogLoading(!hasCachedPlans)
+
   const wantsForceRefresh = options?.force === true
   const shouldForceRefresh = wantsForceRefresh && (Date.now() - lastForcedBillCatalogRefreshAt > BILL_CATALOG_FORCE_REFRESH_DEBOUNCE_MS)
   if (shouldForceRefresh) {
@@ -200,6 +250,7 @@ async function loadBillCatalog(options?: { force?: boolean }) {
     .catch(() => undefined)
     .finally(() => {
       billCatalogFetchPromise = null
+      emitBillCatalogLoading(false)
     })
 
   return billCatalogFetchPromise
@@ -399,6 +450,20 @@ export function useBillProviders() {
   }, [])
 
   return providers
+}
+
+export function useBillCatalogLoading() {
+  const [loading, setLoading] = useState(() => billCatalogLoading || !networkProvidersSnapshot.some(provider => (provider.dataBundles?.length ?? 0) > 0))
+
+  useEffect(() => {
+    billCatalogLoadingListeners.add(setLoading)
+    setLoading(billCatalogLoading)
+    return () => {
+      billCatalogLoadingListeners.delete(setLoading)
+    }
+  }, [])
+
+  return loading
 }
 
 export function useNetworkProviders() {
