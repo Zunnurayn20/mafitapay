@@ -1,12 +1,34 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser, unauthorized } from '@/lib/server/auth'
 import { getDisabledDataPlans, insertAuditLog, setDataPlanDisabled, setDataPlansDisabled } from '@/lib/server/data'
+import { getPricedBardetechPlans } from '@/lib/server/bardetech-bills'
 
 const VENDORS = new Set(['amigo', 'asbdata', 'bardetech', 'flutterwave'])
 
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await requireAdminUser()
   if (!admin) return unauthorized()
+  if (new URL(request.url).searchParams.get('catalog') === 'bardetech') {
+    try {
+      const plans = await getPricedBardetechPlans({ forceRefresh: true, includeDisabled: true })
+      return NextResponse.json({
+        success: true,
+        data: plans.map(plan => ({
+          vendor: 'bardetech' as const,
+          networkId: plan.networkId,
+          network: plan.network,
+          planId: String(plan.planId),
+          category: plan.planType,
+          label: plan.size,
+          validity: plan.validity,
+          retailNgn: plan.retailNgn,
+        })),
+      }, { headers: { 'Cache-Control': 'no-store' } })
+    } catch (error) {
+      console.error('[admin] unable to load Bardetech plan catalog', error)
+      return NextResponse.json({ success: false, error: 'Unable to load Bardetech plans right now. Try again.' }, { status: 503 })
+    }
+  }
   return NextResponse.json({ success: true, data: await getDisabledDataPlans() })
 }
 

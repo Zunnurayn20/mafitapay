@@ -9,14 +9,17 @@ const VENDOR_LABELS = { amigo: 'Amigo', asbdata: 'ASBDATA', bardetech: 'Bardetec
 
 export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: DisabledPlan[]; catalog: CatalogPlan[] }) {
   const [plans, setPlans] = useState(initialPlans)
+  const [currentCatalog, setCurrentCatalog] = useState(catalog)
   const [error, setError] = useState('')
+  const [catalogError, setCatalogError] = useState('')
+  const [catalogLoading, setCatalogLoading] = useState(false)
   const [busyPlan, setBusyPlan] = useState('')
   const [vendor, setVendor] = useState<DisabledPlan['vendor']>('asbdata')
   const [networkId, setNetworkId] = useState('')
   const [category, setCategory] = useState('')
   const [query, setQuery] = useState('')
   const [reason, setReason] = useState('')
-  const vendorPlans = catalog.filter(plan => plan.vendor === vendor)
+  const vendorPlans = currentCatalog.filter(plan => plan.vendor === vendor)
   const networks = Array.from(new Map(vendorPlans.map(plan => [plan.networkId, plan.network])).entries())
   const categories = Array.from(new Set(vendorPlans.filter(plan => !networkId || String(plan.networkId) === networkId).map(plan => plan.category).filter(Boolean))).sort()
   const filteredPlans = useMemo(() => {
@@ -30,6 +33,24 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
   const disabledCount = filteredPlans.filter(plan => plans.some(item => item.vendor === plan.vendor && item.networkId === plan.networkId && item.planId === plan.planId)).length
   const allPlansEnabled = filteredPlans.length > 0 && disabledCount === 0
   const mixedPlanSettings = disabledCount > 0 && disabledCount < filteredPlans.length
+
+  async function refreshBardetechCatalog() {
+    setCatalogLoading(true)
+    setCatalogError('')
+    try {
+      const response = await fetch('/api/admin/disabled-data-plans?catalog=bardetech', { cache: 'no-store' })
+      const result = await response.json()
+      if (!response.ok || !result.success || !Array.isArray(result.data)) {
+        throw new Error(result.error || 'Unable to load Bardetech plans right now. Try again.')
+      }
+      setCurrentCatalog(current => [...current.filter(plan => plan.vendor !== 'bardetech'), ...(result.data as CatalogPlan[])])
+      if (!result.data.length) setCatalogError('Bardetech returned no plans. Try refreshing again shortly.')
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : 'Unable to load Bardetech plans right now. Try again.')
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
 
   async function update(payload: Record<string, unknown>) {
     setBusyPlan(`${payload.vendor}:${payload.networkId}:${payload.planId}`); setError('')
@@ -76,7 +97,11 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
 
   return <div className="space-y-5 p-4">
     <div className="grid gap-3 md:grid-cols-4">
-      <AdminSelect value={vendor} onChange={event => { setVendor(event.target.value as DisabledPlan['vendor']); setNetworkId(''); setCategory(''); setQuery('') }}>
+      <AdminSelect value={vendor} onChange={event => {
+        const nextVendor = event.target.value as DisabledPlan['vendor']
+        setVendor(nextVendor); setNetworkId(''); setCategory(''); setQuery('')
+        if (nextVendor === 'bardetech') void refreshBardetechCatalog()
+      }}>
         {Object.entries(VENDOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </AdminSelect>
       <AdminSelect value={networkId} onChange={event => { setNetworkId(event.target.value); setCategory('') }}>
@@ -90,6 +115,13 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
       <AdminInput placeholder="Search: 1GB, SME, 30 days…" value={query} onChange={event => setQuery(event.target.value)} />
     </div>
     <AdminInput placeholder="Reason applied when you disable a plan (optional)" value={reason} onChange={event => setReason(event.target.value)} className="w-full" />
+    {vendor === 'bardetech' && (
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        {catalogLoading && <span className="text-slate-500">Loading Bardetech plans…</span>}
+        <AdminError message={catalogError} />
+        {!catalogLoading && <button type="button" onClick={() => void refreshBardetechCatalog()} className="font-semibold text-emerald-700 underline underline-offset-2">Refresh Bardetech plans</button>}
+      </div>
+    )}
     <p className="text-sm text-slate-500">Showing {filteredPlans.length} available plan{filteredPlans.length === 1 ? '' : 's'}. Use each switch to enable or disable that plan.</p>
     <AdminError message={error} />
     <AdminTable><thead className="bg-[var(--clay)] text-xs uppercase tracking-wide text-[var(--muted)]"><tr>
@@ -110,7 +142,7 @@ export function DisabledPlansClient({ initialPlans, catalog }: { initialPlans: D
         const disabled = plans.some(item => item.vendor === plan.vendor && item.networkId === plan.networkId && item.planId === plan.planId)
         return <tr key={key} className="border-t border-slate-100"><td className="px-4 py-3 font-semibold text-slate-800">{plan.network}</td><td className="px-4 py-3 text-slate-600">{plan.category || '—'}</td><td className="px-4 py-3 text-slate-800">{plan.label}</td><td className="px-4 py-3 text-slate-600">{plan.validity}</td><td className="px-4 py-3 font-semibold text-slate-800">{formatNaira(plan.retailNgn)}</td><td className="px-4 py-3"><PlanSwitch plan={plan} disabled={disabled} /></td></tr>
       })}
-      {!filteredPlans.length && <tr><td colSpan={6} className="py-8 text-center text-slate-500">No plans match these filters.</td></tr>}
+      {!filteredPlans.length && <tr><td colSpan={6} className="py-8 text-center text-slate-500">{catalogLoading ? 'Loading plans…' : catalogError ? 'Bardetech plans could not be loaded.' : 'No plans match these filters.'}</td></tr>}
     </tbody></AdminTable>
     <div className="border-t border-slate-200 pt-5">
       <h3 className="text-sm font-bold text-slate-900">Disabled plans</h3>
