@@ -484,7 +484,7 @@ export function PricingClient({
 
           <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-5xl lg:grid-cols-5">
             <label className="space-y-1.5 text-xs font-semibold text-slate-600">
-              Applies to
+              Provider
               <AdminSelect
                 value={simpleVendor}
                 onChange={event => selectSimpleVendor(event.target.value as '' | 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave')}
@@ -496,22 +496,29 @@ export function PricingClient({
                 <option value="flutterwave">Flutterwave only</option>
               </AdminSelect>
             </label>
-            {simpleVendor ? (
-              <label className="space-y-1.5 text-xs font-semibold text-slate-600">
-                Plan to override
-                <AdminSelect value={simplePlanKey} onChange={event => selectSimplePlan(event.target.value)}>
-                  <option value="">All {VENDOR_LABELS[simpleVendor]} plans</option>
-                  {providerPlans.map(plan => {
-                    const key = `${plan.vendor}:${plan.network}:${plan.planType}:${plan.variationCode}`
-                    return (
-                      <option key={key} value={key}>
-                        {plan.network} · {plan.label} · {plan.planType} · {formatNaira(plan.retailNgn)}
-                      </option>
-                    )
-                  })}
-                </AdminSelect>
-              </label>
-            ) : null}
+            <label className="space-y-1.5 text-xs font-semibold text-slate-600">
+              Individual plan
+              <AdminSelect
+                value={simplePlanKey}
+                disabled={!simpleVendor || providerPlans.length === 0}
+                onChange={event => selectSimplePlan(event.target.value)}
+              >
+                {!simpleVendor ? <option value="">Choose a provider first</option> : null}
+                {simpleVendor && providerPlans.length === 0 ? <option value="">No plans loaded</option> : null}
+                {simpleVendor && providerPlans.length > 0 ? <option value="">All {VENDOR_LABELS[simpleVendor]} plans</option> : null}
+                {providerPlans.map(plan => {
+                  const key = `${plan.vendor}:${plan.network}:${plan.planType}:${plan.variationCode}`
+                  return (
+                    <option key={key} value={key}>
+                      {plan.network} · {plan.label} · {plan.planType} · {formatNaira(plan.retailNgn)}
+                    </option>
+                  )
+                })}
+              </AdminSelect>
+              {simpleVendor && providerPlans.length === 0 ? (
+                <span className="block font-normal text-slate-500">No {VENDOR_LABELS[simpleVendor]} plans were loaded. Check the provider catalog before setting a plan price.</span>
+              ) : null}
+            </label>
             <label className="space-y-1.5 text-xs font-semibold text-slate-600">
               Profit method
               <AdminSelect
