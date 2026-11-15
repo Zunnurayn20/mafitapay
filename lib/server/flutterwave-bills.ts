@@ -572,6 +572,17 @@ export async function listFlutterwaveDataBundleNetworkProviders(
   return providersToStore
 }
 
+export async function getFlutterwaveDataBundleForPurchase(networkProvider: string, itemCode: string) {
+  const networkKey = normalizeNetworkProvider(networkProvider)
+  const billerCode = FLUTTERWAVE_DATA_BILLER_CODES[networkKey]
+  if (!billerCode || !itemCode.trim()) return null
+  const items = await getFlutterwaveBillItems(billerCode)
+  const item = items.find(candidate => candidate.itemCode === itemCode.trim())
+  return item
+    ? { billerCode: item.billerCode, itemCode: item.itemCode, name: item.name, amount: item.amount }
+    : null
+}
+
 export async function listFlutterwaveCableBillProviders(
   providers: BillProvider[],
   options?: { forceRefresh?: boolean },

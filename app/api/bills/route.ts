@@ -6,11 +6,12 @@ import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
 import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, getEquivalentAsbdataSmePlans, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
 import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
-import { createFlutterwaveBillPayment, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
+import { createFlutterwaveBillPayment, getFlutterwaveDataBundleForPurchase, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { ensureBardetechBillSyncScheduler } from '@/lib/server/bardetech-bill-sync'
 import { ensureAsbdataBillSyncScheduler, syncAsbdataBill } from '@/lib/server/asbdata-bill-sync'
 import { generateRef } from '@/lib/utils'
+import { loadPricingRules, pricePlanNgn } from '@/lib/server/data-pricing'
 import type { AmigoDataPaymentResult } from '@/lib/server/amigo-bills'
 import type { AsbdataPaymentResult, PricedAsbdataPlan } from '@/lib/server/asbdata-bills'
 import type { BardetechPaymentResult } from '@/lib/server/bardetech-bills'
@@ -78,6 +79,21 @@ export async function GET(req: Request) {
   if (isBardetechBillsEnabled()) {
     networkProviders = await listBardetechDataBundleNetworkProvidersSafe(networkProviders, { forceRefresh })
   }
+
+  const flutterwavePricingRules = await loadPricingRules()
+  networkProviders = networkProviders.map(network => ({
+    ...network,
+    dataBundles: network.dataBundles?.map(bundle => {
+      if (bundle.provider !== 'flutterwave') return bundle
+      const priced = pricePlanNgn(flutterwavePricingRules, {
+        vendor: 'flutterwave',
+        network: network.name,
+        planType: 'STANDARD',
+        variationCode: bundle.itemCode,
+      }, bundle.amount)
+      return { ...bundle, amount: priced.retailNgn }
+    }),
+  }))
 
   networkProviders = networkProviders.map(network => ({
     ...network,
@@ -324,6 +340,34 @@ async function handleBillPayment(req: Request) {
     platformFee = plan.marginNgn
     providerBaseAmount = plan.costNgn
     pricingRuleId = plan.ruleId
+  } else if (
+    resolvedDataProvider === 'flutterwave'
+    && isFlutterwaveBillsEnabled()
+    && providerPlanId
+    && Number.isFinite(providerNetworkId)
+  ) {
+    const item = await getFlutterwaveDataBundleForPurchase(provider, itemCode || providerPlanId)
+    if (!item) {
+      return NextResponse.json({ error: 'This data plan is no longer available.', success: false }, { status: 400 })
+    }
+    const priced = pricePlanNgn(await loadPricingRules(), {
+      vendor: 'flutterwave',
+      network: provider,
+      planType: 'STANDARD',
+      variationCode: item.itemCode,
+    }, item.amount)
+    if (Math.abs(numericAmount - priced.retailNgn) > 0.009) {
+      return NextResponse.json({
+        error: "This plan's price changed. Please review the new price and try again.",
+        code: 'PRICE_CHANGED',
+        amount: priced.retailNgn,
+        success: false,
+      }, { status: 409 })
+    }
+    chargeAmount = priced.retailNgn
+    platformFee = priced.marginNgn
+    providerBaseAmount = priced.costNgn
+    pricingRuleId = priced.ruleId
   }
 
   const wallet = await getWalletByUserId(user.id)
@@ -347,7 +391,9 @@ async function handleBillPayment(req: Request) {
     type: selectedProvider.type,
     networkProvider: provider,
     account,
-    amount: chargeAmount,
+    amount: selectedProvider.type === 'data' && resolvedDataProvider === 'flutterwave'
+      ? providerBaseAmount
+      : chargeAmount,
     reference: ref,
     billerCode,
     itemCode,
@@ -385,6 +431,18 @@ async function handleBillPayment(req: Request) {
       // synchronous request times out after the provider accepted it.
       providerReference: expectedProvider === 'flutterwave' ? ref : undefined,
       platformFee,
+      providerPlanId: selectedProvider.type === 'data' && resolvedDataProvider ? providerPlanId : undefined,
+      requestedProviderPlanId: selectedProvider.type === 'data' && resolvedDataProvider ? providerPlanId : undefined,
+      providerNetworkId: selectedProvider.type === 'data' && resolvedDataProvider && Number.isFinite(providerNetworkId) ? providerNetworkId : undefined,
+      providerBaseAmount: selectedProvider.type === 'data' && resolvedDataProvider ? providerBaseAmount : undefined,
+      purchaseEconomics: selectedProvider.type === 'data' && resolvedDataProvider ? {
+        version: 1,
+        saleNgn: chargeAmount,
+        providerCostNgn: providerBaseAmount,
+        spreadNgn: chargeAmount - providerBaseAmount,
+        costBasis: 'provider_plan_catalog',
+        costStatus: 'quoted',
+      } : undefined,
       pricingRuleId: pricingRuleId || undefined,
       settlementFlow: 'release_locked',
       settlementKind: 'provider_bill',
@@ -707,12 +765,14 @@ async function handleBillPayment(req: Request) {
   // Plan-based data: platformFee is the margin from pricing rules. Flutterwave / airtime quote
   // retail, so there is nothing to split out unless we priced a plan above.
   const isPlanBasedProvider = providerResult.provider === 'amigo' || (
-    (providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech')
+    (providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech' || providerResult.provider === 'flutterwave')
     && selectedProvider.type === 'data'
   )
   const completedPlanId = providerResult.provider === 'asbdata' && providerResult.planId !== undefined
     ? String(providerResult.planId)
-    : providerPlanId
+    : providerResult.provider === 'flutterwave' && providerResult.itemCode
+      ? providerResult.itemCode
+      : providerPlanId
   const transaction = {
     id: ref,
     type: selectedProvider.type as Transaction['type'],

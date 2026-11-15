@@ -4,6 +4,7 @@ import {
   createPricingRule,
   findPricingRuleByTarget,
   getPricingRuleById,
+  getNetworkProviders,
   insertAuditLog,
   setPricingRuleActive,
   updatePricingRule,
@@ -13,12 +14,14 @@ import {
   describeScope,
   loadPricingRulesForAdmin,
   validatePricingRuleInput,
+  pricePlanNgn,
   PRICING_VENDORS,
   type PricingVendor,
 } from '@/lib/server/data-pricing'
 import { getPricedAmigoPlans } from '@/lib/server/amigo-bills'
 import { getPricedAsbdataPlans, listAsbdataPlanTypes } from '@/lib/server/asbdata-bills'
 import { getPricedBardetechPlans, listBardetechPlanTypes } from '@/lib/server/bardetech-bills'
+import { isFlutterwaveBillsEnabled, listFlutterwaveDataBundleNetworkProviders } from '@/lib/server/flutterwave-bills'
 
 /** Drop fields that do not apply to the chosen scope so unique targets stay consistent. */
 function normalizeTargetFields<T extends {
@@ -71,6 +74,18 @@ function parseMarginBody(body: Record<string, unknown>) {
     ? null
     : Math.round(maxMarginNgn * 100)
   const roundToKobo = Math.round((Number.isFinite(roundToNgn) ? roundToNgn : 0) * 100)
+  const hasRetailPrice = Object.prototype.hasOwnProperty.call(body, 'retailPriceNgn')
+  const retailRaw = body.retailPriceNgn
+  const retailPriceNgn = !hasRetailPrice
+    ? undefined
+    : retailRaw === null || retailRaw === ''
+      ? null
+      : Number(retailRaw)
+  const retailPriceKobo = retailPriceNgn === undefined || retailPriceNgn === null
+    ? retailPriceNgn
+    : Number.isFinite(retailPriceNgn)
+      ? Math.round(retailPriceNgn * 100)
+      : Number.NaN
 
   return {
     scope,
@@ -83,6 +98,7 @@ function parseMarginBody(body: Record<string, unknown>) {
     minMarginKobo,
     maxMarginKobo,
     roundToKobo,
+    retailPriceKobo,
     note: note || null,
   }
 }
@@ -91,14 +107,35 @@ export async function GET() {
   const admin = await requireAdminUser()
   if (!admin) return unauthorized()
 
-  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes, bardetechPlans, bardetechPlanTypes] = await Promise.all([
+  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes, bardetechPlans, bardetechPlanTypes, baseNetworkProviders] = await Promise.all([
     loadPricingRulesForAdmin(),
     getPricedAmigoPlans().catch(() => []),
     getPricedAsbdataPlans().catch(() => []),
     listAsbdataPlanTypes(),
     getPricedBardetechPlans().catch(() => []),
     listBardetechPlanTypes(),
+    getNetworkProviders(),
   ])
+
+  const flutterwaveNetworkProviders = isFlutterwaveBillsEnabled()
+    ? await listFlutterwaveDataBundleNetworkProviders(baseNetworkProviders).catch(() => baseNetworkProviders)
+    : []
+  const flutterwavePlans = flutterwaveNetworkProviders.flatMap(network => (network.dataBundles ?? []).map(bundle => {
+    const priced = pricePlanNgn(rules, {
+      vendor: 'flutterwave',
+      network: network.name,
+      planType: 'STANDARD',
+      variationCode: bundle.itemCode,
+    }, bundle.amount)
+    return {
+      name: `${network.name} ${bundle.label}`,
+      variationCode: bundle.itemCode,
+      costNgn: priced.costNgn,
+      marginNgn: priced.marginNgn,
+      retailNgn: priced.retailNgn,
+      manualRetailNgn: priced.manualRetailNgn,
+    }
+  }))
 
   const preview = [
     ...amigoPlans.slice(0, 4).map(plan => ({
@@ -108,6 +145,7 @@ export async function GET() {
       costNgn: plan.costNgn,
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
     ...asbdataPlans.slice(0, 4).map(plan => ({
       vendor: 'asbdata' as const,
@@ -116,6 +154,7 @@ export async function GET() {
       costNgn: plan.costNgn,
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
     ...bardetechPlans.slice(0, 4).map(plan => ({
       vendor: 'bardetech' as const,
@@ -124,7 +163,9 @@ export async function GET() {
       costNgn: plan.costNgn,
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
+    ...flutterwavePlans.slice(0, 4).map(plan => ({ vendor: 'flutterwave' as const, ...plan })),
   ]
 
   const planTypes = Array.from(new Set([
@@ -177,6 +218,7 @@ export async function POST(req: Request) {
 
   const rule = await createPricingRule({
     ...parsed,
+    retailPriceKobo: parsed.retailPriceKobo ?? null,
     createdBy: admin.email,
   })
 
@@ -226,6 +268,43 @@ export async function PATCH(req: Request) {
       metadata: { target: describeScope(existing), active: body.active },
     })
     return NextResponse.json({ success: true, data: updated })
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'retailPriceNgn')) {
+    if (existing.scope !== 'PLAN' || !existing.vendor || !existing.planType) {
+      return NextResponse.json({ error: 'Manual customer prices require a specific provider plan and plan type.', success: false }, { status: 400 })
+    }
+    const parsedRetail = body.retailPriceNgn === null || body.retailPriceNgn === ''
+      ? null
+      : Number(body.retailPriceNgn)
+    if (parsedRetail !== null && (!Number.isFinite(parsedRetail) || parsedRetail <= 0 || parsedRetail > 1_000_000)) {
+      return NextResponse.json({ error: 'Enter a customer price greater than ₦0 and no more than ₦1,000,000.', success: false }, { status: 400 })
+    }
+    const updated = await updatePricingRule(id, {
+      marginBps: existing.marginBps,
+      marginKobo: existing.marginKobo,
+      minMarginKobo: existing.minMarginKobo,
+      maxMarginKobo: existing.maxMarginKobo,
+      roundToKobo: existing.roundToKobo,
+      retailPriceKobo: parsedRetail == null ? null : Math.round(parsedRetail * 100),
+      note: existing.note,
+      updatedBy: admin.email,
+    })
+    if (parsedRetail !== null && existing.active === false) {
+      await setPricingRuleActive(id, true, admin.email)
+    }
+    await insertAuditLog({
+      actorUserId: admin.id,
+      action: parsedRetail === null ? 'pricing_rule.manual_price_cleared' : 'pricing_rule.manual_price_set',
+      entityType: 'pricing_rule',
+      entityId: id,
+      metadata: {
+        target: describeScope(existing),
+        beforeRetailPriceNgn: existing.retailPriceKobo == null ? null : existing.retailPriceKobo / 100,
+        afterRetailPriceNgn: parsedRetail,
+      },
+    })
+    return NextResponse.json({ success: true, data: await getPricingRuleById(id) ?? updated })
   }
 
   const parsed = parseMarginBody({

@@ -2482,6 +2482,7 @@ function initSchema(db: DatabaseSync) {
       min_margin_kobo INTEGER NOT NULL DEFAULT 0,
       max_margin_kobo INTEGER,
       round_to_kobo INTEGER NOT NULL DEFAULT 0,
+      retail_price_kobo INTEGER,
       active INTEGER NOT NULL DEFAULT 1,
       note TEXT,
       created_by TEXT,
@@ -2822,6 +2823,7 @@ function migrateSchema(db: DatabaseSync) {
   }
   const addedBuyEnabled = ensureColumn(db, 'crypto_pairs', 'buy_enabled', 'INTEGER NOT NULL DEFAULT 1')
   const addedSellEnabled = ensureColumn(db, 'crypto_pairs', 'sell_enabled', 'INTEGER NOT NULL DEFAULT 1')
+  ensureColumn(db, 'pricing_rules', 'retail_price_kobo', 'INTEGER')
   if (addedBuyEnabled || addedSellEnabled) {
     db.exec('UPDATE crypto_pairs SET buy_enabled = is_active, sell_enabled = is_active')
   }
@@ -4338,6 +4340,7 @@ export type PricingRuleRecord = {
   minMarginKobo: number
   maxMarginKobo: number | null
   roundToKobo: number
+  retailPriceKobo: number | null
   active: boolean
   note: string | null
   createdBy?: string
@@ -4358,6 +4361,7 @@ type PricingRuleRow = {
   min_margin_kobo: number
   max_margin_kobo: number | null
   round_to_kobo: number
+  retail_price_kobo: number | null
   active: number
   note: string | null
   created_by: string | null
@@ -4389,6 +4393,7 @@ function mapPricingRuleRow(row: PricingRuleRow): PricingRuleRecord {
     minMarginKobo: Number(row.min_margin_kobo) || 0,
     maxMarginKobo: row.max_margin_kobo == null ? null : Number(row.max_margin_kobo),
     roundToKobo: Number(row.round_to_kobo) || 0,
+    retailPriceKobo: row.retail_price_kobo == null ? null : Number(row.retail_price_kobo),
   active: Boolean(row.active) || Number(row.active) === 1,
     note: row.note,
     createdBy: row.created_by ?? undefined,
@@ -4470,6 +4475,7 @@ export async function createPricingRule(input: {
   minMarginKobo: number
   maxMarginKobo: number | null
   roundToKobo: number
+  retailPriceKobo?: number | null
   note?: string | null
   createdBy?: string
 }): Promise<PricingRuleRecord> {
@@ -4479,9 +4485,9 @@ export async function createPricingRule(input: {
 
   if (isPostgresEnabled()) {
     const result = await queryPostgres<PricingRuleRow>(`
-      INSERT INTO pricing_rules (id, scope, vendor, network, plan_type, variation_code, margin_bps, margin_kobo, min_margin_kobo, max_margin_kobo, round_to_kobo, active, note, created_by, updated_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
-    `, [id, input.scope, nullToEmpty(input.vendor), nullToEmpty(input.network), nullToEmpty(input.planType), nullToEmpty(input.variationCode), Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), true, input.note?.trim() || null, input.createdBy ?? null, input.createdBy ?? null, now, now])
+      INSERT INTO pricing_rules (id, scope, vendor, network, plan_type, variation_code, margin_bps, margin_kobo, min_margin_kobo, max_margin_kobo, round_to_kobo, retail_price_kobo, active, note, created_by, updated_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `, [id, input.scope, nullToEmpty(input.vendor), nullToEmpty(input.network), nullToEmpty(input.planType), nullToEmpty(input.variationCode), Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), input.retailPriceKobo == null ? null : Math.round(input.retailPriceKobo), true, input.note?.trim() || null, input.createdBy ?? null, input.createdBy ?? null, now, now])
     if (!result.rows[0]) throw new Error('Failed to create pricing rule.')
     return mapPricingRuleRow(result.rows[0])
   }
@@ -4490,8 +4496,8 @@ export async function createPricingRule(input: {
     INSERT INTO pricing_rules (
       id, scope, vendor, network, plan_type, variation_code,
       margin_bps, margin_kobo, min_margin_kobo, max_margin_kobo, round_to_kobo,
-      active, note, created_by, updated_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+      retail_price_kobo, active, note, created_by, updated_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.scope,
@@ -4504,6 +4510,7 @@ export async function createPricingRule(input: {
     Math.round(input.minMarginKobo),
     input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo),
     Math.round(input.roundToKobo),
+    input.retailPriceKobo == null ? null : Math.round(input.retailPriceKobo),
     input.note?.trim() || null,
     input.createdBy ?? null,
     input.createdBy ?? null,
@@ -4524,6 +4531,7 @@ export async function updatePricingRule(
     minMarginKobo: number
     maxMarginKobo: number | null
     roundToKobo: number
+    retailPriceKobo?: number | null
     note?: string | null
     updatedBy?: string
   },
@@ -4533,11 +4541,21 @@ export async function updatePricingRule(
   if (!existing) return null
 
   const now = new Date().toISOString()
+  const updateRetailPrice = Object.prototype.hasOwnProperty.call(input, 'retailPriceKobo')
   if (isPostgresEnabled()) {
-    await queryPostgres(`UPDATE pricing_rules SET margin_bps = ?, margin_kobo = ?, min_margin_kobo = ?, max_margin_kobo = ?, round_to_kobo = ?, note = ?, updated_by = ?, updated_at = ? WHERE id = ?`, [Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), input.note?.trim() || null, input.updatedBy ?? null, now, id])
+    if (updateRetailPrice) {
+      await queryPostgres(`UPDATE pricing_rules SET margin_bps = ?, margin_kobo = ?, min_margin_kobo = ?, max_margin_kobo = ?, round_to_kobo = ?, retail_price_kobo = ?, note = ?, updated_by = ?, updated_at = ? WHERE id = ?`, [Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), input.retailPriceKobo == null ? null : Math.round(input.retailPriceKobo), input.note?.trim() || null, input.updatedBy ?? null, now, id])
+    } else {
+      await queryPostgres(`UPDATE pricing_rules SET margin_bps = ?, margin_kobo = ?, min_margin_kobo = ?, max_margin_kobo = ?, round_to_kobo = ?, note = ?, updated_by = ?, updated_at = ? WHERE id = ?`, [Math.round(input.marginBps), Math.round(input.marginKobo), Math.round(input.minMarginKobo), input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo), Math.round(input.roundToKobo), input.note?.trim() || null, input.updatedBy ?? null, now, id])
+    }
     return getPricingRuleById(id)
   }
-  getDb().prepare(`
+  const sql = updateRetailPrice ? `
+    UPDATE pricing_rules SET
+      margin_bps = ?, margin_kobo = ?, min_margin_kobo = ?, max_margin_kobo = ?,
+      round_to_kobo = ?, retail_price_kobo = ?, note = ?, updated_by = ?, updated_at = ?
+    WHERE id = ?
+  ` : `
     UPDATE pricing_rules SET
       margin_bps = ?,
       margin_kobo = ?,
@@ -4548,17 +4566,20 @@ export async function updatePricingRule(
       updated_by = ?,
       updated_at = ?
     WHERE id = ?
-  `).run(
+  `
+  const values = [
     Math.round(input.marginBps),
     Math.round(input.marginKobo),
     Math.round(input.minMarginKobo),
     input.maxMarginKobo == null ? null : Math.round(input.maxMarginKobo),
     Math.round(input.roundToKobo),
+    ...(updateRetailPrice ? [input.retailPriceKobo == null ? null : Math.round(input.retailPriceKobo)] : []),
     input.note?.trim() || null,
     input.updatedBy ?? null,
     now,
     id,
-  )
+  ]
+  getDb().prepare(sql).run(...values)
 
   return getPricingRuleById(id)
 }

@@ -25,28 +25,31 @@ export type AdminPricingRule = {
   minMarginKobo: number
   maxMarginKobo: number | null
   roundToKobo: number
+  retailPriceKobo: number | null
   active: boolean
   note: string | null
   updatedAt: string
 }
 
 export type PricingPreviewRow = {
-  vendor: 'amigo' | 'asbdata' | 'bardetech'
+  vendor: 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'
   name: string
   variationCode: string
   costNgn: number
   marginNgn: number
   retailNgn: number
+  manualRetailNgn: number | null
 }
 
 export type PricingPlanOption = {
-  vendor: 'amigo' | 'asbdata' | 'bardetech'
+  vendor: 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'
   network: string
   planType: string
   variationCode: string
   label: string
   costNgn: number
   retailNgn: number
+  manualRetailNgn: number | null
 }
 
 const SCOPES = ['GLOBAL', 'NETWORK', 'PLAN_TYPE', 'PLAN'] as const
@@ -56,6 +59,7 @@ const VENDOR_LABELS: Record<string, string> = {
   amigo: 'Amigo',
   asbdata: 'ASBDATA',
   bardetech: 'Bardetech',
+  flutterwave: 'Flutterwave',
 }
 
 function describeScope(rule: AdminPricingRule): string {
@@ -91,7 +95,7 @@ function findPlanRule(rules: AdminPricingRule[], plan: PricingPlanOption) {
       && rule.vendor === plan.vendor
       && rule.network === plan.network
       && rule.variationCode === plan.variationCode
-      && (!rule.planType || rule.planType === plan.planType))
+      && rule.planType === plan.planType)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null
 }
 
@@ -114,8 +118,9 @@ export function PricingClient({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [simpleVendor, setSimpleVendor] = useState<'' | 'amigo' | 'asbdata' | 'bardetech'>('')
+  const [simpleVendor, setSimpleVendor] = useState<'' | 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave'>('')
   const [simplePlanKey, setSimplePlanKey] = useState('')
+  const [manualRetailValue, setManualRetailValue] = useState('')
   const [simpleProfitType, setSimpleProfitType] = useState<'fixed' | 'percentage'>(
     initialDefaultRule?.marginBps ? 'percentage' : 'fixed',
   )
@@ -162,7 +167,7 @@ export function PricingClient({
     ? rules.find(rule => rule.scope === 'GLOBAL' && rule.vendor === simpleVendor) ?? null
     : defaultRule
   const providerPlans = simpleVendor ? plans.filter(plan => plan.vendor === simpleVendor) : []
-  const selectedPlan = providerPlans.find(plan => `${plan.vendor}:${plan.network}:${plan.variationCode}` === simplePlanKey) ?? null
+  const selectedPlan = providerPlans.find(plan => `${plan.vendor}:${plan.network}:${plan.planType}:${plan.variationCode}` === simplePlanKey) ?? null
   const planRule = selectedPlan ? findPlanRule(rules, selectedPlan) : null
   const targetRule = selectedPlan ? planRule : providerRule
   const effectiveRule = targetRule ?? providerRule ?? defaultRule
@@ -181,13 +186,14 @@ export function PricingClient({
     : sampleCostKobo + cappedProfitKobo
   const sampleFinalProfitKobo = sampleRetailKobo - sampleCostKobo
 
-  function selectSimpleVendor(value: '' | 'amigo' | 'asbdata' | 'bardetech') {
+  function selectSimpleVendor(value: '' | 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave') {
     const vendorRule = value
       ? rules.find(rule => rule.scope === 'GLOBAL' && rule.vendor === value) ?? null
       : defaultRule
     const sourceRule = vendorRule ?? defaultRule
     setSimpleVendor(value)
     setSimplePlanKey('')
+    setManualRetailValue('')
     setSimpleProfitType(sourceRule?.marginBps ? 'percentage' : 'fixed')
     setSimpleProfitValue(sourceRule?.marginBps
       ? String(sourceRule.marginBps / 100)
@@ -195,14 +201,97 @@ export function PricingClient({
   }
 
   function selectSimplePlan(value: string) {
-    const selected = providerPlans.find(plan => `${plan.vendor}:${plan.network}:${plan.variationCode}` === value) ?? null
+    const selected = providerPlans.find(plan => `${plan.vendor}:${plan.network}:${plan.planType}:${plan.variationCode}` === value) ?? null
     const rule = selected ? findPlanRule(rules, selected) : null
     const sourceRule = rule ?? providerRule ?? defaultRule
     setSimplePlanKey(value)
+    setManualRetailValue(selected?.manualRetailNgn != null ? String(selected.manualRetailNgn) : '')
     setSimpleProfitType(sourceRule?.marginBps ? 'percentage' : 'fixed')
     setSimpleProfitValue(sourceRule?.marginBps
       ? String(sourceRule.marginBps / 100)
       : String((sourceRule?.marginKobo ?? 0) / 100))
+  }
+
+  async function saveManualRetailPrice() {
+    if (!selectedPlan) return
+    const retailPrice = Number(manualRetailValue)
+    if (!Number.isFinite(retailPrice) || retailPrice <= 0 || retailPrice > 1_000_000) {
+      setError('Enter a customer price greater than ₦0 and no more than ₦1,000,000.')
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/api/admin/pricing', {
+        method: planRule ? 'PATCH' : 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(planRule ? {
+          id: planRule.id,
+          retailPriceNgn: retailPrice,
+        } : {
+          scope: 'PLAN',
+          vendor: selectedPlan.vendor,
+          network: selectedPlan.network,
+          planType: selectedPlan.planType,
+          variationCode: selectedPlan.variationCode,
+          retailPriceNgn: retailPrice,
+          marginPercent: (providerRule ?? defaultRule)?.marginBps ? (providerRule ?? defaultRule)!.marginBps / 100 : 0,
+          marginFlatNgn: ((providerRule ?? defaultRule)?.marginKobo ?? 0) / 100,
+          minMarginNgn: ((providerRule ?? defaultRule)?.minMarginKobo ?? 0) / 100,
+          maxMarginNgn: (providerRule ?? defaultRule)?.maxMarginKobo != null ? (providerRule ?? defaultRule)!.maxMarginKobo! / 100 : null,
+          roundToNgn: ((providerRule ?? defaultRule)?.roundToKobo ?? 0) / 100,
+          note: '',
+        }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.success === false) throw new Error(payload?.error || 'Could not save customer price.')
+
+      let savedRule = payload.data as AdminPricingRule
+      if (!savedRule.active) {
+        const activationResponse = await fetch('/api/admin/pricing', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: savedRule.id, active: true }),
+        })
+        const activation = await activationResponse.json().catch(() => null)
+        if (!activationResponse.ok || activation?.success === false) throw new Error(activation?.error || 'Price saved but could not be enabled.')
+        savedRule = activation.data as AdminPricingRule
+      }
+      setRules(current => [savedRule, ...current.filter(rule => rule.id !== savedRule.id)])
+      setManualRetailValue(String(retailPrice))
+      router.refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save customer price.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function clearManualRetailPrice() {
+    if (!planRule || planRule.retailPriceKobo == null) return
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/api/admin/pricing', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: planRule.id, retailPriceNgn: null }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.success === false) throw new Error(payload?.error || 'Could not clear manual customer price.')
+      const updated = payload.data as AdminPricingRule
+      setRules(current => current.map(rule => rule.id === updated.id ? updated : rule))
+      setManualRetailValue('')
+      router.refresh()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not clear manual customer price.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function saveDefaultProfit() {
@@ -216,7 +305,7 @@ export function PricingClient({
           scope: selectedPlan ? 'PLAN' : 'GLOBAL',
           vendor: selectedPlan?.vendor || simpleVendor || null,
           network: selectedPlan?.network || null,
-          planType: null,
+          planType: selectedPlan?.planType || null,
           variationCode: selectedPlan?.variationCode || null,
         }),
         marginPercent: simpleProfitType === 'percentage' ? Number(simpleProfitValue || 0) : 0,
@@ -398,12 +487,13 @@ export function PricingClient({
               Applies to
               <AdminSelect
                 value={simpleVendor}
-                onChange={event => selectSimpleVendor(event.target.value as '' | 'amigo' | 'asbdata' | 'bardetech')}
+                onChange={event => selectSimpleVendor(event.target.value as '' | 'amigo' | 'asbdata' | 'bardetech' | 'flutterwave')}
               >
                 <option value="">All providers</option>
                 <option value="amigo">Amigo only</option>
                 <option value="asbdata">ASBDATA only</option>
                 <option value="bardetech">Bardetech only</option>
+                <option value="flutterwave">Flutterwave only</option>
               </AdminSelect>
             </label>
             {simpleVendor ? (
@@ -412,7 +502,7 @@ export function PricingClient({
                 <AdminSelect value={simplePlanKey} onChange={event => selectSimplePlan(event.target.value)}>
                   <option value="">All {VENDOR_LABELS[simpleVendor]} plans</option>
                   {providerPlans.map(plan => {
-                    const key = `${plan.vendor}:${plan.network}:${plan.variationCode}`
+                    const key = `${plan.vendor}:${plan.network}:${plan.planType}:${plan.variationCode}`
                     return (
                       <option key={key} value={key}>
                         {plan.network} · {plan.label} · {plan.planType} · {formatNaira(plan.retailNgn)}
@@ -457,6 +547,52 @@ export function PricingClient({
               </AdminButton>
             </div>
           </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 rounded-xl border border-[#d9d2c5] bg-[#fbfaf7] p-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto_auto] sm:items-end">
+          <div>
+            <div className="text-sm font-bold text-slate-900">Manual customer price</div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              {selectedPlan
+                ? `${selectedPlan.network} · ${selectedPlan.label} · ${selectedPlan.planType}. Provider cost: ${formatNaira(selectedPlan.costNgn)}.`
+                : 'Select a provider and an individual plan above to set its exact sale price.'}
+            </p>
+            {selectedPlan && planRule?.retailPriceKobo != null ? (
+              <p className="mt-1 text-xs font-semibold text-[#8c6b31]">Current manual price: {formatNaira(planRule.retailPriceKobo / 100)}. This overrides profit rules for this plan.</p>
+            ) : null}
+            {selectedPlan && planRule?.retailPriceKobo != null ? (
+              <p className="mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">Changing the profit value above will not affect this plan while its manual customer price is set.</p>
+            ) : null}
+            {selectedPlan && planRule?.retailPriceKobo != null && planRule.retailPriceKobo / 100 < selectedPlan.costNgn ? (
+              <p className="mt-1 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-800">
+                This price is below today’s provider cost. The plan will be sold at a loss unless you update the price when the provider cost changes.
+              </p>
+            ) : null}
+          </div>
+          <label className="space-y-1.5 text-xs font-semibold text-slate-600">
+            Customer pays (₦)
+            <AdminInput
+              type="number"
+              step="0.01"
+              min={0.01}
+              max={1_000_000}
+              disabled={!selectedPlan}
+              value={manualRetailValue}
+              onChange={event => setManualRetailValue(event.target.value)}
+              placeholder="e.g. 500"
+            />
+          </label>
+          <AdminButton type="button" disabled={busy || !selectedPlan} onClick={() => void saveManualRetailPrice()}>
+            {busy ? 'Saving…' : 'Save customer price'}
+          </AdminButton>
+          <AdminButton
+            type="button"
+            variant="secondary"
+            disabled={busy || !planRule || planRule.retailPriceKobo == null}
+            onClick={() => void clearManualRetailPrice()}
+          >
+            Use profit rules
+          </AdminButton>
         </div>
 
         <div className="mt-4 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-3">
@@ -512,6 +648,7 @@ export function PricingClient({
             <option value="amigo">Amigo</option>
             <option value="asbdata">ASBDATA</option>
             <option value="bardetech">Bardetech</option>
+            <option value="flutterwave">Flutterwave</option>
           </AdminSelect>
           <AdminSelect
             value={createForm.network}
@@ -612,7 +749,7 @@ export function PricingClient({
                     <div className="font-semibold text-slate-900">{describeScope(rule)}</div>
                     <div className="mt-0.5 text-xs uppercase tracking-wide text-slate-400">{rule.scope}</div>
                   </td>
-                  <td className="px-4 py-3 font-mono text-slate-800">{describeMargin(rule)}</td>
+                  <td className="px-4 py-3 font-mono text-slate-800">{rule.retailPriceKobo != null ? `Manual ${formatNaira(rule.retailPriceKobo / 100)}` : describeMargin(rule)}</td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">
                     {rule.minMarginKobo > 0 ? `Floor ${formatNaira(rule.minMarginKobo / 100)}` : '—'}
                     {rule.maxMarginKobo != null ? ` / Cap ${formatNaira(rule.maxMarginKobo / 100)}` : ''}

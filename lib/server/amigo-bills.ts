@@ -79,6 +79,7 @@ export type PricedAmigoPlan = {
   costNgn: number
   marginNgn: number
   retailNgn: number
+  manualRetailNgn: number | null
   ruleId: string | null
   efficiencyPercent?: number
   efficiencyLabel?: string
@@ -244,6 +245,7 @@ function applyAmigoPricing(
       costNgn: priced.costNgn,
       marginNgn: priced.marginNgn,
       retailNgn: priced.retailNgn,
+      manualRetailNgn: priced.manualRetailNgn,
       ruleId: priced.ruleId,
       efficiencyPercent: entry.efficiencyPercent,
       efficiencyLabel: entry.efficiencyLabel || entry.category,

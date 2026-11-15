@@ -17,7 +17,7 @@ import {
 export const PRICING_SCOPES = ['PLAN', 'PLAN_TYPE', 'NETWORK', 'GLOBAL'] as const
 export type PricingScope = (typeof PRICING_SCOPES)[number]
 
-export const PRICING_VENDORS = ['amigo', 'asbdata', 'bardetech'] as const
+export const PRICING_VENDORS = ['amigo', 'asbdata', 'bardetech', 'flutterwave'] as const
 export type PricingVendor = (typeof PRICING_VENDORS)[number]
 
 /** Display names for rule descriptions. Keyed so a new vendor cannot fall through to a wrong label. */
@@ -25,6 +25,7 @@ const VENDOR_LABELS: Record<string, string> = {
   amigo: 'Amigo',
   asbdata: 'ASBDATA',
   bardetech: 'Bardetech',
+  flutterwave: 'Flutterwave',
 }
 
 /** Specificity order — lower index wins. */
@@ -49,6 +50,7 @@ export type PricingRuleInput = {
   minMarginKobo: number
   maxMarginKobo: number | null
   roundToKobo: number
+  retailPriceKobo: number | null
 }
 
 export type PricingRuleRecord = PricingRuleInput & {
@@ -72,6 +74,7 @@ export type PriceBreakdown = {
   costKobo: number
   marginKobo: number
   retailKobo: number
+  manualRetailKobo: number | null
   ruleId: string | null
 }
 
@@ -128,6 +131,10 @@ export function resolveRule<T extends PricingRuleRecord>(
     // Prefer vendor-specific over vendor-null at the same scope.
     if (rule.vendor && !best.vendor) return rule
     if (!rule.vendor && best.vendor) return best
+    // A provider-specific plan rule tied to its plan type must beat a broader
+    // rule with the same network and provider plan code.
+    if (rule.planType && !best.planType) return rule
+    if (!rule.planType && best.planType) return best
     return rule.updatedAt > best.updatedAt ? rule : best
   })
 }
@@ -146,12 +153,23 @@ export function applyRule(
   costKobo: number,
   rule: Pick<
     PricingRuleRecord,
-    'id' | 'marginBps' | 'marginKobo' | 'minMarginKobo' | 'maxMarginKobo' | 'roundToKobo'
+    'id' | 'marginBps' | 'marginKobo' | 'minMarginKobo' | 'maxMarginKobo' | 'roundToKobo' | 'retailPriceKobo'
   > | null,
 ): PriceBreakdown {
   const cost = Math.max(0, Math.round(costKobo))
   if (!rule) {
-    return { costKobo: cost, marginKobo: 0, retailKobo: cost, ruleId: null }
+    return { costKobo: cost, marginKobo: 0, retailKobo: cost, manualRetailKobo: null, ruleId: null }
+  }
+
+  if (rule.retailPriceKobo != null) {
+    const retail = Math.max(0, Math.round(rule.retailPriceKobo))
+    return {
+      costKobo: cost,
+      marginKobo: retail - cost,
+      retailKobo: retail,
+      manualRetailKobo: retail,
+      ruleId: rule.id,
+    }
   }
 
   const pct = Math.round((cost * clampBps(rule.marginBps)) / 10_000)
@@ -168,6 +186,7 @@ export function applyRule(
     costKobo: cost,
     marginKobo: retail - cost,
     retailKobo: retail,
+    manualRetailKobo: null,
     ruleId: rule.id,
   }
 }
@@ -190,12 +209,13 @@ export function pricePlanNgn(
   rules: PricingRuleRecord[],
   plan: PlanPricingTarget,
   wholesaleNgn: number,
-): { costNgn: number; marginNgn: number; retailNgn: number; ruleId: string | null } {
+): { costNgn: number; marginNgn: number; retailNgn: number; manualRetailNgn: number | null; ruleId: string | null } {
   const breakdown = priceFor(rules, plan, nairaToKobo(wholesaleNgn))
   return {
     costNgn: koboToNaira(breakdown.costKobo),
     marginNgn: koboToNaira(breakdown.marginKobo),
     retailNgn: koboToNaira(breakdown.retailKobo),
+    manualRetailNgn: breakdown.manualRetailKobo == null ? null : koboToNaira(breakdown.manualRetailKobo),
     ruleId: breakdown.ruleId,
   }
 }
@@ -231,6 +251,7 @@ function toRecord(row: StoredPricingRule): PricingRuleRecord {
     minMarginKobo: row.minMarginKobo,
     maxMarginKobo: row.maxMarginKobo,
     roundToKobo: row.roundToKobo,
+    retailPriceKobo: row.retailPriceKobo,
     active: row.active,
     note: row.note,
     updatedAt: row.updatedAt,
@@ -285,6 +306,7 @@ export function validatePricingRuleInput(body: {
   minMarginKobo: number
   maxMarginKobo: number | null
   roundToKobo: number
+  retailPriceKobo?: number | null
 }): string | null {
   if (!(PRICING_SCOPES as readonly string[]).includes(body.scope)) {
     return 'Invalid scope.'
@@ -301,6 +323,12 @@ export function validatePricingRuleInput(body: {
   }
   if (body.scope === 'PLAN' && !body.vendor) {
     return 'Vendor is required for PLAN scope (plan codes differ between Amigo and ASBDATA).'
+  }
+  if (body.retailPriceKobo != null) {
+    if (body.scope !== 'PLAN' || !body.vendor || !body.planType) return 'Manual customer prices require a specific provider plan and plan type.'
+    if (!Number.isFinite(body.retailPriceKobo) || body.retailPriceKobo <= 0 || body.retailPriceKobo > 100_000_000) {
+      return 'Manual customer price must be greater than ₦0 and no more than ₦1,000,000.'
+    }
   }
   if (body.marginBps < 0 || body.marginBps > MAX_MARGIN_BPS) {
     return `Percent margin must be between 0 and ${MAX_MARGIN_BPS / 100}%.`

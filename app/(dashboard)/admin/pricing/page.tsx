@@ -1,23 +1,48 @@
 import Link from 'next/link'
 import { AdminPageCard } from '@/components/admin/AdminUi'
 import { requireAdminPageUser } from '@/lib/server/admin-queries'
-import { loadPricingRulesForAdmin } from '@/lib/server/data-pricing'
+import { loadPricingRulesForAdmin, pricePlanNgn } from '@/lib/server/data-pricing'
 import { getPricedAmigoPlans } from '@/lib/server/amigo-bills'
 import { getPricedAsbdataPlans, listAsbdataPlanTypes } from '@/lib/server/asbdata-bills'
 import { getPricedBardetechPlans, listBardetechPlanTypes } from '@/lib/server/bardetech-bills'
+import { getNetworkProviders } from '@/lib/server/data'
+import { isFlutterwaveBillsEnabled, listFlutterwaveDataBundleNetworkProviders } from '@/lib/server/flutterwave-bills'
 import { PricingClient, type PricingPlanOption } from './PricingClient'
 
 export default async function AdminPricingPage() {
   await requireAdminPageUser()
 
-  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes, bardetechPlans, bardetechPlanTypes] = await Promise.all([
+  const [rules, amigoPlans, asbdataPlans, asbdataPlanTypes, bardetechPlans, bardetechPlanTypes, baseNetworkProviders] = await Promise.all([
     loadPricingRulesForAdmin(),
     getPricedAmigoPlans().catch(() => []),
     getPricedAsbdataPlans().catch(() => []),
     listAsbdataPlanTypes(),
     getPricedBardetechPlans().catch(() => []),
     listBardetechPlanTypes(),
+    getNetworkProviders(),
   ])
+
+  const flutterwaveNetworkProviders = isFlutterwaveBillsEnabled()
+    ? await listFlutterwaveDataBundleNetworkProviders(baseNetworkProviders).catch(() => baseNetworkProviders)
+    : []
+  const flutterwavePlans = flutterwaveNetworkProviders.flatMap(network => (network.dataBundles ?? []).map(bundle => {
+    const priced = pricePlanNgn(rules, {
+      vendor: 'flutterwave',
+      network: network.name,
+      planType: 'STANDARD',
+      variationCode: bundle.itemCode,
+    }, bundle.amount)
+    return {
+      vendor: 'flutterwave' as const,
+      network: network.name,
+      planType: 'STANDARD',
+      variationCode: bundle.itemCode,
+      label: `${bundle.label}${bundle.validity ? ` · ${bundle.validity}` : ''}`,
+      costNgn: priced.costNgn,
+      retailNgn: priced.retailNgn,
+      manualRetailNgn: priced.manualRetailNgn,
+    }
+  }))
 
   const preview = [
     ...amigoPlans.slice(0, 4).map(plan => ({
@@ -27,6 +52,7 @@ export default async function AdminPricingPage() {
       costNgn: plan.costNgn,
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
     ...asbdataPlans.slice(0, 4).map(plan => ({
       vendor: 'asbdata' as const,
@@ -35,6 +61,7 @@ export default async function AdminPricingPage() {
       costNgn: plan.costNgn,
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
     ...bardetechPlans.slice(0, 4).map(plan => ({
       vendor: 'bardetech' as const,
@@ -43,6 +70,7 @@ export default async function AdminPricingPage() {
       costNgn: plan.costNgn,
       marginNgn: plan.marginNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
   ]
 
@@ -55,6 +83,7 @@ export default async function AdminPricingPage() {
       label: `${plan.label}${plan.validity ? ` · ${plan.validity}` : ''}`,
       costNgn: plan.costNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
     ...asbdataPlans.map(plan => ({
       vendor: 'asbdata' as const,
@@ -64,6 +93,7 @@ export default async function AdminPricingPage() {
       label: `${plan.size}${plan.validity ? ` · ${plan.validity}` : ''}`,
       costNgn: plan.costNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
     ...bardetechPlans.map(plan => ({
       vendor: 'bardetech' as const,
@@ -73,7 +103,9 @@ export default async function AdminPricingPage() {
       label: `${plan.size}${plan.validity ? ` · ${plan.validity}` : ''}`,
       costNgn: plan.costNgn,
       retailNgn: plan.retailNgn,
+      manualRetailNgn: plan.manualRetailNgn,
     })),
+    ...flutterwavePlans,
   ]
 
   const planTypes = Array.from(new Set([
@@ -100,7 +132,7 @@ export default async function AdminPricingPage() {
             Manage disabled plans
           </Link>
         )}
-        description="Choose how much MafitaPay earns on each data plan. Set one profit for all providers or different defaults for each provider."
+        description="Set an exact customer price for individual plans, or use profit rules to price plans automatically from provider cost."
       >
         <PricingClient
           initialRules={rules}
