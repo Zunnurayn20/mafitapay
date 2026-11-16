@@ -126,16 +126,24 @@ export async function POST(request: Request) {
     }
     if (webhookProcessedAddresses.has(record.address.toLowerCase())) continue
     try {
-      if (chain === 'solana' && typeof item.asset === 'string' && item.asset.toUpperCase() === 'SOL') {
-        const result = await processAlchemySolanaNativeActivity({ address: record.address, activity: item })
-        if (result.processed) {
-          processedFromWebhook += 1
-          webhookProcessedAddresses.add(record.address.toLowerCase())
-          continue
+      let processedNativeSol = false
+      if (chain === 'solana') {
+        const addressActivities = activity.filter(item => typeof item.toAddress === 'string' && item.toAddress.trim() === address)
+        for (const item of addressActivities) {
+          if (typeof item.asset !== 'string' || item.asset.toUpperCase() !== 'SOL') continue
+          const result = await processAlchemySolanaNativeActivity({ address: record.address, activity: item })
+          if (result.processed) {
+            processedFromWebhook += 1
+            processedNativeSol = true
+          }
         }
       }
+      if (processedNativeSol) {
+        webhookProcessedAddresses.add(record.address.toLowerCase())
+        continue
+      }
       const scanResult = await forceScanDepositAddress({ address: record.address, chain, backgroundReconcile: false })
-      const scanFailures = scanResult.scannedAssets.filter(asset => asset.error)
+      const scanFailures = (scanResult.scannedAssets ?? []).filter(asset => asset.error)
       if (scanFailures.length > 0) {
         throw new Error(scanFailures.map(asset => asset.error).join('; '))
       }

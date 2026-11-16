@@ -998,7 +998,14 @@ export async function processAlchemySolanaNativeActivity(input: {
       slot: tx.slot,
     },
   })
-  return { processed: true, settled: result.settled, duplicate: result.duplicate, pairId: asset.pairId }
+  return {
+    processed: true,
+    settled: result.settled,
+    duplicate: result.duplicate,
+    pairId: asset.pairId,
+    amountCrypto: Number(formatUnits(amountUnits, asset.decimals)),
+    externalEventId: `solana:${asset.pairId}:${txHash}:native`,
+  }
 }
 
 /** Reconcile a single transaction after an administrator has verified its ownership. */

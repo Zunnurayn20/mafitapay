@@ -4,6 +4,7 @@ import {
   forceScanDepositAddress,
   kickCryptoDepositScanner,
   reconcileErc20DepositTransaction,
+  processAlchemySolanaNativeActivity,
   syncCryptoDepositEventsOnce,
 } from '@/lib/server/crypto-deposit-scanner'
 import { getRecentSweepGasStats, runEvmTreasuryBatchConversion, sweepCryptoDepositEvent } from '@/lib/server/crypto-deposit-sweeper'
@@ -95,6 +96,26 @@ export async function POST(req: Request) {
       return NextResponse.json({ data: result, success: true })
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Transaction reconciliation failed', success: false }, { status: 400 })
+    }
+  }
+
+  if (intent === 'reconcile-solana-native-transaction') {
+    const address = typeof body.address === 'string' ? body.address.trim() : ''
+    const txHash = typeof body.txHash === 'string' ? body.txHash.trim() : ''
+    if (!address || !txHash) {
+      return NextResponse.json({ error: 'address and txHash are required', success: false }, { status: 400 })
+    }
+    try {
+      const result = await processAlchemySolanaNativeActivity({
+        address,
+        activity: { hash: txHash, toAddress: address, asset: 'SOL' },
+      })
+      if (!result.processed) {
+        return NextResponse.json({ error: 'No successful native SOL transfer to this deposit address was found in that transaction.', success: false }, { status: 400 })
+      }
+      return NextResponse.json({ data: result, success: true })
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Solana deposit reconciliation failed.', success: false }, { status: 400 })
     }
   }
 
