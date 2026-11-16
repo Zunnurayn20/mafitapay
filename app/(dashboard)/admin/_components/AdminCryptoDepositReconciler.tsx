@@ -62,6 +62,7 @@ export function AdminCryptoDepositReconciler() {
   }
 
   return (
+    <div className="space-y-3">
     <Card className="space-y-3 border-[var(--gold)]/40 p-4">
       <div>
         <div className="text-sm font-bold text-[var(--text)]">Reconcile missed ERC-20 deposit</div>
@@ -86,5 +87,6 @@ export function AdminCryptoDepositReconciler() {
       </div>
       {solanaMessage && <div role="status" className="break-all text-xs text-[var(--text2)]">{solanaMessage}</div>}
     </Card>
+    </div>
   )
 }
