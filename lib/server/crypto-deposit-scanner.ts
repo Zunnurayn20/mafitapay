@@ -412,6 +412,10 @@ const SOLANA_RPC_QUOTA_COOLDOWN_MS = Math.max(
   60_000,
   Number(process.env.MAFITAPAY_SOLANA_RPC_QUOTA_COOLDOWN_MS ?? 21_600_000) || 21_600_000,
 )
+const SOLANA_RPC_RATE_LIMIT_COOLDOWN_MS = Math.max(
+  5_000,
+  Number(process.env.MAFITAPAY_SOLANA_RPC_RATE_LIMIT_COOLDOWN_MS ?? 30_000) || 30_000,
+)
 const solanaRpcUnavailableUntil = new Map<string, number>()
 
 function createSolanaConnections() {
@@ -425,6 +429,7 @@ function createSolanaConnections() {
     ...configuredUrls,
     ...(alchemyKey ? [`https://solana-mainnet.g.alchemy.com/v2/${alchemyKey}`] : []),
     ...(configuredRpcUrl ? [configuredRpcUrl] : []),
+    'https://solana-rpc.publicnode.com',
     'https://api.mainnet-beta.solana.com',
   ]
   const uniqueUrls = Array.from(new Set(urls))
@@ -452,9 +457,11 @@ async function withSolanaRpc<T>(
     } catch (error) {
       lastError = error
       const message = error instanceof Error ? error.message : String(error)
-      const quotaExceeded = /429|too many requests|monthly capacity limit exceeded|rate limit/i.test(message)
-      if (quotaExceeded) {
-        solanaRpcUnavailableUntil.set(url, Date.now() + SOLANA_RPC_QUOTA_COOLDOWN_MS)
+      const monthlyQuotaExceeded = /monthly capacity limit exceeded|monthly (?:quota|limit)/i.test(message)
+      const rateLimited = /429|too many requests|rate limit/i.test(message)
+      if (monthlyQuotaExceeded || rateLimited) {
+        const cooldownMs = monthlyQuotaExceeded ? SOLANA_RPC_QUOTA_COOLDOWN_MS : SOLANA_RPC_RATE_LIMIT_COOLDOWN_MS
+        solanaRpcUnavailableUntil.set(url, Date.now() + cooldownMs)
         console.warn(`[crypto-deposit-scanner] Solana RPC ${sanitizeUrlForLogs(url)} is rate-limited; falling back for ${operation}.`)
       }
     }
