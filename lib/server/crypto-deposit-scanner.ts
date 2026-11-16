@@ -409,7 +409,15 @@ function createTonClient() {
 }
 
 function createSolanaConnection() {
-  const rpcUrl = process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com'
+  const configuredRpcUrl = process.env.MAFITAPAY_SOLANA_RPC_URL?.trim()
+  const alchemyKey = process.env.ALCHEMY_API_KEY?.trim()
+  // The public Solana endpoint rate-limits our address-by-address deposit scanner. Prefer
+  // Alchemy when the configured value is that public endpoint, while preserving custom RPCs.
+  const rpcUrl = configuredRpcUrl && !/^https?:\/\/api\.mainnet-beta\.solana\.com\/?$/i.test(configuredRpcUrl)
+    ? configuredRpcUrl
+    : alchemyKey
+      ? `https://solana-mainnet.g.alchemy.com/v2/${alchemyKey}`
+      : configuredRpcUrl || 'https://api.mainnet-beta.solana.com'
   return new Connection(rpcUrl, 'confirmed')
 }
 
@@ -926,6 +934,71 @@ export async function processAlchemyErc20Activity(input: {
     payload: { type: 'alchemy_webhook_erc20_transfer', tokenAddress: contract, from, to: address.address },
   })
   return { processed: true, settled: result.settled, pairId: asset.pairId }
+}
+
+/** Process a signed Alchemy Solana native-SOL activity without enumerating address history. */
+export async function processAlchemySolanaNativeActivity(input: {
+  address: string
+  activity: {
+    hash?: unknown
+    toAddress?: unknown
+    asset?: unknown
+  }
+}) {
+  const address = await getCryptoDepositAddressByAddress(input.address.trim())
+  if (!address || address.addressFamily !== 'solana') {
+    throw new Error('Address is not a known Solana deposit address.')
+  }
+  const txHash = typeof input.activity.hash === 'string' ? input.activity.hash.trim() : ''
+  const toAddress = typeof input.activity.toAddress === 'string' ? input.activity.toAddress.trim() : ''
+  const assetName = typeof input.activity.asset === 'string' ? input.activity.asset.trim().toUpperCase() : ''
+  if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(txHash)) {
+    throw new Error('Alchemy Solana activity did not include a valid transaction signature.')
+  }
+  if (toAddress !== address.address || (assetName && assetName !== 'SOL')) {
+    return { processed: false, settled: false }
+  }
+
+  const connection = createSolanaConnection()
+  const tx = await connection.getParsedTransaction(txHash, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 })
+  if (!tx) throw new Error('Solana transaction is not available from the configured RPC yet.')
+  if (tx.meta?.err) throw new Error('Solana transaction failed on chain.')
+
+  const transferInstructions = [
+    ...tx.transaction.message.instructions,
+    ...(tx.meta?.innerInstructions ?? []).flatMap(group => group.instructions),
+  ]
+  let amountUnits = BigInt(0)
+  let from = ''
+  for (const instruction of transferInstructions) {
+    if (!('parsed' in instruction) || instruction.program !== 'system' || instruction.parsed.type !== 'transfer') continue
+    const info = instruction.parsed.info as { source?: unknown; destination?: unknown; lamports?: unknown }
+    if (info.destination !== address.address) continue
+    const lamports = typeof info.lamports === 'string' || typeof info.lamports === 'number' ? String(info.lamports) : ''
+    if (!/^\d+$/.test(lamports)) continue
+    amountUnits += BigInt(lamports)
+    if (typeof info.source === 'string') from = info.source
+  }
+  if (amountUnits <= BigInt(0)) return { processed: false, settled: false }
+
+  const asset = getSupportedAssets().find(candidate => candidate.pairId === 'SOL_SOLANA')
+  if (!asset) throw new Error('SOL deposits are not enabled in the supported asset catalog.')
+  const result = await persistAndSettleDeposit({
+    asset,
+    address,
+    externalEventId: `solana:${asset.pairId}:${txHash}:native`,
+    amountUnits,
+    txHash,
+    blockNumber: BigInt(tx.slot),
+    payload: {
+      type: 'alchemy_webhook_solana_native_transfer',
+      from,
+      to: address.address,
+      signature: txHash,
+      slot: tx.slot,
+    },
+  })
+  return { processed: true, settled: result.settled, duplicate: result.duplicate, pairId: asset.pairId }
 }
 
 /** Reconcile a single transaction after an administrator has verified its ownership. */
@@ -1600,7 +1673,9 @@ async function scanSolanaDeposits(input: {
   }
 
   // Keep RPC latency bounded while avoiding one slow address blocking every other user's deposit.
-  const addressBatchSize = 5
+  // Solana's free/public RPC has strict per-method limits. Use a small bounded batch so the
+  // scanner can still cover every address without bursting the provider.
+  const addressBatchSize = 2
   for (let offset = 0; offset < solAddrs.length; offset += addressBatchSize) {
     await Promise.all(solAddrs.slice(offset, offset + addressBatchSize).map(scanAddress))
   }
