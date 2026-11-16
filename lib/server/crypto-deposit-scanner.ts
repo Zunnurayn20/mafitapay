@@ -408,17 +408,59 @@ function createTonClient() {
   })
 }
 
-function createSolanaConnection() {
+const SOLANA_RPC_QUOTA_COOLDOWN_MS = Math.max(
+  60_000,
+  Number(process.env.MAFITAPAY_SOLANA_RPC_QUOTA_COOLDOWN_MS ?? 21_600_000) || 21_600_000,
+)
+const solanaRpcUnavailableUntil = new Map<string, number>()
+
+function createSolanaConnections() {
+  const configuredUrls = (process.env.MAFITAPAY_SOLANA_RPC_URLS?.trim() || '')
+    .split(',')
+    .map(url => url.trim())
+    .filter(Boolean)
   const configuredRpcUrl = process.env.MAFITAPAY_SOLANA_RPC_URL?.trim()
   const alchemyKey = process.env.ALCHEMY_API_KEY?.trim()
-  // The public Solana endpoint rate-limits our address-by-address deposit scanner. Prefer
-  // Alchemy when the configured value is that public endpoint, while preserving custom RPCs.
-  const rpcUrl = configuredRpcUrl && !/^https?:\/\/api\.mainnet-beta\.solana\.com\/?$/i.test(configuredRpcUrl)
-    ? configuredRpcUrl
-    : alchemyKey
-      ? `https://solana-mainnet.g.alchemy.com/v2/${alchemyKey}`
-      : configuredRpcUrl || 'https://api.mainnet-beta.solana.com'
-  return new Connection(rpcUrl, 'confirmed')
+  const urls = [
+    ...configuredUrls,
+    ...(alchemyKey ? [`https://solana-mainnet.g.alchemy.com/v2/${alchemyKey}`] : []),
+    ...(configuredRpcUrl ? [configuredRpcUrl] : []),
+    'https://api.mainnet-beta.solana.com',
+  ]
+  const uniqueUrls = Array.from(new Set(urls))
+  return uniqueUrls.map(url => ({ url, connection: new Connection(url, 'confirmed') }))
+}
+
+async function withSolanaRpc<T>(
+  operation: string,
+  request: (connection: Connection) => Promise<T>,
+  options: { retryOnEmpty?: boolean } = {},
+): Promise<T> {
+  const endpoints = createSolanaConnections().filter(({ url }) => (solanaRpcUnavailableUntil.get(url) ?? 0) <= Date.now())
+  if (endpoints.length === 0) throw new Error('No available Solana RPC endpoint. Configure MAFITAPAY_SOLANA_RPC_URLS and retry later.')
+
+  let lastError: unknown
+  let emptyResult: T | undefined
+  for (const { url, connection } of endpoints) {
+    try {
+      const result = await request(connection)
+      if (options.retryOnEmpty && (result === null || (Array.isArray(result) && result.length === 0))) {
+        emptyResult = result
+        continue
+      }
+      return result
+    } catch (error) {
+      lastError = error
+      const message = error instanceof Error ? error.message : String(error)
+      const quotaExceeded = /429|too many requests|monthly capacity limit exceeded|rate limit/i.test(message)
+      if (quotaExceeded) {
+        solanaRpcUnavailableUntil.set(url, Date.now() + SOLANA_RPC_QUOTA_COOLDOWN_MS)
+        console.warn(`[crypto-deposit-scanner] Solana RPC ${sanitizeUrlForLogs(url)} is rate-limited; falling back for ${operation}.`)
+      }
+    }
+  }
+  if (lastError) throw lastError
+  return emptyResult as T
 }
 
 function createSuiScannerClient() {
@@ -959,8 +1001,11 @@ export async function processAlchemySolanaNativeActivity(input: {
     return { processed: false, settled: false }
   }
 
-  const connection = createSolanaConnection()
-  const tx = await connection.getParsedTransaction(txHash, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 })
+  const tx = await withSolanaRpc(
+    'transaction verification',
+    connection => connection.getParsedTransaction(txHash, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 }),
+    { retryOnEmpty: true },
+  )
   if (!tx) throw new Error('Solana transaction is not available from the configured RPC yet.')
   if (tx.meta?.err) throw new Error('Solana transaction failed on chain.')
 
@@ -1571,7 +1616,6 @@ async function scanTonDeposits(input: {
 
 async function scanSolanaDeposits(input: {
   asset: SupportedDepositAsset
-  connection: Connection
   lookup: Map<string, CryptoDepositAddress>
 }) {
   const solAddrs = Array.from(input.lookup.values()).filter(a => a.addressFamily === 'solana')
@@ -1580,7 +1624,6 @@ async function scanSolanaDeposits(input: {
   let detected = 0
   let settled = 0
   let failedAddresses = 0
-  const conn = input.connection
   const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
   const scanAddress = async (addr: CryptoDepositAddress) => {
@@ -1592,7 +1635,10 @@ async function scanSolanaDeposits(input: {
       const lastScannedSlot = await getLastScannedBlock(scanKey)
       // Scan the recent history once, then fetch only new activity on subsequent passes. The
       // previous implementation fetched and reparsed the same 30 transactions on every pass.
-      const sigs = await conn.getSignaturesForAddress(target, { limit: lastScannedSlot === null ? 30 : 1000 })
+      const sigs = await withSolanaRpc(
+        'deposit signature scan',
+        connection => connection.getSignaturesForAddress(target, { limit: lastScannedSlot === null ? 30 : 1000 }),
+      )
       const newestSlot = sigs.reduce<bigint | null>((latest, item) => {
         const slot = BigInt(item.slot)
         return latest === null || slot > latest ? slot : latest
@@ -1608,7 +1654,11 @@ async function scanSolanaDeposits(input: {
         const existingEvent = await getCryptoDepositEventByExternalId(externalEventId)
         if (existingEvent && existingEvent.status !== 'unmatched') continue
 
-        const tx = await conn.getParsedTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 })
+        const tx = await withSolanaRpc(
+          'deposit transaction lookup',
+          connection => connection.getParsedTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 }),
+          { retryOnEmpty: true },
+        )
         if (!tx) throw new Error(`Solana transaction ${txHash} is not available from the RPC yet.`)
         if (tx.meta?.err) continue
 
@@ -1984,7 +2034,6 @@ export async function syncCryptoDepositEventsOnce() {
     const polygonClient = createPolygonClient()
     const robinhoodClient = createRobinhoodClient()
     const tonClient = createTonClient()
-    const solanaConnection = createSolanaConnection()
     const suiClient = createSuiScannerClient()
     const nearProvider = createNearScannerProvider()
     // log effective RPCs for diagnosis (especially when public nodes limit logs or return 401)
@@ -2062,7 +2111,7 @@ export async function syncCryptoDepositEventsOnce() {
             return await scanTonDeposits({ asset, client: tonClient, lookup })
           }
           if (asset.chain === 'solana') {
-            return await scanSolanaDeposits({ asset, connection: solanaConnection, lookup })
+            return await scanSolanaDeposits({ asset, lookup })
           }
           if (asset.chain === 'sui') {
             return await scanSuiDeposits({ asset, client: suiClient, lookup })
@@ -2176,7 +2225,7 @@ export async function forceScanDepositAddress(input: { address: string; pairId?:
       } else if (asset.chain === 'ton') {
         result = await scanTonDeposits({ asset, client: createTonClient(), lookup })
       } else if (asset.chain === 'solana') {
-        result = await scanSolanaDeposits({ asset, connection: createSolanaConnection(), lookup })
+        result = await scanSolanaDeposits({ asset, lookup })
       } else if (asset.chain === 'sui') {
         result = await scanSuiDeposits({ asset, client: createSuiScannerClient(), lookup })
       } else if (asset.chain === 'near') {
