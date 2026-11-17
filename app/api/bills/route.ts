@@ -4,8 +4,8 @@ import { getBillServiceConfig, getDetectedNetworkProviderName, isValidNigerianPh
 import { applyWalletMutation, ensureCryptoMarketAutoRefreshScheduler, getBillProviders, getBillTypeSettings, getDisabledDataPlanCategories, getDisabledDataPlans, getNetworkProviders, getWalletByUserId, isDataPlanDisabled, kickCryptoMarketRefresh, markProviderEventProcessed, recordProviderEvent, resolvePendingTransaction, updatePendingTransactionMetadata, verifySensitiveActionAuthorization } from '@/lib/server/data'
 import { isDataPlanCategoryDisabled } from '@/lib/data-plan-categories'
 import { createAmigoDataPayment, getAmigoPlanForPurchase, isAmigoBillsEnabled, listAmigoDataBundleNetworkProvidersSafe } from '@/lib/server/amigo-bills'
-import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, getEquivalentAsbdataSmePlans, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe } from '@/lib/server/asbdata-bills'
-import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe } from '@/lib/server/bardetech-bills'
+import { createAsbdataAirtimePayment, createAsbdataDataPayment, getAsbdataNetworkId, getAsbdataPlanForPurchase, getPricedAsbdataPlans, isAsbdataBillsEnabled, listAsbdataDataBundleNetworkProvidersSafe, type PricedAsbdataPlan } from '@/lib/server/asbdata-bills'
+import { createBardetechAirtimePayment, createBardetechDataPayment, getBardetechNetworkId, getBardetechPlanForPurchase, getPricedBardetechPlans, isBardetechBillsEnabled, listBardetechDataBundleNetworkProvidersSafe, type PricedBardetechPlan } from '@/lib/server/bardetech-bills'
 import { createFlutterwaveBillPayment, getFlutterwaveDataBundleForPurchase, isFlutterwaveBillsEnabled, isFlutterwaveBillTypeSupported, listFlutterwaveCableBillProvidersSafe, listFlutterwaveDataBundleNetworkProviders, listFlutterwaveElectricBillProvidersSafe } from '@/lib/server/flutterwave-bills'
 import { ensureFlutterwaveBillSyncScheduler, kickPendingFlutterwaveBillSync } from '@/lib/server/flutterwave-bill-sync-batch'
 import { ensureBardetechBillSyncScheduler } from '@/lib/server/bardetech-bill-sync'
@@ -13,12 +13,72 @@ import { ensureAsbdataBillSyncScheduler, syncAsbdataBill } from '@/lib/server/as
 import { generateRef } from '@/lib/utils'
 import { loadPricingRules, pricePlanNgn } from '@/lib/server/data-pricing'
 import type { AmigoDataPaymentResult } from '@/lib/server/amigo-bills'
-import type { AsbdataPaymentResult, PricedAsbdataPlan } from '@/lib/server/asbdata-bills'
+import type { AsbdataPaymentResult } from '@/lib/server/asbdata-bills'
 import type { BardetechPaymentResult } from '@/lib/server/bardetech-bills'
 import type { FlutterwaveBillPaymentResult } from '@/lib/server/flutterwave-bills'
 import type { BillProvider, Transaction } from '@/types'
 
 type AirtimeProvider = 'bardetech' | 'asbdata'
+
+function normalizeSmePlanSize(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, '')
+  const match = normalized.match(/^(\d+(?:\.\d+)?)(gb|g|mb|m)$/)
+  if (!match) return normalized
+  const amount = Number(match[1])
+  const megabytes = match[2].startsWith('g') ? amount * 1000 : amount
+  return `${Number(megabytes.toFixed(4))}mb`
+}
+
+function normalizeSmePlanValidity(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, '')
+  const match = normalized.match(/(\d+(?:\.\d+)?)(hours?|hrs?|days?|dys?|weeks?|wks?|months?|mths?|years?|yrs?)/)
+  if (!match) return normalized.replace(/days?/g, 'day').replace(/hours?/g, 'hour')
+  const quantity = Number(match[1])
+  const unit = match[2]
+  const days = unit.startsWith('hour') || unit.startsWith('hr') ? quantity / 24
+    : unit.startsWith('week') || unit.startsWith('wk') ? quantity * 7
+      : unit.startsWith('month') || unit.startsWith('mth') ? quantity * 30
+        : unit.startsWith('year') || unit.startsWith('yr') ? quantity * 365
+          : quantity
+  return `days:${Number(days.toFixed(4))}`
+}
+
+type SmeFallbackPlan =
+  | { provider: 'bardetech'; plan: PricedBardetechPlan }
+  | { provider: 'asbdata'; plan: PricedAsbdataPlan }
+
+async function getEquivalentSmeFallbackPlans(input: {
+  network: string
+  size: string
+  validity: string
+  retailNgn: number
+  excludeProvider: 'bardetech' | 'asbdata'
+  excludePlanId: number
+  excludePlanType: string
+}): Promise<SmeFallbackPlan[]> {
+  const [bardetechPlans, asbdataPlans] = await Promise.all([
+    isBardetechBillsEnabled() ? getPricedBardetechPlans().catch(() => []) : Promise.resolve([]),
+    isAsbdataBillsEnabled() ? getPricedAsbdataPlans().catch(() => []) : Promise.resolve([]),
+  ])
+  const candidates: SmeFallbackPlan[] = [
+    ...bardetechPlans.map(plan => ({ provider: 'bardetech' as const, plan })),
+    ...asbdataPlans.map(plan => ({ provider: 'asbdata' as const, plan })),
+  ].filter(candidate => (
+    candidate.plan.network.toLowerCase() === input.network.toLowerCase()
+    && normalizeSmePlanSize(candidate.plan.size) === normalizeSmePlanSize(input.size)
+    && normalizeSmePlanValidity(candidate.plan.validity) === normalizeSmePlanValidity(input.validity)
+    && Math.abs(candidate.plan.retailNgn - input.retailNgn) < 0.01
+    && (candidate.plan.planTypeNormalized === 'SME' || candidate.plan.planTypeNormalized === 'SME2')
+    && !(candidate.provider === input.excludeProvider && candidate.plan.planId === input.excludePlanId)
+    && !(candidate.provider === input.excludeProvider && candidate.plan.planTypeNormalized === input.excludePlanType)
+  ))
+
+  return candidates.sort((left, right) => (
+    (left.provider === 'bardetech' ? 0 : 1) - (right.provider === 'bardetech' ? 0 : 1)
+    || (left.plan.planTypeNormalized === 'SME' ? 0 : 1) - (right.plan.planTypeNormalized === 'SME' ? 0 : 1)
+    || left.plan.costNgn - right.plan.costNgn
+  ))
+}
 
 function getConfiguredAirtimeProviders(): AirtimeProvider[] {
   return [
@@ -273,6 +333,7 @@ async function handleBillPayment(req: Request) {
   let providerBaseAmount = numericAmount
   let pricingRuleId: string | null = null
   let asbdataPlan: PricedAsbdataPlan | null = null
+  let bardetechPlan: PricedBardetechPlan | null = null
 
   if (
     resolvedDataProvider === 'asbdata'
@@ -340,6 +401,7 @@ async function handleBillPayment(req: Request) {
     platformFee = plan.marginNgn
     providerBaseAmount = plan.costNgn
     pricingRuleId = plan.ruleId
+    bardetechPlan = plan
   } else if (
     resolvedDataProvider === 'flutterwave'
     && isFlutterwaveBillsEnabled()
@@ -587,25 +649,36 @@ async function handleBillPayment(req: Request) {
     }
   }
 
-  // ASBDATA can vend the same bundle under SME and SME 2 plan IDs. If the selected plan
-  // receives an explicit rejection, try only an enabled equivalent plan at the same or
-  // lower customer price. Never retry an indeterminate request because it may have delivered.
+  // SME/SME2 bundles can be duplicated across ASBDATA and Bardetech. Keep the customer price
+  // locked and try equivalent routes in priority order, but only after an explicit rejection.
+  // A timeout/indeterminate response may already have delivered, so it must never be retried.
+  const selectedSmePlan = expectedProvider === 'bardetech' ? bardetechPlan
+    : expectedProvider === 'asbdata' ? asbdataPlan
+      : null
   if (
     selectedProvider.type === 'data'
-    && expectedProvider === 'asbdata'
-    && providerResult.provider === 'asbdata'
+    && (expectedProvider === 'bardetech' || expectedProvider === 'asbdata')
+    && providerResult.provider === expectedProvider
     && providerResult.status === 'failed'
     && !providerResult.indeterminate
-    && asbdataPlan
+    && selectedSmePlan
+    && (selectedSmePlan.planTypeNormalized === 'SME' || selectedSmePlan.planTypeNormalized === 'SME2')
   ) {
     const primaryFailure = providerResult
-    const selectedAsbdataPlan = asbdataPlan
-    const alternatives = await getEquivalentAsbdataSmePlans(selectedAsbdataPlan, chargeAmount)
+    const alternatives = await getEquivalentSmeFallbackPlans({
+      network: selectedSmePlan.network,
+      size: selectedSmePlan.size,
+      validity: selectedSmePlan.validity,
+      retailNgn: chargeAmount,
+      excludeProvider: expectedProvider,
+      excludePlanId: selectedSmePlan.planId,
+      excludePlanType: selectedSmePlan.planTypeNormalized,
+    })
     if (alternatives.length > 0) {
-      const primaryFailureEventId = `bill:${ref}:asbdata-sme-fallback:${primaryFailure.planId ?? providerPlanId}:${primaryFailure.rawStatus || 'FAILED'}`
+      const primaryFailureEventId = `bill:${ref}:${expectedProvider}-sme-fallback:${selectedSmePlan.planId}:${primaryFailure.rawStatus || 'FAILED'}`
       await recordProviderEvent({
         externalEventId: primaryFailureEventId,
-        provider: 'asbdata_data',
+        provider: expectedProvider === 'bardetech' ? 'bardetech_data' : 'asbdata_data',
         reference: ref,
         status: primaryFailure.rawStatus || 'FAILED',
         failureReason: primaryFailure.reason,
@@ -613,47 +686,50 @@ async function handleBillPayment(req: Request) {
       })
       await markProviderEventProcessed(primaryFailureEventId)
 
-      for (const alternatePlan of alternatives) {
+      for (const candidate of alternatives) {
+        const alternatePlan = candidate.plan
         console.info('[bills] provider.fallback.start', JSON.stringify({
           reference: ref,
           type: 'data',
-          provider: 'asbdata',
-          selectedPlanId: selectedAsbdataPlan.planId,
+          provider: candidate.provider,
+          selectedProvider: expectedProvider,
+          selectedPlanId: selectedSmePlan.planId,
           alternatePlanId: alternatePlan.planId,
           planType: alternatePlan.planTypeNormalized,
         }))
 
-        let alternateResult: AsbdataPaymentResult
+        let alternateResult: AsbdataPaymentResult | BardetechPaymentResult
         try {
-          alternateResult = await createAsbdataDataPayment({
-            networkId: alternatePlan.networkId,
-            mobileNumber: account,
-            planId: String(alternatePlan.planId),
-            reference: ref,
-          })
+          alternateResult = candidate.provider === 'bardetech'
+            ? await createBardetechDataPayment({
+              networkId: alternatePlan.networkId,
+              mobileNumber: account,
+              planId: String(alternatePlan.planId),
+              reference: ref,
+            })
+            : await createAsbdataDataPayment({
+              networkId: alternatePlan.networkId,
+              mobileNumber: account,
+              planId: String(alternatePlan.planId),
+              reference: ref,
+            })
         } catch (error) {
-          const reason = error instanceof Error ? error.message : 'Equivalent ASBDATA plan request ended without a confirmed response.'
-          alternateResult = {
-            provider: 'asbdata',
-            reference: ref,
-            status: 'failed',
-            rawStatus: 'INDETERMINATE',
-            reason,
-            networkId: alternatePlan.networkId,
-            planId: alternatePlan.planId,
-            indeterminate: true,
-          }
+          const reason = error instanceof Error ? error.message : 'Equivalent provider request ended without a confirmed response.'
+          alternateResult = candidate.provider === 'bardetech'
+            ? { provider: 'bardetech', reference: ref, status: 'failed', rawStatus: 'INDETERMINATE', reason, networkId: alternatePlan.networkId, planId: alternatePlan.planId, indeterminate: true }
+            : { provider: 'asbdata', reference: ref, status: 'failed', rawStatus: 'INDETERMINATE', reason, networkId: alternatePlan.networkId, planId: alternatePlan.planId, indeterminate: true }
         }
 
         providerResult = alternateResult
-        asbdataPlan = alternatePlan
+        asbdataPlan = candidate.provider === 'asbdata' ? alternatePlan : null
+        bardetechPlan = candidate.provider === 'bardetech' ? alternatePlan : null
         providerBaseAmount = alternatePlan.costNgn
         platformFee = chargeAmount - alternatePlan.costNgn
         pricingRuleId = alternatePlan.ruleId
         console.info('[bills] provider.fallback.completed', JSON.stringify({
           reference: ref,
           type: 'data',
-          provider: 'asbdata',
+          provider: candidate.provider,
           planId: alternatePlan.planId,
           status: alternateResult.status,
           providerStatus: alternateResult.rawStatus ?? null,
@@ -661,10 +737,10 @@ async function handleBillPayment(req: Request) {
 
         if (alternateResult.status !== 'failed' || alternateResult.indeterminate) break
 
-        const alternateFailureEventId = `bill:${ref}:asbdata-sme-alternate:${alternatePlan.planId}:${alternateResult.rawStatus || 'FAILED'}`
+        const alternateFailureEventId = `bill:${ref}:${candidate.provider}-sme-alternate:${alternatePlan.planId}:${alternateResult.rawStatus || 'FAILED'}`
         await recordProviderEvent({
           externalEventId: alternateFailureEventId,
-          provider: 'asbdata_data',
+          provider: candidate.provider === 'bardetech' ? 'bardetech_data' : 'asbdata_data',
           reference: ref,
           status: alternateResult.rawStatus || 'FAILED',
           failureReason: alternateResult.reason,
@@ -709,13 +785,14 @@ async function handleBillPayment(req: Request) {
       providerName: providerResult.provider,
       providerReference: providerResult.providerReference || (providerResult.provider === 'flutterwave' ? ref : undefined),
       providerStatus: providerResult.rawStatus || 'INDETERMINATE',
-      ...(providerResult.provider === 'asbdata' && selectedProvider.type === 'data' && providerResult.planId !== undefined
+      ...((providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech')
+        && selectedProvider.type === 'data' && providerResult.planId !== undefined
         ? {
             providerPlanId: String(providerResult.planId),
             providerNetworkId: providerResult.networkId ?? providerNetworkId,
             requestedProviderPlanId: providerPlanId,
-            providerFallbackUsed: String(providerResult.planId) !== providerPlanId,
-            providerFallbackFromPlanId: String(providerResult.planId) !== providerPlanId ? providerPlanId : undefined,
+            providerFallbackUsed: providerResult.provider !== expectedProvider || String(providerResult.planId) !== providerPlanId,
+            providerFallbackFromPlanId: providerResult.provider !== expectedProvider || String(providerResult.planId) !== providerPlanId ? providerPlanId : undefined,
             providerBaseAmount,
             platformFee,
             pricingRuleId: pricingRuleId || undefined,
@@ -768,7 +845,7 @@ async function handleBillPayment(req: Request) {
     (providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech' || providerResult.provider === 'flutterwave')
     && selectedProvider.type === 'data'
   )
-  const completedPlanId = providerResult.provider === 'asbdata' && providerResult.planId !== undefined
+  const completedPlanId = (providerResult.provider === 'asbdata' || providerResult.provider === 'bardetech') && providerResult.planId !== undefined
     ? String(providerResult.planId)
     : providerResult.provider === 'flutterwave' && providerResult.itemCode
       ? providerResult.itemCode
@@ -799,9 +876,9 @@ async function handleBillPayment(req: Request) {
       providerPlanId: isPlanBasedProvider ? completedPlanId : undefined,
       requestedProviderPlanId: isPlanBasedProvider && providerPlanId ? providerPlanId : undefined,
       providerFallbackUsed: isPlanBasedProvider && completedPlanId && providerPlanId
-        ? completedPlanId !== providerPlanId
+        ? providerResult.provider !== expectedProvider || completedPlanId !== providerPlanId
         : undefined,
-      providerFallbackFromPlanId: isPlanBasedProvider && completedPlanId && providerPlanId && completedPlanId !== providerPlanId
+      providerFallbackFromPlanId: isPlanBasedProvider && completedPlanId && providerPlanId && (providerResult.provider !== expectedProvider || completedPlanId !== providerPlanId)
         ? providerPlanId
         : undefined,
       providerNetworkId: isPlanBasedProvider && Number.isFinite(providerNetworkId) ? providerNetworkId : undefined,
