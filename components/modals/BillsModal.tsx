@@ -844,12 +844,17 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const categoryLabel = showPlanCategoryPicker && activePlanCategory === ALL_PLAN_CATEGORIES
                   ? formatPlanCategoryLabel(getPlanCategory(bundle))
                   : null
+                const normalizedBundleLabel = bundle.label.trim().toLowerCase().replace(/\s+/g, '')
+                const isMtnFiveGbException = provider.toLowerCase().includes('mtn')
+                  && /^5(?:\.0+)?(?:gb|g)$/.test(normalizedBundleLabel)
+                const blueOfferBadge = 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]'
+                const greenOfferBadge = 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]'
                 const providerBadge = bundle.provider === 'amigo'
-                  ? { label: 'Best offer', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
+                  ? { label: 'Best offer', className: greenOfferBadge }
                   : bundle.provider === 'asbdata'
-                    ? { label: 'Best deal', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
+                    ? { label: 'Best deal', className: isMtnFiveGbException ? greenOfferBadge : blueOfferBadge }
                     : bundle.provider === 'bardetech'
-                      ? { label: 'Promo', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
+                      ? { label: 'Promo', className: isMtnFiveGbException ? greenOfferBadge : blueOfferBadge }
                       : null
                 return (
                   <button
