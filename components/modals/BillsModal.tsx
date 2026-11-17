@@ -849,12 +849,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                   && /^5(?:\.0+)?(?:gb|g)$/.test(normalizedBundleLabel)
                 const blueOfferBadge = 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]'
                 const greenOfferBadge = 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]'
+                const fiveGbOfferBadge = 'border-purple-400 bg-gradient-to-r from-amber-900 via-amber-700 to-purple-700 shadow-[0_6px_18px_rgba(124,58,237,.28)]'
                 const providerBadge = bundle.provider === 'amigo'
                   ? { label: 'Best offer', className: greenOfferBadge }
                   : bundle.provider === 'asbdata'
-                    ? { label: 'Best deal', className: isMtnFiveGbException ? greenOfferBadge : blueOfferBadge }
+                    ? { label: 'Best deal', className: isMtnFiveGbException ? fiveGbOfferBadge : blueOfferBadge }
                     : bundle.provider === 'bardetech'
-                      ? { label: 'Promo', className: isMtnFiveGbException ? greenOfferBadge : blueOfferBadge }
+                      ? { label: 'Promo', className: isMtnFiveGbException ? fiveGbOfferBadge : blueOfferBadge }
                       : null
                 return (
                   <button
