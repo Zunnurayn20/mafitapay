@@ -29,6 +29,10 @@ function normalizeSmePlanSize(value: string) {
   return `${Number(megabytes.toFixed(4))}mb`
 }
 
+function getPreferredSmeProvider(size: string): 'bardetech' | 'asbdata' {
+  return normalizeSmePlanSize(size) === '5000mb' ? 'bardetech' : 'asbdata'
+}
+
 function normalizeSmePlanValidity(value: string) {
   const normalized = value.trim().toLowerCase().replace(/\s+/g, '')
   const match = normalized.match(/(\d+(?:\.\d+)?)(hours?|hrs?|days?|dys?|weeks?|wks?|months?|mths?|years?|yrs?)/)
@@ -73,8 +77,9 @@ async function getEquivalentSmeFallbackPlans(input: {
     && !(candidate.provider === input.excludeProvider && candidate.plan.planTypeNormalized === input.excludePlanType)
   ))
 
+  const preferredProvider = getPreferredSmeProvider(input.size)
   return candidates.sort((left, right) => (
-    (left.provider === 'bardetech' ? 0 : 1) - (right.provider === 'bardetech' ? 0 : 1)
+    (left.provider === preferredProvider ? 0 : 1) - (right.provider === preferredProvider ? 0 : 1)
     || (left.plan.planTypeNormalized === 'SME' ? 0 : 1) - (right.plan.planTypeNormalized === 'SME' ? 0 : 1)
     || left.plan.costNgn - right.plan.costNgn
   ))

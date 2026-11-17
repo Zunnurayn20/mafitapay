@@ -226,10 +226,18 @@ function getPlanCategory(bundle: { planType?: string }) {
 }
 
 function collapseEquivalentSmeRoutes(bundles: BillDataBundle[]) {
-  const routePriority = (bundle: BillDataBundle) => (
-    (bundle.provider === 'bardetech' ? 0 : bundle.provider === 'asbdata' ? 1 : 2) * 2
+  const routePriority = (bundle: BillDataBundle) => {
+    const normalizedLabel = bundle.label.trim().toLowerCase().replace(/\s+/g, '')
+    const sizeMatch = normalizedLabel.match(/^(\d+(?:\.\d+)?)(gb|g|mb|m)$/)
+    const megabytes = sizeMatch
+      ? Number((Number(sizeMatch[1]) * (sizeMatch[2].startsWith('g') ? 1000 : 1)).toFixed(4))
+      : null
+    const preferredProvider = megabytes === 5000 ? 'bardetech' : 'asbdata'
+    return (
+    (bundle.provider === preferredProvider ? 0 : bundle.provider === 'bardetech' || bundle.provider === 'asbdata' ? 1 : 2) * 2
     + (bundle.planType?.toUpperCase() === 'SME2' ? 1 : 0)
-  )
+    )
+  }
   const sorted = [...bundles].sort((left, right) => routePriority(left) - routePriority(right))
   const seen = new Set<string>()
   const selected = new Set<BillDataBundle>()
