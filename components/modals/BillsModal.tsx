@@ -846,11 +846,11 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                   ? formatPlanCategoryLabel(getPlanCategory(bundle))
                   : null
                 const providerBadge = bundle.provider === 'amigo'
-                  ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
+                  ? { label: 'Best offer', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
                   : bundle.provider === 'asbdata'
-                    ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
+                    ? { label: 'Best deal', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
                     : bundle.provider === 'bardetech'
-                      ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
+                      ? { label: 'Promo', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
                       : null
                 return (
                   <button
