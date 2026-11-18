@@ -99,10 +99,10 @@ export default function LoginPage() {
 
   const compactHeader = !showCheckEmail && (mode === 'password' || !emailCodeSent) ? <AuthBrandHeader /> : null
   return <AuthSplitShell compactHeader={compactHeader} centered={Boolean(deviceHint)}>
-    {showCheckEmail ? <CheckEmailPanel email={normalizedEmail} onBack={() => setShowCheckEmail(false)} /> : <div className={`flex flex-col gap-6 ${deviceHint ? 'mt-0' : 'mt-8'}`}>
+    {showCheckEmail ? <CheckEmailPanel email={normalizedEmail} onBack={() => setShowCheckEmail(false)} /> : <div className={`flex flex-col gap-4 ${deviceHint ? 'mt-0' : 'mt-4 sm:mt-8'}`}>
       {!deviceHint ? <header className="text-center">
         <h1 className="font-display text-[32px] md:text-[24px] font-bold leading-[1.12] tracking-[-.4px] text-[var(--text)]">Welcome back</h1>
-        <p className="mt-3 text-[15px] leading-[1.5] text-[var(--text2)]">Sign in to send, receive and pay bills from your secure wallet.</p>
+        <p className="mt-1.5 text-[14px] leading-[1.4] text-[var(--text2)]">Sign in to send, receive and pay bills from your secure wallet.</p>
       </header> : null}
 
       {deviceHint ? <section className="rounded-2xl border border-[var(--gold)]/35 bg-[var(--coal)] p-4 text-center">
@@ -117,11 +117,11 @@ export default function LoginPage() {
       {!deviceHint && deviceLoginError ? <p role="alert" className="text-center text-sm text-[var(--danger-text)]">{deviceLoginError}</p> : null}
 
       {!deviceHint && privyEnabled ? <SegmentedControl value={mode} onChange={value => { setMode(value as 'code' | 'password'); setError(''); setEmailCodeSent(false) }} options={[
-        { value: 'code', label: 'Email code', icon: <Mail size={17} /> },
         { value: 'password', label: 'Password', icon: <Lock size={17} /> },
+        { value: 'code', label: 'Email code', icon: <Mail size={17} /> },
       ]} /> : null}
 
-      {!deviceHint ? mode === 'password' ? <form onSubmit={handleLogin} noValidate className="flex flex-col gap-5">
+      {!deviceHint ? mode === 'password' ? <form onSubmit={handleLogin} noValidate className="flex flex-col gap-3.5">
         <Input ref={emailRef} variant="auth" label="Email address" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" placeholder="you@example.com" leadingIcon={<Mail size={20} />} value={email} onChange={event => { setEmail(event.target.value); setError('') }} onBlur={() => setEmailTouched(true)} error={emailError || undefined} />
         <PasswordInput ref={passwordRef} label="Password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={event => { setPassword(event.target.value); setError('') }} onBlur={() => setPasswordTouched(true)} error={passwordError || undefined} />
         <div className="-mt-2 flex justify-end"><button type="button" onClick={() => router.push('/forgot-password')} className="inline-flex min-h-11 items-center text-[15px] font-semibold text-[var(--gold2)]">Forgot password?</button></div>

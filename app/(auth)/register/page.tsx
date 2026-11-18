@@ -25,7 +25,8 @@ export default function RegisterPage() {
   const nameRef = useRef<HTMLInputElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
   const phoneRef = useRef<HTMLInputElement>(null)
-  const [passwordMode, setPasswordMode] = useState(!privyEnabled)
+  // Keep password registration as the default; Privy email-code signup remains optional.
+  const [passwordMode, setPasswordMode] = useState(true)
   const [emailCodeSent, setEmailCodeSent] = useState(false)
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState('')

@@ -2,12 +2,12 @@
 import { ArrowLeft } from 'lucide-react'
 
 export function AuthBrandHeader() {
-  return <div className="mt-3.5 flex flex-col items-center gap-2.5">
-    <div className="relative h-[72px] w-[72px]">
-      <div aria-hidden="true" className="absolute -inset-[18px] rounded-full bg-[radial-gradient(circle,var(--auth-glow),transparent_68%)]" />
-      <img src="/mafitapay-logo.webp" alt="MafitaPay" width={72} height={72} className="relative h-[72px] w-[72px] rounded-[18px] object-contain shadow-[0_10px_30px_rgba(0,0,0,.35),0_0_0_1px_var(--gold-soft)]" />
+  return <div className="mt-1 flex items-center gap-3 self-start">
+    <div className="relative h-11 w-11 shrink-0">
+      <div aria-hidden="true" className="absolute -inset-2 rounded-full bg-[radial-gradient(circle,var(--auth-glow),transparent_68%)]" />
+      <img src="/mafitapay-logo.webp" alt="MafitaPay" width={44} height={44} className="relative h-11 w-11 rounded-xl object-contain shadow-[0_6px_18px_rgba(0,0,0,.3),0_0_0_1px_var(--gold-soft)]" />
     </div>
-    <span className="font-display text-[14px] font-bold tracking-[4px] text-[var(--gold2)]">MAFITAPAY</span>
+    <span className="font-display text-[13px] font-bold tracking-[3px] text-[var(--gold2)]">MAFITAPAY</span>
   </div>
 }
 
