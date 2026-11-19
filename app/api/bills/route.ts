@@ -60,22 +60,47 @@ async function getEquivalentSmeFallbackPlans(input: {
   excludePlanId: number
   excludePlanType: string
 }): Promise<SmeFallbackPlan[]> {
-  const [bardetechPlans, asbdataPlans] = await Promise.all([
-    isBardetechBillsEnabled() ? getPricedBardetechPlans().catch(() => []) : Promise.resolve([]),
-    isAsbdataBillsEnabled() ? getPricedAsbdataPlans().catch(() => []) : Promise.resolve([]),
+  const [bardetechResult, asbdataResult] = await Promise.all([
+    isBardetechBillsEnabled()
+      ? getPricedBardetechPlans().then(plans => ({ plans, error: null as string | null })).catch(error => ({ plans: [], error: error instanceof Error ? error.message : 'catalog lookup failed' }))
+      : Promise.resolve({ plans: [], error: 'provider disabled' }),
+    isAsbdataBillsEnabled()
+      ? getPricedAsbdataPlans().then(plans => ({ plans, error: null as string | null })).catch(error => ({ plans: [], error: error instanceof Error ? error.message : 'catalog lookup failed' }))
+      : Promise.resolve({ plans: [], error: 'provider disabled' }),
   ])
-  const candidates: SmeFallbackPlan[] = [
-    ...bardetechPlans.map(plan => ({ provider: 'bardetech' as const, plan })),
-    ...asbdataPlans.map(plan => ({ provider: 'asbdata' as const, plan })),
-  ].filter(candidate => (
-    candidate.plan.network.toLowerCase() === input.network.toLowerCase()
-    && normalizeSmePlanSize(candidate.plan.size) === normalizeSmePlanSize(input.size)
-    && normalizeSmePlanValidity(candidate.plan.validity) === normalizeSmePlanValidity(input.validity)
-    && Math.abs(candidate.plan.retailNgn - input.retailNgn) < 0.01
-    && (candidate.plan.planTypeNormalized === 'SME' || candidate.plan.planTypeNormalized === 'SME2')
-    && !(candidate.provider === input.excludeProvider && candidate.plan.planId === input.excludePlanId)
-    && !(candidate.provider === input.excludeProvider && candidate.plan.planTypeNormalized === input.excludePlanType)
-  ))
+  const allCandidates: SmeFallbackPlan[] = [
+    ...bardetechResult.plans.map(plan => ({ provider: 'bardetech' as const, plan })),
+    ...asbdataResult.plans.map(plan => ({ provider: 'asbdata' as const, plan })),
+  ]
+  const candidates = allCandidates.filter(candidate => {
+    const reasons: string[] = []
+    if (candidate.plan.network.toLowerCase() !== input.network.toLowerCase()) reasons.push('network')
+    if (normalizeSmePlanSize(candidate.plan.size) !== normalizeSmePlanSize(input.size)) reasons.push('size')
+    if (normalizeSmePlanValidity(candidate.plan.validity) !== normalizeSmePlanValidity(input.validity)) reasons.push('validity')
+    if (candidate.plan.planTypeNormalized !== 'SME' && candidate.plan.planTypeNormalized !== 'SME2') reasons.push('plan_type')
+    if (candidate.plan.costNgn > input.retailNgn + 0.009) reasons.push('provider_cost_exceeds_sale')
+    if (candidate.provider === input.excludeProvider && candidate.plan.planId === input.excludePlanId) reasons.push('already_selected')
+    if (candidate.provider === input.excludeProvider && candidate.plan.planTypeNormalized === input.excludePlanType) reasons.push('same_provider_and_plan_type')
+    if (reasons.length) {
+      console.info('[bills] provider.fallback.candidate_skipped', JSON.stringify({
+        provider: candidate.provider,
+        planId: candidate.plan.planId,
+        planType: candidate.plan.planTypeNormalized,
+        reasons,
+      }))
+      return false
+    }
+    return true
+  })
+  console.info('[bills] provider.fallback.candidates', JSON.stringify({
+    network: input.network,
+    size: input.size,
+    validity: input.validity,
+    saleNgn: input.retailNgn,
+    bardetechCatalog: bardetechResult.error ? `unavailable: ${bardetechResult.error}` : 'loaded',
+    asbdataCatalog: asbdataResult.error ? `unavailable: ${asbdataResult.error}` : 'loaded',
+    matched: candidates.map(candidate => ({ provider: candidate.provider, planId: candidate.plan.planId, planType: candidate.plan.planTypeNormalized, costNgn: candidate.plan.costNgn })),
+  }))
 
   const preferredProvider = getPreferredSmeProvider(input.size)
   return candidates.sort((left, right) => (
