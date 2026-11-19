@@ -1,6 +1,7 @@
 'use client'
 import { BankAccountPicker } from '@/components/ui/BankAccountPicker'
 import { useEffect, useState } from 'react'
+import { ArrowLeft, Clock3, Sparkles } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -236,26 +237,39 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
       ]
 
   return (
-    <Modal open={open} onClose={handleClose} title={step === 'form' ? titles.form : confirmTitle} size="md" bottomSheet={step === 'pin'} dismissible={confirmStatus !== 'processing'}>
+    <Modal open={open} onClose={handleClose} title={step === 'pin' ? confirmTitle : undefined} size="md" bottomSheet={step === 'pin'} dismissible={confirmStatus !== 'processing'} className={step === 'form' ? 'max-h-[92dvh] rounded-t-[28px] sm:rounded-t-none' : undefined}>
       {step === 'form' && (
-        <div className="p-6 flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-4 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:p-6">
+          <div className="hidden text-[15px] font-bold text-[var(--text)] sm:block">{titles.form}</div>
+          <div className="flex items-center justify-between sm:hidden">
+            <div className="flex items-center gap-2.5">
+              <button type="button" aria-label="Close transfer" onClick={handleClose} className="grid h-10 w-10 place-items-center rounded-full bg-[var(--clay2)] text-[var(--text)]"><ArrowLeft size={19} /></button>
+              <div><div className="text-[17px] font-bold text-[var(--text)]">Send money</div><div className="text-[11px] text-[var(--muted)]">Move money securely</div></div>
+            </div>
+            <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold text-[var(--gold2)]"><Clock3 size={15} /> Recents</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-[var(--clay)] p-1">
             {(['bank', 'internal'] as const).map(option => (
               <button
                 key={option}
                 onClick={() => setMode(option)}
-                className={`border px-3 py-2 text-[10px] font-bold uppercase ${mode === option ? 'border-[var(--gold)] bg-[rgba(79,70,229,.08)] text-[var(--gold2)]' : 'border-[var(--border)] bg-[var(--clay)] text-[var(--text2)]'}`}
+                className={`min-h-11 rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${mode === option ? 'border-[var(--gold-soft)] bg-[var(--coal)] text-[var(--gold2)] shadow-sm' : 'border-transparent bg-transparent text-[var(--text2)]'}`}
               >
                 {option === 'internal' ? 'Internal Transfer' : 'Bank Transfer'}
               </button>
             ))}
           </div>
+          <div className="flex items-center gap-2 rounded-2xl border border-[var(--success-ring)] bg-[rgba(46,170,92,.12)] px-4 py-3 text-[13px] font-semibold text-[var(--success-text)]">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgba(46,170,92,.16)]"><Sparkles size={16} /></span>
+            <span>{mode === 'internal' ? 'Instant, free transfer to MafitaPay users' : quote.fee > 0 ? `Secure bank transfer · fee ${formatNGN(quote.fee)}` : 'Secure bank transfer · no transfer fee'}</span>
+          </div>
           {mode === 'internal' ? (
             <>
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
               <Input label="Recipient Email or Handle" placeholder="@aminupay or aminu@mafitapay.ng"
                 value={recipient} onChange={e => setRecipient(e.target.value)} />
               {beneficiaries.filter(item => item.kind === 'internal').length > 0 && (
-                <div className="flex flex-wrap gap-2">
+                <div className="mt-3 flex flex-col gap-2">
                   {beneficiaries.filter(item => item.kind === 'internal').slice(0, 4).map(item => (
                     <button
                       key={item.id}
@@ -263,16 +277,18 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
                         setRecipient(item.handle || item.label)
                         setResolvedRecipient(item.handle ? { name: item.label, handle: item.handle } : null)
                       }}
-                      className="border border-[var(--border)] bg-[var(--clay)] px-3 py-1.5 text-[10px] text-[var(--text2)]"
+                      className="flex min-h-12 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--clay)] px-3 text-left text-xs text-[var(--text)]"
                     >
-                      {item.handle || item.label}
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--gold-tint)] font-bold text-[var(--gold2)]">{(item.label || item.handle || 'M').slice(0, 1).toUpperCase()}</span>
+                      <span className="min-w-0"><span className="block truncate font-semibold">{item.label}</span><span className="block truncate text-[11px] text-[var(--muted)]">{item.handle}</span></span>
                     </button>
                   ))}
                 </div>
               )}
+              </div>
             </>
           ) : (
-            <BankAccountPicker
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4"><BankAccountPicker
               banks={banks}
               beneficiaries={beneficiaries}
               value={{ bankCode, bankName, accountNumber, accountName }}
@@ -282,22 +298,22 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
                 setAccountNumber(next.accountNumber)
                 setAccountName(next.accountName)
               }}
-            />
+            /></div>
           )}
-          <div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
             <Input label="Amount (NGN)" prefix="₦" type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0"
               value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))}
               className="text-lg font-bold font-display" />
             <div className="text-[10px] text-[var(--muted)] mt-1.5 font-mono">≈ ${(amt/1620).toFixed(2)} USD</div>
-            <div className="flex gap-1.5 mt-2">
+            <div className="flex gap-2 mt-3">
               {QUICK.map(q => (
                 <button key={q} onClick={() => setAmount(String(q))}
-                  className="flex-1 py-1.5 bg-[var(--clay2)] border border-[var(--border)] text-[var(--text2)] text-[10px] font-bold cursor-pointer hover:border-[var(--gold2)] transition-all">
+                  className="min-h-10 flex-1 rounded-xl py-1.5 bg-[var(--clay2)] border border-[var(--border)] text-[var(--text2)] text-xs font-bold cursor-pointer hover:border-[var(--gold2)] transition-all">
                   ₦{q >= 1000 ? q/1000+'k' : q}
                 </button>
               ))}
               <button onClick={() => setAmount('147500')}
-                className="flex-1 py-1.5 bg-[rgba(79,70,229,.15)] border border-[rgba(79,70,229,.35)] text-[var(--gold2)] text-[10px] font-bold cursor-pointer">
+                className="min-h-10 flex-1 rounded-xl py-1.5 bg-[var(--gold-tint)] border border-[var(--gold-soft)] text-[var(--gold2)] text-xs font-bold cursor-pointer">
                 MAX
               </button>
             </div>
