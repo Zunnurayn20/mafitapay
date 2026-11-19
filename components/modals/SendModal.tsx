@@ -1,7 +1,7 @@
 'use client'
 import { BankAccountPicker } from '@/components/ui/BankAccountPicker'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Clock3, Sparkles } from 'lucide-react'
+import { ArrowLeft, Clock3 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -16,7 +16,6 @@ import type { Beneficiary } from '@/types'
 
 type Step = 'form' | 'pin'
 
-const QUICK = [5000, 10000, 50000]
 
 export function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { refreshSession, securitySettings, transferFeeMarginNgn } = useAppStore()
@@ -258,12 +257,7 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
                 {option === 'internal' ? 'Internal Transfer' : 'Bank Transfer'}
               </button>
             ))}
-          </div>
-          <div className="flex items-center gap-2 rounded-2xl border border-[var(--success-ring)] bg-[rgba(46,170,92,.12)] px-4 py-3 text-[13px] font-semibold text-[var(--success-text)]">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgba(46,170,92,.16)]"><Sparkles size={16} /></span>
-            <span>{mode === 'internal' ? 'Instant, free transfer to MafitaPay users' : quote.fee > 0 ? `Secure bank transfer · fee ${formatNGN(quote.fee)}` : 'Secure bank transfer · no transfer fee'}</span>
-          </div>
-          {mode === 'internal' ? (
+          </div>`r`n          {mode === 'internal' ? (
             <>
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
               <Input label="Recipient Email or Handle" placeholder="@aminupay or aminu@mafitapay.ng"
@@ -300,35 +294,22 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
               }}
             /></div>
           )}
+          {mode === 'bank' ? <section className="space-y-2" aria-label="Recently used accounts">
+            <div className="px-1 text-xs font-semibold text-[var(--text2)]">Recent accounts</div>
+            {beneficiaries.filter(item => item.kind === 'bank' && item.accountNumber).sort((a, b) => (b.lastUsedAt || b.updatedAt || '').localeCompare(a.lastUsedAt || a.updatedAt || '')).slice(0, 2).map(item => <button key={item.id} type="button" onClick={() => {
+              setBankCode(item.bankCode || '')
+              setBankName(item.bankName || '')
+              setAccountNumber(item.accountNumber || '')
+              setAccountName(item.accountName || '')
+            }} className={`flex min-h-[62px] w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left ${bankCode === item.bankCode && accountNumber === item.accountNumber ? 'border-[var(--gold)] bg-[var(--gold-tint)]' : 'border-[var(--border)] bg-[var(--coal)]'}`}>
+              <span className="min-w-0"><span className="block truncate text-sm font-semibold text-[var(--text)]">{item.accountName || item.label}</span><span className="mt-0.5 block truncate text-xs text-[var(--text2)]">{item.bankName} / {item.accountNumber}</span></span><span className="shrink-0 text-xs font-medium text-[var(--gold2)]">Use</span>
+            </button>)}
+          </section> : null}
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
             <Input label="Amount (NGN)" prefix="₦" type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0"
               value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))}
               className="text-lg font-bold font-display" />
-            <div className="text-[10px] text-[var(--muted)] mt-1.5 font-mono">≈ ${(amt/1620).toFixed(2)} USD</div>
-            <div className="flex gap-2 mt-3">
-              {QUICK.map(q => (
-                <button key={q} onClick={() => setAmount(String(q))}
-                  className="min-h-10 flex-1 rounded-xl py-1.5 bg-[var(--clay2)] border border-[var(--border)] text-[var(--text2)] text-xs font-bold cursor-pointer hover:border-[var(--gold2)] transition-all">
-                  ₦{q >= 1000 ? q/1000+'k' : q}
-                </button>
-              ))}
-              <button onClick={() => setAmount('147500')}
-                className="min-h-10 flex-1 rounded-xl py-1.5 bg-[var(--gold-tint)] border border-[var(--gold-soft)] text-[var(--gold2)] text-xs font-bold cursor-pointer">
-                MAX
-              </button>
-            </div>
-          </div>
-          <Input label="Narration (optional)" placeholder="What's this for?" value={narration} onChange={e => setNarration(e.target.value)} />
-          <div className="bg-[var(--clay)] border border-[var(--border)] p-3 text-[11px]">
-            <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Transfer fee</span>{mode === 'internal'
-              ? <span className="text-[var(--green2)] font-bold">FREE</span>
-              : <span className="text-[var(--text2)] font-bold">{quote.fee > 0 ? `₦${quote.fee.toLocaleString('en-NG')}` : '—'}</span>}</div>
-            {mode !== 'internal' && quote.fee > 0 && (
-              <div className="flex justify-between py-1"><span className="text-[var(--muted)]">You&apos;ll be debited</span><span className="text-[var(--gold2)] font-bold">₦{quote.total.toLocaleString('en-NG')}</span></div>
-            )}
-            <div className="flex justify-between py-1"><span className="text-[var(--muted)]">Delivery</span><span className="text-[var(--gold2)] font-bold">{mode === 'internal' ? 'Instant' : 'Pending settlement'}</span></div>
-          </div>
-          {formError ? (
+            <div className="text-[10px] text-[var(--muted)] mt-1.5 font-mono">≈ ${(amt/1620).toFixed(2)} USD</div>`r`n          </div>`r`n          {formError ? (
             <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[11px] font-medium text-[var(--red2)]">
               {formError}
             </div>
