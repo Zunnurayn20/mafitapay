@@ -257,7 +257,8 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
                 {option === 'internal' ? 'Internal Transfer' : 'Bank Transfer'}
               </button>
             ))}
-          </div>`r`n          {mode === 'internal' ? (
+          </div>
+          {mode === 'internal' ? (
             <>
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--coal)] p-4">
               <Input label="Recipient Email or Handle" placeholder="@aminupay or aminu@mafitapay.ng"
@@ -309,7 +310,9 @@ export function SendModal({ open, onClose }: { open: boolean; onClose: () => voi
             <Input label="Amount (NGN)" prefix="₦" type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0"
               value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))}
               className="text-lg font-bold font-display" />
-            <div className="text-[10px] text-[var(--muted)] mt-1.5 font-mono">≈ ${(amt/1620).toFixed(2)} USD</div>`r`n          </div>`r`n          {formError ? (
+            <div className="text-[10px] text-[var(--muted)] mt-1.5 font-mono">≈ ${(amt/1620).toFixed(2)} USD</div>
+          </div>
+          {formError ? (
             <div className="border border-[rgba(220,38,38,.25)] bg-[rgba(220,38,38,.08)] px-3.5 py-3 text-[11px] font-medium text-[var(--red2)]">
               {formError}
             </div>
