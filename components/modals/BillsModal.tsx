@@ -857,11 +857,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     : bundle.provider === 'bardetech'
                       ? { label: 'Promo', className: isMtnFiveGbException ? fiveGbOfferBadge : blueOfferBadge }
                       : null
-                const fulfillmentProviderLabel = bundle.provider === 'asbdata'
-                  ? 'ASBDATA'
-                  : bundle.provider === 'bardetech'
-                    ? 'Bardetech'
-                    : null
                 return (
                   <button
                     key={`${provider}-${bundle.itemCode}`}
@@ -891,9 +886,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     </div>
                     {categoryLabel && (
                       <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">{categoryLabel}</div>
-                    )}
-                    {fulfillmentProviderLabel && (
-                      <div className="mt-1 text-[8px] font-semibold uppercase tracking-[0.6px] text-[var(--muted)]">Via {fulfillmentProviderLabel}</div>
                     )}
                     {subtitle && (
                       <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
