@@ -707,6 +707,29 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     }
   }
 
+  async function applyGlobalCryptoMargins(input: { buyMarginNgnPerUsd: number; sellMarginNgnPerUsd: number }) {
+    const buyMargin = Math.max(0, Number(input.buyMarginNgnPerUsd) || 0)
+    const sellMargin = normalizeSellAdjustmentNgn(input.sellMarginNgnPerUsd, 0)
+    const nextAssets = cryptoPricing.map(asset => ({
+      ...asset,
+      buyMarginNgnPerUsd: buyMargin,
+      sellMarginNgnPerUsd: sellMargin,
+      buyRate: computeBuyRate(asset.marketPriceUsd ?? 0, asset.marketRate, buyMargin),
+      sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, sellMargin),
+    }))
+    try {
+      setSavingCryptoPricing(true)
+      const persistedAssets = await persistCryptoPricing(nextAssets)
+      adoptPersistedCryptoPricing(persistedAssets)
+      setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
+      showToast('Global crypto margins applied to all pairs.')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Global crypto margins could not be saved.', 'error')
+    } finally {
+      setSavingCryptoPricing(false)
+    }
+  }
+
   async function setCryptoTradingSetting(key: 'buysEnabled' | 'sellsEnabled', value: boolean) {
     setSavingCryptoSetting(key)
     try {
@@ -1872,6 +1895,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     setDrafts,
     saveConfig,
     saveCryptoPricing,
+    applyGlobalCryptoMargins,
     saveCryptoPair,
     savingCryptoPairId,
     discardCryptoPairEdits,
