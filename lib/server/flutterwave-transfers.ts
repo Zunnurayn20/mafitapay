@@ -105,24 +105,39 @@ async function getFlutterwaveAccessToken() {
   const tokenUrl = getTokenUrl()
   assertTokenUrlIsIdentityProvider(tokenUrl)
 
-  const response = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'client_credentials',
-    }),
-    cache: 'no-store',
-  })
+  let lastReason = 'Unable to obtain Flutterwave access token.'
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response
+    try {
+      response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: 'client_credentials',
+        }),
+        cache: 'no-store',
+      })
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : lastReason
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)))
+      continue
+    }
 
-  const payload = await response.json().catch(() => null)
-  const body = isRecord(payload) ? payload : {}
-  const token = readString(body.access_token)
-  if (!response.ok || !token) {
-    throw new Error(readString(body.error_description) || readString(body.message) || 'Unable to obtain Flutterwave access token.')
+    const payload = await response.json().catch(() => null)
+    const body = isRecord(payload) ? payload : {}
+    const token = readString(body.access_token)
+    if (response.ok && token) return token
+
+    lastReason = readString(body.error_description) || readString(body.message) || `Flutterwave token endpoint returned HTTP ${response.status}.`
+    // Retry transient provider or gateway failures. Invalid credentials and other 4xx
+    // responses are returned immediately so a bad configuration is not masked.
+    if (response.status < 500 && response.status !== 429) break
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)))
   }
-  return token
+
+  throw new Error(lastReason)
 }
 
 export async function initiateFlutterwaveBankTransfer(input: FlutterwaveTransferInit): Promise<FlutterwaveTransferResult> {
