@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireUser, unauthorized } from '@/lib/server/auth'
 import { getUserByEmail, getUserByHandle, recordBeneficiaryVerification, upsertBeneficiary } from '@/lib/server/data'
-import { resolveBankBeneficiary } from '@/lib/server/bank-resolution'
+import { fetchFlutterwaveBanks, resolveBankBeneficiary } from '@/lib/server/bank-resolution'
 import { generateRef, sanitizeErrorForLogs } from '@/lib/utils'
 
 export async function POST(req: Request) {
@@ -67,7 +67,37 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await resolveBankBeneficiary(body)
+    let result = await resolveBankBeneficiary(body)
+
+    // Flutterwave can change or retire bank codes while our cached directory is still being
+    // used by the picker. Refresh once after a rejection and retry with the current code for
+    // the selected bank. This keeps verification strict without asking the user to re-enter
+    // otherwise valid details.
+    if (result.status !== 'verified' && result.provider === 'flutterwave' && typeof body.bankName === 'string') {
+      try {
+        const refreshedBanks = await fetchFlutterwaveBanks('NG')
+        const normalizeBankName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const requestedName = normalizeBankName(body.bankName)
+        const refreshed = refreshedBanks.find(bank => {
+          const currentName = normalizeBankName(bank.name)
+          return currentName === requestedName || currentName.includes(requestedName) || requestedName.includes(currentName)
+        })
+        if (refreshed && refreshed.code !== result.bankCode) {
+          result = await resolveBankBeneficiary({ ...body, bankCode: refreshed.code, bankName: refreshed.name })
+        }
+      } catch (refreshError) {
+        console.warn('[beneficiaries/lookup] bank directory refresh failed after rejected resolution', sanitizeErrorForLogs(refreshError))
+      }
+    }
+
+    if (result.status !== 'verified') {
+      console.warn('[beneficiaries/lookup] bank resolution rejected', {
+        provider: result.provider,
+        bankCode: result.bankCode,
+        errorCode: result.errorCode,
+        reason: result.reason,
+      })
+    }
     const checkedAt = new Date().toISOString()
     const beneficiary = await upsertBeneficiary({
       userId: user.id,
