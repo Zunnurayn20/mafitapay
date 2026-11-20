@@ -207,6 +207,27 @@ export async function resolveBankBeneficiary(input: {
   const reason = readString(body.message) || (status === 'rejected' ? 'Provider verification failed.' : '')
   const errorCode = status === 'rejected' ? readString(body.code) || `http_${response.status}` : ''
 
+  // Some supported banks (notably Opay) currently refuse Flutterwave's account-name
+  // lookup with HTTP 403. When the sender has supplied the exact account name, retain
+  // the transfer path but record that this was an explicit manual confirmation.
+  if (status === 'rejected' && errorCode === 'http_403' && accountName) {
+    return {
+      provider: 'flutterwave_manual_confirmation',
+      status: 'verified',
+      reference,
+      bankCode,
+      bankName,
+      accountNumber,
+      accountName,
+      reason: 'Flutterwave did not provide an account-name lookup for this bank. The account name was confirmed by the sender.',
+      errorCode,
+      payload: {
+        ...(isRecord(body) ? body : {}),
+        mode: 'manual_account_name_confirmation',
+      },
+    }
+  }
+
   return {
     provider: 'flutterwave',
     status,

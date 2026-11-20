@@ -304,7 +304,24 @@ export function BankAccountPicker({
         </div>
       )}
       {probeState === 'unresolved' && (
-        <div className="text-[10px] text-[var(--muted)]">{probeMessage}</div>
+        <>
+          <div className="text-[10px] text-[var(--muted)]">{probeMessage}</div>
+          {value.bankCode && isComplete(value.accountNumber) && (
+            <div className="space-y-2 rounded-xl border border-[rgba(202,165,96,.35)] bg-[rgba(202,165,96,.07)] p-3">
+              <div className="text-[10px] leading-4 text-[var(--text2)]">
+                This bank does not currently return an automatic account-name lookup. Enter the exact name shown by the bank to continue.
+              </div>
+              <Input
+                label="Account name"
+                placeholder="Name on the bank account"
+                autoComplete="off"
+                value={value.accountName}
+                disabled={disabled}
+                onChange={event => onChange({ ...value, accountName: event.target.value })}
+              />
+            </div>
+          )}
+        </>
       )}
       {probeState === 'error' && (
         <div className="text-[10px] text-[var(--red2)]">{probeMessage}</div>
