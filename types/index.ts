@@ -250,7 +250,8 @@ export interface CryptoAsset {
   buyMarginNgnPerUsd: number
   /**
    * Profit margin in ₦ removed per $1 of asset value on sells.
-   * sellRate = marketPriceUsd × (usdNgnMid − sellMarginNgnPerUsd)
+   * sellRate = marketPriceUsd × (usdNgnMid − sellMarginNgnPerUsd). Negative values
+   * increase the customer sell rate.
    */
   sellMarginNgnPerUsd: number
   /**

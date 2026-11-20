@@ -13,7 +13,7 @@ import {
 } from '../constants'
 import { getCryptoNetworkFeeNgn, getDefaultNetworkFeeNgn, getEffectiveQuoteTtlSeconds } from '../crypto-rules'
 import { getExecutionRailForAsset } from '../crypto-execution'
-import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '../crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, normalizeSellAdjustmentNgn } from '../crypto-market'
 import { getRoutedTreasuryPairConfigForAsset, isRoutedTreasuryPairId } from '../routed-assets'
 import { generateRef } from '../utils'
 import { isAdminEmail } from '../admin-access'
@@ -1125,7 +1125,7 @@ function mapCryptoPairRow(row: CryptoPairRow): CryptoAsset {
       ? Math.max(0, Number(row.buy_margin_ngn_per_usd))
       : DEFAULT_USD_MARGIN_NGN,
     sellMarginNgnPerUsd: row.sell_margin_ngn_per_usd != null && Number.isFinite(Number(row.sell_margin_ngn_per_usd))
-      ? Math.max(0, Number(row.sell_margin_ngn_per_usd))
+      ? normalizeSellAdjustmentNgn(Number(row.sell_margin_ngn_per_usd))
       : DEFAULT_USD_MARGIN_NGN,
     buyNetworkFeeNgn: row.buy_network_fee_ngn == null ? undefined : Number(row.buy_network_fee_ngn),
     sellNetworkFeeNgn: row.sell_network_fee_ngn == null ? undefined : Number(row.sell_network_fee_ngn),
@@ -11576,7 +11576,7 @@ export async function upsertCryptoAssets(assets: CryptoAsset[]) {
         ? Math.max(0, asset.buyMarginNgnPerUsd)
         : DEFAULT_USD_MARGIN_NGN
       const sellMargin = Number.isFinite(asset.sellMarginNgnPerUsd)
-        ? Math.max(0, asset.sellMarginNgnPerUsd)
+        ? normalizeSellAdjustmentNgn(asset.sellMarginNgnPerUsd)
         : DEFAULT_USD_MARGIN_NGN
       const buyRate = marketRate > 0 ? computeBuyRate(marketPriceUsd, marketRate, buyMargin) : 0
       const sellRate = marketRate > 0 ? computeSellRate(marketPriceUsd, marketRate, sellMargin) : 0
@@ -11666,7 +11666,7 @@ async function upsertCryptoAssetsPostgres(assets: CryptoAsset[]) {
       const marketRate = Number.isFinite(asset.marketRate) && asset.marketRate > 0 ? asset.marketRate : 0
       const marketPriceUsd = Number.isFinite(asset.marketPriceUsd) && (asset.marketPriceUsd ?? 0) > 0 ? Number(asset.marketPriceUsd) : 0
       const buyMargin = Number.isFinite(asset.buyMarginNgnPerUsd) ? Math.max(0, asset.buyMarginNgnPerUsd) : DEFAULT_USD_MARGIN_NGN
-      const sellMargin = Number.isFinite(asset.sellMarginNgnPerUsd) ? Math.max(0, asset.sellMarginNgnPerUsd) : DEFAULT_USD_MARGIN_NGN
+      const sellMargin = Number.isFinite(asset.sellMarginNgnPerUsd) ? normalizeSellAdjustmentNgn(asset.sellMarginNgnPerUsd) : DEFAULT_USD_MARGIN_NGN
       const buyNetworkFeeNgn = asset.buyNetworkFeeNgn != null && Number.isFinite(asset.buyNetworkFeeNgn)
         ? Math.max(0, asset.buyNetworkFeeNgn) : getDefaultNetworkFeeNgn(asset.network, 'buy', asset.id)
       const executionRail = asset.executionRail ?? getConfigurableAssetExecutionRail(asset)

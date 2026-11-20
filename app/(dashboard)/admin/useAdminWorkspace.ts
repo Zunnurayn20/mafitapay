@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
-import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, normalizeSellAdjustmentNgn } from '@/lib/crypto-market'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import { useAppStore } from '@/store'
 import type { TokenLookupResult } from '@/lib/crypto-contract-lookup'
@@ -661,6 +661,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       name: asset.name.trim(),
       icon: asset.icon.trim(),
       marketSourceId: asset.marketSourceId.trim(),
+      buyMarginNgnPerUsd: Math.max(0, Number(asset.buyMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN),
+      sellMarginNgnPerUsd: normalizeSellAdjustmentNgn(asset.sellMarginNgnPerUsd, DEFAULT_USD_MARGIN_NGN),
       executionRail,
       routedToChain: asset.routedToChain?.trim() || undefined,
       routedToToken: asset.routedToToken?.trim() || undefined,
@@ -956,7 +958,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     if (cryptoPricing.some(item => item.id === id)) return showToast(`${id} already exists. Edit the existing pair instead.`, 'error')
 
     const buyMargin = Math.max(0, Number(newCryptoAsset.buyMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN)
-    const sellMargin = Math.max(0, Number(newCryptoAsset.sellMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN)
+    const sellMargin = normalizeSellAdjustmentNgn(Number(newCryptoAsset.sellMarginNgnPerUsd), DEFAULT_USD_MARGIN_NGN)
     const asset: CryptoAsset = {
       id: id as CryptoAsset['id'],
       symbol: symbol as CryptoAsset['symbol'],

@@ -16,6 +16,14 @@ export const DEFAULT_CRYPTO_MARKET_SOURCE_IDS: Record<KnownCryptoSymbol, string>
 
 /** Default ₦ profit added (buy) or removed (sell) per $1 of asset value when unset. */
 export const DEFAULT_USD_MARGIN_NGN = 50
+export const MIN_SELL_ADJUSTMENT_NGN = -500
+export const MAX_SELL_ADJUSTMENT_NGN = 500
+
+export function normalizeSellAdjustmentNgn(value: number, fallback = DEFAULT_USD_MARGIN_NGN) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(MIN_SELL_ADJUSTMENT_NGN, Math.min(MAX_SELL_ADJUSTMENT_NGN, parsed))
+}
 
 export function getDefaultCryptoMarketSourceId(symbol: string) {
   return DEFAULT_CRYPTO_MARKET_SOURCE_IDS[symbol.trim().toUpperCase() as KnownCryptoSymbol] || ''
@@ -64,7 +72,7 @@ export function computeSellRate(
   marketRate: number,
   sellMarginNgnPerUsd: number = DEFAULT_USD_MARGIN_NGN,
 ): number {
-  const margin = Math.max(0, Number.isFinite(sellMarginNgnPerUsd) ? sellMarginNgnPerUsd : 0)
+  const margin = normalizeSellAdjustmentNgn(sellMarginNgnPerUsd, 0)
   if (marketPriceUsd > 0 && marketRate > 0) {
     const usdNgn = marketRate / marketPriceUsd
     return roundRate(marketPriceUsd * Math.max(0, usdNgn - margin))

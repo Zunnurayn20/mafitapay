@@ -19,7 +19,7 @@ import {
   TextField,
   ToggleField,
 } from '@/components/admin/AdminForm'
-import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn, normalizeSellAdjustmentNgn, MIN_SELL_ADJUSTMENT_NGN, MAX_SELL_ADJUSTMENT_NGN } from '@/lib/crypto-market'
 import { CONTRACT_LOOKUP_NETWORKS, isContractLookupNetwork } from '@/lib/crypto-contract-lookup'
 import { cn } from '@/lib/utils'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
@@ -684,11 +684,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
                 />
                 <MoneyField
-                  label="Sell profit only (per $1)"
-                  min={0}
+                  label="Sell rate adjustment (per $1)"
+                  min={MIN_SELL_ADJUSTMENT_NGN}
+                  max={MAX_SELL_ADJUSTMENT_NGN}
                   step="0.01"
                   value={newCryptoAsset.sellMarginNgnPerUsd}
                   onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
+                  hint="Negative values pay customers more than the market reference. Range: −₦500 to +₦500."
                 />
                 <MoneyField
                   label="Buy network fee only"
@@ -1058,19 +1060,21 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                       }))}
                     />
                     <MoneyField
-                      label="Sell profit only (per $1)"
-                      min={0}
+                      label="Sell rate adjustment (per $1)"
+                      min={MIN_SELL_ADJUSTMENT_NGN}
+                      max={MAX_SELL_ADJUSTMENT_NGN}
                       step="0.01"
                       value={item.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
                       onChange={event => setCryptoPricing(current => current.map(asset => {
                         if (asset.id !== item.id) return asset
-                        const margin = Math.max(0, Number(event.target.value) || 0)
+                        const margin = normalizeSellAdjustmentNgn(Number(event.target.value), 0)
                         return {
                           ...asset,
                           sellMarginNgnPerUsd: margin,
                           sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
                         }
                       }))}
+                      hint="Negative values pay customers more than the market reference. Range: −₦500 to +₦500."
                     />
                     <MoneyField
                       label="Buy network fee only"
