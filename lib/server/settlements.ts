@@ -153,7 +153,7 @@ export async function processSettlementEvent(input: {
         ? `${result.transaction.description} has been confirmed by the settlement provider.`
         : `${result.transaction.description} failed during settlement and any reserved funds were released.`,
     type: input.status === 'success' ? 'success' : 'error',
-  }))
+  }), { push: Boolean(payoutRequest) })
 
   return { duplicate: false, event: recorded.event, result }
 }

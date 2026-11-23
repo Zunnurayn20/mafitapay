@@ -169,7 +169,7 @@ async function syncBardetechBillOnce(reference: string, actorUserId?: string, op
         ? `${resolved.transaction.description} has been confirmed by Bardetech.`
         : `${resolved.transaction.description} failed and the reserved funds have been released.`,
       type: outcome === 'success' ? 'success' : 'error',
-    }))
+    }), { push: true })
   }
 
   return {

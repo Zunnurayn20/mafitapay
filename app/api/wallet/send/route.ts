@@ -123,7 +123,7 @@ export async function POST(req: Request) {
       title: 'Transfer complete',
       message: `${senderTransaction.description} for ₦${numericAmount.toLocaleString('en-NG')}`,
       type: 'success',
-    }))
+    }), { push: true })
     await appendNotification(target.id, createNotification({
       userId: target.id,
       title: 'Funds received',

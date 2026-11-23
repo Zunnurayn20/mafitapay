@@ -162,7 +162,7 @@ async function syncAsbdataBillOnce(reference: string, actorUserId?: string, opti
         ? `${resolved.transaction.description} has been confirmed by ASBDATA.`
         : `${resolved.transaction.description} failed and the reserved funds have been released.`,
       type: outcome === 'success' ? 'success' : 'error',
-    }))
+    }), { push: true })
   }
 
   return {

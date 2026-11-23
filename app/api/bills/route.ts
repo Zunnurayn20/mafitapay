@@ -949,6 +949,13 @@ async function handleBillPayment(req: Request) {
     }
     await markProviderEventProcessed(eventId)
 
+    await appendNotification(user.id, createNotification({
+      userId: user.id,
+      title: `${serviceConfig.displayName} purchase failed`,
+      message: `${serviceConfig.displayName} purchase failed and the reserved funds have been released. Reference: ${ref}.`,
+      type: 'error',
+    }), { push: true })
+
     return NextResponse.json({
       error: released
         ? `We couldn't complete this purchase. Any reserved funds have been released. Contact support with reference ${ref} if you need help.`
@@ -1043,7 +1050,7 @@ async function handleBillPayment(req: Request) {
       ? `₦${numericAmount.toLocaleString('en-NG')} ${serviceConfig.displayName} payment completed`
       : `₦${numericAmount.toLocaleString('en-NG')} ${serviceConfig.displayName} payment is being processed`,
     type: providerResult.status === 'success' ? 'success' : 'info',
-  }))
+  }), { push: providerResult.status === 'success' })
   void kickPendingFlutterwaveBillSync()
 
   return NextResponse.json({

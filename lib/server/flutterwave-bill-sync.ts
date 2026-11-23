@@ -114,7 +114,7 @@ async function syncFlutterwaveBillOnce(reference: string, actorUserId?: string) 
       ? `${resolved.transaction.description} has been confirmed by Flutterwave.`
       : `${resolved.transaction.description} failed and reserved funds were released.`,
     type: normalized === 'success' ? 'success' : 'error',
-  }))
+  }), { push: true })
 
   return {
     reference,

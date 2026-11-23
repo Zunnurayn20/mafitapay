@@ -89,7 +89,7 @@ export async function settleCryptoOrderTerminalState(input: {
         ? `Your ${order.side} order for ${order.pairId} has been fulfilled onchain.`
         : `Your ${order.side} order for ${order.pairId} failed onchain and your pending balance was released.`,
     type: outcome === 'fulfilled' ? 'success' : 'error',
-  }))
+  }), { push: true })
 
   const refreshed = await getCryptoOrderById(order.id)
   return {

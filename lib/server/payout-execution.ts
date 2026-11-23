@@ -56,7 +56,7 @@ export async function executeBankPayout(input: {
       title: 'Payout failed',
       message: `${input.transaction.description} could not be initiated with Flutterwave and reserved funds were released.`,
       type: 'error',
-    }))
+    }), { push: true })
     return {
       mode: 'failed' as const,
       payout,

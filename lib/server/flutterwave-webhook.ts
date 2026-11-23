@@ -453,7 +453,7 @@ export async function handleFlutterwaveWebhook(input: {
                 ? `${resolved.transaction.description} has been confirmed by Flutterwave.`
                 : `${resolved.transaction.description} failed and reserved funds were released.`,
               type: status === 'success' ? 'success' : 'error',
-            }))
+            }), { push: true })
             return { body: { data: resolved.transaction, success: true }, status: 200 as const }
           }
 

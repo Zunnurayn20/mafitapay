@@ -94,7 +94,7 @@ export async function PATCH(req: Request) {
         ? `${result.transaction.description} was marked successful by an administrator.`
         : `${result.transaction.description} was marked failed by an administrator.`,
     type: status === 'success' ? 'success' : 'error',
-  }))
+  }), { push: Boolean(payoutRequest) })
 
   return NextResponse.json({ data: { reference, status }, success: true })
 }
