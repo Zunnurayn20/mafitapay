@@ -175,7 +175,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
   }, [confirmStatus, quote, step])
 
   function handleClose() {
-    if (confirmStatus === 'processing') return
+    if (confirmStatus === 'processing' || lockingQuote) return
     onClose()
     setTimeout(() => {
       setStep('form')
@@ -347,7 +347,7 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
       onClose={handleClose}
       title={confirmStatus === 'processing' ? 'Processing…' : confirmStatus === 'success' ? 'Order Placed!' : confirmStatus === 'error' ? 'Transaction failed' : 'Buy Crypto'}
       bottomSheet={step === 'pin'}
-      dismissible={confirmStatus !== 'processing'}
+      dismissible={confirmStatus !== 'processing' && !lockingQuote}
     >
       {!asset && (
         <div className="p-8 text-center">
@@ -557,6 +557,20 @@ export function BuyModal({ open, onClose }: { open: boolean; onClose: () => void
           }}
           onDone={handleClose}
         />
+      )}
+
+      {lockingQuote && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/75 px-6 backdrop-blur-md" role="status" aria-live="polite" aria-label="Locking crypto quote">
+          <div className="flex w-full max-w-xs flex-col items-center rounded-3xl border border-[var(--border)] bg-[var(--coal)] px-7 py-8 text-center shadow-[0_24px_80px_rgba(0,0,0,.55)]">
+            <div className="relative mb-5 flex h-24 w-24 items-center justify-center">
+              <div className="absolute inset-0 animate-ping rounded-full border border-[var(--gold)]/30 opacity-40" />
+              <div className="absolute inset-2 animate-spin rounded-full border-2 border-transparent border-t-[var(--gold)] border-r-[var(--gold)]/40" />
+              <img src="/mafitapay-logo.webp" alt="" className="relative h-14 w-14 animate-pulse object-contain" />
+            </div>
+            <div className="font-display text-base font-bold text-[var(--text)]">Locking your quote</div>
+            <p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">We’re checking availability and securing your crypto price. Please wait.</p>
+          </div>
+        </div>
       )}
     </Modal>
   )

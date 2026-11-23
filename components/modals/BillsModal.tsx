@@ -17,6 +17,7 @@ import { useAppStore } from '@/store'
 import { parseJsonBody, toUserMessage } from '@/lib/client/http'
 import { readClipboardText } from '@/lib/clipboard'
 import { generateRef } from '@/lib/utils'
+import type { BillDataBundle } from '@/types'
 
 interface BillsModalProps { open: boolean; onClose: () => void }
 type TouchedState = { amount: boolean; account: boolean; provider: boolean }
@@ -55,8 +56,8 @@ const DATA_PURCHASE_PROCESSING_MESSAGES = [
 const SME_DATA_PURCHASE_PROCESSING_MESSAGES = [
   'Getting your data bundle ready…',
   'Sending your order to the network…',
-  'If this SME route is unavailable, we’ll try its matching alternative…',
-  'Almost there—we’re checking the result…',
+  'Checking the best available delivery option…',
+  'Almost there—we’re confirming delivery…',
 ]
 
 /**
@@ -228,26 +229,50 @@ const ALL_PLAN_CATEGORIES = '__all__'
  * Vendor supplying a plan. Bundles from Flutterwave carry no provider field -- the merge helpers
  * already treat a missing provider as Flutterwave, so the same default applies here.
  */
-const ALL_PLAN_VENDORS = '__all_vendors__'
-
-const PLAN_VENDOR_LABELS: Record<string, string> = {
-  flutterwave: 'Flutterwave',
-  amigo: 'Amigo',
-  asbdata: 'ASBData',
-  bardetech: 'Barde',
-}
-
-function getPlanVendor(bundle: { provider?: string }) {
-  return bundle.provider || 'flutterwave'
-}
-
-function formatPlanVendorLabel(vendor: string) {
-  if (vendor === ALL_PLAN_VENDORS) return 'All providers'
-  return PLAN_VENDOR_LABELS[vendor] ?? vendor
-}
-
 function getPlanCategory(bundle: { planType?: string }) {
-  return bundle.planType?.trim() || 'STANDARD'
+  const category = bundle.planType?.trim() || 'STANDARD'
+  // SME and SME 2 plans are alternate fulfillment routes for the same bundle family.
+  return category.toUpperCase() === 'SME2' ? 'SME' : category
+}
+
+function collapseEquivalentSmeRoutes(bundles: BillDataBundle[]) {
+  const routePriority = (bundle: BillDataBundle) => {
+    const normalizedLabel = bundle.label.trim().toLowerCase().replace(/\s+/g, '')
+    const sizeMatch = normalizedLabel.match(/^(\d+(?:\.\d+)?)(gb|g|mb|m)$/)
+    const megabytes = sizeMatch
+      ? Number((Number(sizeMatch[1]) * (sizeMatch[2].startsWith('g') ? 1000 : 1)).toFixed(4))
+      : null
+    const preferredProvider = megabytes === 5000 ? 'bardetech' : 'asbdata'
+    return (
+    (bundle.provider === preferredProvider ? 0 : bundle.provider === 'bardetech' || bundle.provider === 'asbdata' ? 1 : 2) * 2
+    + (bundle.planType?.toUpperCase() === 'SME2' ? 1 : 0)
+    )
+  }
+  const sorted = [...bundles].sort((left, right) => routePriority(left) - routePriority(right))
+  const seen = new Set<string>()
+  const selected = new Set<BillDataBundle>()
+  for (const bundle of sorted) {
+    const isSmeRoute = (bundle.provider === 'bardetech' || bundle.provider === 'asbdata')
+      && (bundle.planType?.toUpperCase() === 'SME' || bundle.planType?.toUpperCase() === 'SME2')
+    if (!isSmeRoute) {
+      selected.add(bundle)
+      continue
+    }
+    const normalizedLabel = bundle.label.trim().toLowerCase().replace(/\s+/g, '')
+    const sizeMatch = normalizedLabel.match(/^(\d+(?:\.\d+)?)(gb|g|mb|m)$/)
+    const label = sizeMatch
+      ? `${Number((Number(sizeMatch[1]) * (sizeMatch[2].startsWith('g') ? 1000 : 1)).toFixed(4))}mb`
+      : normalizedLabel
+    const validityDays = parseValidityDays(bundle.validity)
+    const validity = validityDays === null
+      ? (bundle.validity || '').trim().toLowerCase().replace(/\s+/g, '').replace(/days?/g, 'day').replace(/hours?/g, 'hour')
+      : `days:${validityDays}`
+    const key = `${label}:${validity}:${bundle.amount.toFixed(2)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    selected.add(bundle)
+  }
+  return bundles.filter(bundle => selected.has(bundle))
 }
 
 function formatPlanCategoryLabel(category: string) {
@@ -279,7 +304,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const [selectedBundleCode, setSelectedBundleCode] = useState('')
   const [selectedDataBundleGroup, setSelectedDataBundleGroup] = useState<DataBundleGroupKey>(DEFAULT_DATA_BUNDLE_GROUP)
   const [selectedPlanCategory, setSelectedPlanCategory] = useState<string>(ALL_PLAN_CATEGORIES)
-  const [selectedPlanVendor, setSelectedPlanVendor] = useState<string>(ALL_PLAN_VENDORS)
   const [touched, setTouched]   = useState<TouchedState>(INITIAL_TOUCHED)
   const [showRecentAccounts, setShowRecentAccounts] = useState(false)
   const formAccountInputRef = useRef<HTMLInputElement>(null)
@@ -318,28 +342,20 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     : []
   // Vendors present in the loaded catalog. Which ones appear depends on what is configured and
   // whether each answered, so this is derived rather than listed.
-  const planVendors = Array.from(new Set(visibleDataBundles.map(getPlanVendor)))
-    .sort((a, b) => formatPlanVendorLabel(a).localeCompare(formatPlanVendorLabel(b)))
-  const showPlanVendorPicker = planVendors.length > 1
-  const activePlanVendor = showPlanVendorPicker && planVendors.includes(selectedPlanVendor)
-    ? selectedPlanVendor
-    : ALL_PLAN_VENDORS
-  const vendorFilteredBundles = activePlanVendor === ALL_PLAN_VENDORS
-    ? visibleDataBundles
-    : visibleDataBundles.filter(bundle => getPlanVendor(bundle) === activePlanVendor)
   // Categories come from the bundles actually loaded, not a hardcoded list -- vendors differ on
   // which ones they publish, and an option that filters to nothing is worse than no option.
   // Derived from the vendor-filtered set so picking Barde cannot leave a category it does not sell.
-  const planCategories = Array.from(new Set(vendorFilteredBundles.map(getPlanCategory))).sort()
+  const planCategories = Array.from(new Set(visibleDataBundles.map(getPlanCategory))).sort()
   // The picker only earns its space when there is a real choice to make.
   const showPlanCategoryPicker = planCategories.length > 1
   // Switching network can retire the picked category; fall back rather than showing an empty list.
   const activePlanCategory = showPlanCategoryPicker && planCategories.includes(selectedPlanCategory)
     ? selectedPlanCategory
     : ALL_PLAN_CATEGORIES
-  const categoryFilteredBundles = activePlanCategory === ALL_PLAN_CATEGORIES
-    ? vendorFilteredBundles
-    : vendorFilteredBundles.filter(bundle => getPlanCategory(bundle) === activePlanCategory)
+  const categoryFilteredBundlesRaw = activePlanCategory === ALL_PLAN_CATEGORIES
+    ? visibleDataBundles
+    : visibleDataBundles.filter(bundle => getPlanCategory(bundle) === activePlanCategory)
+  const categoryFilteredBundles = collapseEquivalentSmeRoutes(categoryFilteredBundlesRaw)
   // Duration groups are built from the category-filtered set, so picking SME drops any duration tab
   // that has no SME plans instead of leaving a tab that opens onto nothing.
   const groupedDataBundles = DATA_BUNDLE_GROUPS
@@ -351,7 +367,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
   const activeDataBundleGroup = groupedDataBundles.find(group => group.key === selectedDataBundleGroup) ?? groupedDataBundles[0]
   const shownDataBundles = activeDataBundleGroup?.bundles ?? []
   const selectedDataBundle = isDataService ? dataBundles.find(bundle => bundle.itemCode === selectedBundleCode) : null
-  const isAsbdataSmeBundle = selectedDataBundle?.provider === 'asbdata'
+  const isAsbdataSmeBundle = (selectedDataBundle?.provider === 'asbdata' || selectedDataBundle?.provider === 'bardetech')
     && (selectedDataBundle.planType === 'SME' || selectedDataBundle.planType === 'SME2')
   const processingMessages = isAsbdataSmeBundle
     ? SME_DATA_PURCHASE_PROCESSING_MESSAGES
@@ -412,7 +428,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
     setSelectedBundleCode('')
     setSelectedDataBundleGroup(DEFAULT_DATA_BUNDLE_GROUP)
     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
-    setSelectedPlanVendor(ALL_PLAN_VENDORS)
     setTouched(INITIAL_TOUCHED)
     setShowRecentAccounts(false)
     setProvider(defaultNetworkProviderName)
@@ -749,7 +764,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setAmount('')
                     setSelectedDataBundleGroup(DEFAULT_DATA_BUNDLE_GROUP)
                     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
-                    setSelectedPlanVendor(ALL_PLAN_VENDORS)
                   }
                   setTouched(current => ({ ...current, provider: true }))
                 }}
@@ -841,21 +855,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
               </div>
             ) : (
               <>
-            {showPlanVendorPicker && (
-              <div className="mb-3 border border-[var(--border)] bg-[var(--clay2)] px-3">
-                <select
-                  value={activePlanVendor}
-                  onChange={event => setSelectedPlanVendor(event.target.value)}
-                  className="w-full cursor-pointer border-none bg-[var(--clay2)] py-3 text-left text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold)] outline-none [&>option]:bg-[var(--clay2)] [&>option]:text-[var(--text)]"
-                >
-                  {[ALL_PLAN_VENDORS, ...planVendors].map(vendor => (
-                    <option key={vendor} value={vendor}>
-                      {formatPlanVendorLabel(vendor)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
             {showPlanCategoryPicker && (
               <div className="mb-3 border border-[var(--border)] bg-[var(--clay2)] px-3">
                 <select
@@ -900,12 +899,18 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const categoryLabel = showPlanCategoryPicker && activePlanCategory === ALL_PLAN_CATEGORIES
                   ? formatPlanCategoryLabel(getPlanCategory(bundle))
                   : null
+                const normalizedBundleLabel = bundle.label.trim().toLowerCase().replace(/\s+/g, '')
+                const isMtnFiveGbException = provider.toLowerCase().includes('mtn')
+                  && /^5(?:\.0+)?(?:gb|g)$/.test(normalizedBundleLabel)
+                const blueOfferBadge = 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]'
+                const greenOfferBadge = 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]'
+                const fiveGbOfferBadge = 'border-purple-400 bg-gradient-to-r from-amber-900 via-amber-700 to-purple-700 shadow-[0_6px_18px_rgba(124,58,237,.28)]'
                 const providerBadge = bundle.provider === 'amigo'
-                  ? { label: 'Amigo', className: 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]' }
+                  ? { label: 'Best offer', className: greenOfferBadge }
                   : bundle.provider === 'asbdata'
-                    ? { label: 'ASBData', className: 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]' }
+                    ? { label: 'Best deal', className: isMtnFiveGbException ? fiveGbOfferBadge : blueOfferBadge }
                     : bundle.provider === 'bardetech'
-                      ? { label: 'Barde', className: 'border-amber-500 bg-amber-500 shadow-[0_6px_18px_rgba(245,158,11,.22)]' }
+                      ? { label: 'Promo', className: isMtnFiveGbException ? fiveGbOfferBadge : blueOfferBadge }
                       : null
                 return (
                   <button
@@ -1164,7 +1169,6 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     setAmount('')
                     setSelectedDataBundleGroup(DEFAULT_DATA_BUNDLE_GROUP)
                     setSelectedPlanCategory(ALL_PLAN_CATEGORIES)
-                    setSelectedPlanVendor(ALL_PLAN_VENDORS)
                     setStep('form')
                   }}
                   className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.8px] text-[var(--gold2)] underline"

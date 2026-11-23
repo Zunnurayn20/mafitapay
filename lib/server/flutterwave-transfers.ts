@@ -37,6 +37,16 @@ function getClientSecret() {
   return readString(process.env.MAFITAPAY_FLUTTERWAVE_CLIENT_SECRET)
 }
 
+function getLegacySecretKey() {
+  return readString(process.env.MAFITAPAY_FLUTTERWAVE_SECRET_KEY)
+    || readString(process.env.FLUTTERWAVE_SECRET_KEY)
+}
+
+function getLegacyBaseUrl() {
+  const explicit = readString(process.env.MAFITAPAY_FLUTTERWAVE_BASE_URL)
+  return (explicit || 'https://api.flutterwave.com/v3').replace(/\/$/, '')
+}
+
 export function getFlutterwaveTransferConfigState() {
   const clientId = getClientId()
   const clientSecret = getClientSecret()
@@ -92,7 +102,105 @@ function assertTokenUrlIsIdentityProvider(url: string) {
 }
 
 export function isFlutterwavePayoutEnabled() {
-  return Boolean(getClientId() && getClientSecret())
+  return Boolean((getClientId() && getClientSecret()) || getLegacySecretKey())
+}
+
+async function initiateLegacyFlutterwaveTransfer(input: FlutterwaveTransferInit): Promise<FlutterwaveTransferResult> {
+  const secretKey = getLegacySecretKey()
+  if (!secretKey) {
+    return {
+      provider: 'flutterwave',
+      reference: input.reference,
+      status: 'failed',
+      rawStatus: 'TOKEN_ERROR',
+      reason: 'Flutterwave payout credentials are unavailable.',
+      payload: { stage: 'legacy_fallback' },
+    }
+  }
+
+  const callbackUrl = input.callbackUrl || readString(process.env.MAFITAPAY_FLUTTERWAVE_CALLBACK_URL)
+  let response: Response
+  try {
+    response = await fetch(`${getLegacyBaseUrl()}/transfers`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        account_bank: input.bankCode,
+        account_number: input.accountNumber,
+        amount: input.amount,
+        narration: input.narration,
+        currency: 'NGN',
+        reference: input.reference,
+        ...(callbackUrl ? { callback_url: callbackUrl } : {}),
+        debit_currency: 'NGN',
+      }),
+      cache: 'no-store',
+    })
+  } catch (error) {
+    return {
+      provider: 'flutterwave',
+      reference: input.reference,
+      status: 'failed',
+      rawStatus: 'REQUEST_ERROR',
+      reason: error instanceof Error ? error.message : 'Flutterwave transfer request failed.',
+      payload: { stage: 'legacy_request' },
+    }
+  }
+
+  const payload = await response.json().catch(() => null)
+  const body = isRecord(payload) ? payload : {}
+  const data = isRecord(body.data) ? body.data : {}
+  const rawStatus = readString(data.status).toUpperCase()
+  const providerReference = readString(data.id) || readString(data.reference) || input.reference
+  if (!response.ok || readString(body.status).toLowerCase() !== 'success') {
+    return {
+      provider: 'flutterwave',
+      reference: input.reference,
+      providerReference: `v3:${providerReference}`,
+      status: 'failed',
+      rawStatus: rawStatus || 'FAILED',
+      reason: readString(body.message) || `Flutterwave payout failed (HTTP ${response.status}).`,
+      payload: body,
+    }
+  }
+  return {
+    provider: 'flutterwave',
+    reference: input.reference,
+    providerReference: `v3:${providerReference}`,
+    status: rawStatus === 'SUCCESSFUL' ? 'success' : 'pending',
+    rawStatus: rawStatus || 'NEW',
+    reason: readString(body.message) || undefined,
+    payload: body,
+  }
+}
+
+async function retrieveLegacyFlutterwaveTransfer(providerReference: string): Promise<FlutterwaveTransferResult> {
+  const secretKey = getLegacySecretKey()
+  const id = providerReference.replace(/^v3:/, '')
+  if (!secretKey) {
+    return { provider: 'flutterwave', reference: '', providerReference, status: 'failed', rawStatus: 'CREDENTIAL_ERROR', reason: 'Flutterwave payout credentials are unavailable.' }
+  }
+  let response: Response
+  try {
+    response = await fetch(`${getLegacyBaseUrl()}/transfers/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    })
+  } catch (error) {
+    return { provider: 'flutterwave', reference: '', providerReference, status: 'failed', rawStatus: 'REQUEST_ERROR', reason: error instanceof Error ? error.message : 'Flutterwave transfer retrieval failed.' }
+  }
+  const payload = await response.json().catch(() => null)
+  const body = isRecord(payload) ? payload : {}
+  const data = isRecord(body.data) ? body.data : {}
+  const rawStatus = readString(data.status).toUpperCase()
+  const reference = readString(data.reference) || readString(data.tx_ref)
+  if (!response.ok || readString(body.status).toLowerCase() !== 'success') {
+    return { provider: 'flutterwave', reference, providerReference, status: 'failed', rawStatus: rawStatus || 'FAILED', reason: readString(body.message) || `Flutterwave transfer retrieval failed (HTTP ${response.status}).`, payload: body }
+  }
+  return { provider: 'flutterwave', reference, providerReference, status: rawStatus === 'SUCCESSFUL' ? 'success' : rawStatus === 'FAILED' ? 'failed' : 'pending', rawStatus: rawStatus || 'UNKNOWN', reason: readString(body.message) || undefined, payload: body }
 }
 
 async function getFlutterwaveAccessToken() {
@@ -105,24 +213,39 @@ async function getFlutterwaveAccessToken() {
   const tokenUrl = getTokenUrl()
   assertTokenUrlIsIdentityProvider(tokenUrl)
 
-  const response = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'client_credentials',
-    }),
-    cache: 'no-store',
-  })
+  let lastReason = 'Unable to obtain Flutterwave access token.'
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response
+    try {
+      response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: 'client_credentials',
+        }),
+        cache: 'no-store',
+      })
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : lastReason
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)))
+      continue
+    }
 
-  const payload = await response.json().catch(() => null)
-  const body = isRecord(payload) ? payload : {}
-  const token = readString(body.access_token)
-  if (!response.ok || !token) {
-    throw new Error(readString(body.error_description) || readString(body.message) || 'Unable to obtain Flutterwave access token.')
+    const payload = await response.json().catch(() => null)
+    const body = isRecord(payload) ? payload : {}
+    const token = readString(body.access_token)
+    if (response.ok && token) return token
+
+    lastReason = readString(body.error_description) || readString(body.message) || `Flutterwave token endpoint returned HTTP ${response.status}.`
+    // Retry transient provider or gateway failures. Invalid credentials and other 4xx
+    // responses are returned immediately so a bad configuration is not masked.
+    if (response.status < 500 && response.status !== 429) break
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)))
   }
-  return token
+
+  throw new Error(lastReason)
 }
 
 export async function initiateFlutterwaveBankTransfer(input: FlutterwaveTransferInit): Promise<FlutterwaveTransferResult> {
@@ -130,6 +253,9 @@ export async function initiateFlutterwaveBankTransfer(input: FlutterwaveTransfer
   try {
     token = await getFlutterwaveAccessToken()
   } catch (error) {
+    // Keep payouts available while the v4 OAuth application is rejected or unavailable.
+    // The legacy v3 endpoint uses the existing server-side secret key and the same reference.
+    if (getLegacySecretKey()) return initiateLegacyFlutterwaveTransfer(input)
     return {
       provider: 'flutterwave',
       reference: input.reference,
@@ -224,6 +350,7 @@ export async function initiateFlutterwaveBankTransfer(input: FlutterwaveTransfer
 }
 
 export async function retrieveFlutterwaveTransfer(providerReference: string): Promise<FlutterwaveTransferResult> {
+  if (providerReference.startsWith('v3:')) return retrieveLegacyFlutterwaveTransfer(providerReference)
   let token = ''
   try {
     token = await getFlutterwaveAccessToken()

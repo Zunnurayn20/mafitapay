@@ -126,6 +126,7 @@ export type PricedBardetechPlan = BardetechPlan & {
   costNgn: number
   marginNgn: number
   retailNgn: number
+  manualRetailNgn: number | null
   ruleId: string | null
 }
 
@@ -474,6 +475,7 @@ function applyBardetechPricing(plans: BardetechPlan[], rules: PricingRuleRecord[
       costNgn: priced.costNgn,
       marginNgn: priced.marginNgn,
       retailNgn: priced.retailNgn,
+      manualRetailNgn: priced.manualRetailNgn,
       ruleId: priced.ruleId,
     }
   })

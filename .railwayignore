@@ -23,6 +23,7 @@ test-results
 *.pem
 *:Zone.Identifier
 .vercel
+supabase/.temp
 pnpm-lock.yaml
 playwright.config.ts
 AGENT_README.md

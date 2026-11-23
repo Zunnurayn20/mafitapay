@@ -25,7 +25,8 @@ export default function RegisterPage() {
   const nameRef = useRef<HTMLInputElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
   const phoneRef = useRef<HTMLInputElement>(null)
-  const [passwordMode, setPasswordMode] = useState(!privyEnabled)
+  // Keep password registration as the default; Privy email-code signup remains optional.
+  const [passwordMode, setPasswordMode] = useState(true)
   const [emailCodeSent, setEmailCodeSent] = useState(false)
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState('')
@@ -139,7 +140,7 @@ export default function RegisterPage() {
       {!emailCodeSent ? <p className="text-[13px] leading-relaxed text-[var(--muted)]">By creating an account, you agree to our <a href="/terms" className="text-[var(--gold2)] underline">Terms of Service</a> and <a href="/privacy" className="text-[var(--gold2)] underline">Privacy Policy</a>.</p> : null}
     </div>}
 
-    {privyEnabled ? <button type="button" onClick={() => switchMode(!passwordMode)} className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-[14.5px] font-semibold text-[var(--gold2)]">Use {passwordMode ? 'email code' : 'password'} instead</button> : null}
     <div className="mt-auto pt-6 text-center text-[15px] text-[var(--text2)]">Already have an account? <button type="button" className="inline-flex min-h-11 items-center font-semibold text-[var(--gold2)]" onClick={() => router.push('/login')}>Sign in</button></div>
+    {privyEnabled ? <button type="button" onClick={() => switchMode(!passwordMode)} className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-[14.5px] font-semibold text-[var(--gold2)]">Use {passwordMode ? 'email code' : 'password'} instead</button> : null}
   </div></AuthSplitShell>
 }

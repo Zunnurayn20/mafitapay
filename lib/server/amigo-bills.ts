@@ -79,6 +79,7 @@ export type PricedAmigoPlan = {
   costNgn: number
   marginNgn: number
   retailNgn: number
+  manualRetailNgn: number | null
   ruleId: string | null
   efficiencyPercent?: number
   efficiencyLabel?: string
@@ -134,6 +135,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getAmigoApiKey() {
   return readString(process.env.MAFITAPAY_AMIGO_API_KEY)
+}
+
+class AmigoRequestError extends Error {
+  status: number
+  payload?: Record<string, unknown>
+
+  constructor(message: string, status: number, payload?: Record<string, unknown>) {
+    super(message)
+    this.name = 'AmigoRequestError'
+    this.status = status
+    this.payload = payload
+  }
 }
 
 function normalizeNetworkProvider(value: string) {
@@ -194,7 +207,7 @@ async function amigoRequest(path: string, init?: RequestInit) {
       body,
     })
 
-    throw new Error(message)
+    throw new AmigoRequestError(message, response.status, body)
   }
 
   logAmigoBills('request.success', {
@@ -244,6 +257,7 @@ function applyAmigoPricing(
       costNgn: priced.costNgn,
       marginNgn: priced.marginNgn,
       retailNgn: priced.retailNgn,
+      manualRetailNgn: priced.manualRetailNgn,
       ruleId: priced.ruleId,
       efficiencyPercent: entry.efficiencyPercent,
       efficiencyLabel: entry.efficiencyLabel || entry.category,
@@ -469,7 +483,11 @@ export async function createAmigoDataPayment(input: {
 
     return result
   } catch (error) {
-    const indeterminate = isTransportError(error)
+    const status = error instanceof AmigoRequestError ? error.status : undefined
+    // A 5xx response can mean Amigo accepted/debited the request before its
+    // response failed. Keep it pending for reconciliation rather than refunding
+    // the customer and risking a provider-side loss.
+    const indeterminate = isTransportError(error) || (status !== undefined && status >= 500)
     const result: AmigoDataPaymentResult = {
       provider: 'amigo',
       reference: input.reference,
@@ -477,6 +495,7 @@ export async function createAmigoDataPayment(input: {
       rawStatus: indeterminate ? 'TRANSPORT_ERROR' : 'REQUEST_ERROR',
       reason: error instanceof Error ? error.message : 'Amigo data purchase failed.',
       providerReference: input.reference,
+      payload: error instanceof AmigoRequestError ? error.payload : undefined,
       indeterminate,
       networkId: input.networkId,
       planId: Number(input.planId),
@@ -486,6 +505,7 @@ export async function createAmigoDataPayment(input: {
       networkId: input.networkId,
       planId: input.planId,
       message: result.reason,
+      status: status ?? null,
     })
     return result
   }

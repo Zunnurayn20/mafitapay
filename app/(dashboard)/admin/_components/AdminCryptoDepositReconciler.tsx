@@ -12,6 +12,10 @@ export function AdminCryptoDepositReconciler() {
   const [txHash, setTxHash] = useState(CONFIRMED_TX)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [solanaAddress, setSolanaAddress] = useState('')
+  const [solanaTxHash, setSolanaTxHash] = useState('')
+  const [solanaBusy, setSolanaBusy] = useState(false)
+  const [solanaMessage, setSolanaMessage] = useState('')
 
   async function reconcile() {
     if (!window.confirm('Credit the USDT0 transfer to this deposit address? MafitaPay will verify the successful Polygon receipt and prevent duplicate crediting.')) return
@@ -35,7 +39,30 @@ export function AdminCryptoDepositReconciler() {
     }
   }
 
+  async function reconcileSolana() {
+    if (!window.confirm('Verify the Solana transaction and credit any supported native SOL transfer to this MafitaPay deposit address? Duplicate transfers are safely ignored.')) return
+    setSolanaBusy(true)
+    setSolanaMessage('')
+    try {
+      const response = await fetch('/api/admin/crypto-deposits', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent: 'reconcile-solana-native-transaction', address: solanaAddress, txHash: solanaTxHash }),
+      })
+      const json = await response.json()
+      if (!response.ok || json?.success !== true) throw new Error(json?.error || 'Solana reconciliation failed.')
+      const result = json.data
+      setSolanaMessage(`Verified ${Number(result.amountCrypto).toLocaleString('en-US', { maximumFractionDigits: 9 })} SOL. Event: ${result.externalEventId}${result.duplicate ? ' (already processed)' : ''}`)
+    } catch (error) {
+      setSolanaMessage(error instanceof Error ? error.message : 'Solana reconciliation failed.')
+    } finally {
+      setSolanaBusy(false)
+    }
+  }
+
   return (
+    <div className="space-y-3">
     <Card className="space-y-3 border-[var(--gold)]/40 p-4">
       <div>
         <div className="text-sm font-bold text-[var(--text)]">Reconcile missed ERC-20 deposit</div>
@@ -48,5 +75,18 @@ export function AdminCryptoDepositReconciler() {
       </div>
       {message && <div role="status" className="break-all text-xs text-[var(--text2)]">{message}</div>}
     </Card>
+    <Card className="space-y-3 border-[var(--gold)]/40 p-4">
+      <div>
+        <div className="text-sm font-bold text-[var(--text)]">Reconcile missed Solana SOL deposit</div>
+        <div className="mt-1 text-xs text-[var(--muted)]">Verifies the transaction signature, successful chain status, native SOL transfer, MafitaPay recipient address, and duplicate status before crediting.</div>
+      </div>
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
+        <input aria-label="Solana deposit recipient address" value={solanaAddress} onChange={event => setSolanaAddress(event.target.value)} placeholder="MafitaPay Solana receiving address" className="min-w-0 rounded border border-[var(--border)] bg-[var(--clay2)] px-3 py-2 font-mono text-xs text-[var(--text)]" />
+        <input aria-label="Solana transaction signature" value={solanaTxHash} onChange={event => setSolanaTxHash(event.target.value)} placeholder="Solana transaction signature" className="min-w-0 rounded border border-[var(--border)] bg-[var(--clay2)] px-3 py-2 font-mono text-xs text-[var(--text)]" />
+        <Button onClick={() => void reconcileSolana()} disabled={solanaBusy || !solanaAddress.trim() || !solanaTxHash.trim()}>{solanaBusy ? 'Verifying…' : 'Verify and credit SOL'}</Button>
+      </div>
+      {solanaMessage && <div role="status" className="break-all text-xs text-[var(--text2)]">{solanaMessage}</div>}
+    </Card>
+    </div>
   )
 }

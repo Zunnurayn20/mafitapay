@@ -1,13 +1,18 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getCryptoDepositAddressByAddress } from '@/lib/server/data'
-import { forceScanDepositAddress, processAlchemyErc20Activity } from '@/lib/server/crypto-deposit-scanner'
+import { forceScanDepositAddress, processAlchemyErc20Activity, processAlchemySolanaNativeActivity } from '@/lib/server/crypto-deposit-scanner'
 import { getAlchemyWebhookChain, getAlchemyWebhookSigningKey, getSolanaDepositAddressMap } from '@/lib/server/alchemy-address-webhooks'
 
 export const runtime = 'nodejs'
 
 type AlchemyActivity = {
+  hash?: unknown
+  fromAddress?: unknown
   toAddress?: unknown
+  value?: unknown
+  asset?: unknown
+  category?: unknown
   rawContract?: { address?: unknown }
   blockNum?: unknown
   log?: {
@@ -121,7 +126,27 @@ export async function POST(request: Request) {
     }
     if (webhookProcessedAddresses.has(record.address.toLowerCase())) continue
     try {
-      await forceScanDepositAddress({ address: record.address, chain, backgroundReconcile: false })
+      let processedNativeSol = false
+      if (chain === 'solana') {
+        const addressActivities = activity.filter(item => typeof item.toAddress === 'string' && item.toAddress.trim() === address)
+        for (const item of addressActivities) {
+          if (typeof item.asset !== 'string' || item.asset.toUpperCase() !== 'SOL') continue
+          const result = await processAlchemySolanaNativeActivity({ address: record.address, activity: item })
+          if (result.processed) {
+            processedFromWebhook += 1
+            processedNativeSol = true
+          }
+        }
+      }
+      if (processedNativeSol) {
+        webhookProcessedAddresses.add(record.address.toLowerCase())
+        continue
+      }
+      const scanResult = await forceScanDepositAddress({ address: record.address, chain, backgroundReconcile: false })
+      const scanFailures = (scanResult.scannedAssets ?? []).filter(asset => asset.error)
+      if (scanFailures.length > 0) {
+        throw new Error(scanFailures.map(asset => asset.error).join('; '))
+      }
       scanned += 1
     } catch (error) {
       // Return 500 so Alchemy retries a genuine processing failure. Database event IDs make a

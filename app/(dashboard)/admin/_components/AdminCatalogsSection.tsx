@@ -19,7 +19,7 @@ import {
   TextField,
   ToggleField,
 } from '@/components/admin/AdminForm'
-import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, impliedUsdNgn, normalizeSellAdjustmentNgn, MIN_SELL_ADJUSTMENT_NGN, MAX_SELL_ADJUSTMENT_NGN } from '@/lib/crypto-market'
 import { CONTRACT_LOOKUP_NETWORKS, isContractLookupNetwork } from '@/lib/crypto-contract-lookup'
 import { cn } from '@/lib/utils'
 import { getDefaultNetworkFeeNgn } from '@/lib/crypto-rules'
@@ -101,6 +101,8 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
   const [showNewBillProviderForm, setShowNewBillProviderForm] = useState(false)
   const [selectedBillProviderId, setSelectedBillProviderId] = useState<string | null>(null)
   const [minimumSweepDraft, setMinimumSweepDraft] = useState('5')
+  const [globalBuyMarginDraft, setGlobalBuyMarginDraft] = useState(String(DEFAULT_USD_MARGIN_NGN))
+  const [globalSellAdjustmentDraft, setGlobalSellAdjustmentDraft] = useState(String(DEFAULT_USD_MARGIN_NGN))
   const {
     CRYPTO_NETWORK_OPTIONS,
     CRYPTO_EXECUTION_RAIL_OPTIONS,
@@ -117,6 +119,7 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
     cryptoCatalogFilter,
     setCryptoCatalogFilter,
     saveCryptoPricing,
+    applyGlobalCryptoMargins,
     savingCryptoPricing,
     cryptoTradingSettings,
     savingCryptoSetting,
@@ -341,6 +344,36 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
               disabled={savingCryptoSetting !== null}
               onChange={checked => void setCryptoTradingSetting('sellsEnabled', checked)}
             />
+          </div>
+          <div className="mt-4 border-t border-[var(--border)] pt-4">
+            <div className="mb-3">
+              <div className="text-[11px] font-bold text-[var(--text)]">Global crypto pricing</div>
+              <div className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
+                Apply one buy margin and sell adjustment to every current crypto pair. You can still edit any pair separately below afterward.
+              </div>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="flex-1 text-[10px] font-semibold text-[var(--text2)]">
+                Buy margin per $1
+                <div className="mt-1 flex h-10 items-center rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 text-xs text-[var(--muted)]">
+                  <span className="mr-2">₦</span>
+                  <input type="number" min="0" max="500" step="0.01" value={globalBuyMarginDraft} onChange={event => setGlobalBuyMarginDraft(event.target.value)} className="w-full bg-transparent text-[var(--text)] outline-none" />
+                </div>
+              </label>
+              <label className="flex-1 text-[10px] font-semibold text-[var(--text2)]">
+                Sell adjustment per $1
+                <div className="mt-1 flex h-10 items-center rounded-lg border border-[var(--border)] bg-[var(--coal)] px-3 text-xs text-[var(--muted)]">
+                  <span className="mr-2">₦</span>
+                  <input type="number" min={MIN_SELL_ADJUSTMENT_NGN} max={MAX_SELL_ADJUSTMENT_NGN} step="0.01" value={globalSellAdjustmentDraft} onChange={event => setGlobalSellAdjustmentDraft(event.target.value)} className="w-full bg-transparent text-[var(--text)] outline-none" />
+                </div>
+              </label>
+              <Button
+                onClick={() => void applyGlobalCryptoMargins({ buyMarginNgnPerUsd: Number(globalBuyMarginDraft), sellMarginNgnPerUsd: Number(globalSellAdjustmentDraft) })}
+                disabled={savingCryptoPricing || !Number.isFinite(Number(globalBuyMarginDraft)) || Number(globalBuyMarginDraft) < 0 || Number(globalBuyMarginDraft) > 500 || !Number.isFinite(Number(globalSellAdjustmentDraft)) || Number(globalSellAdjustmentDraft) < MIN_SELL_ADJUSTMENT_NGN || Number(globalSellAdjustmentDraft) > MAX_SELL_ADJUSTMENT_NGN}
+              >
+                {savingCryptoPricing ? 'Applying…' : 'Apply to all pairs'}
+              </Button>
+            </div>
           </div>
           <div className="mt-4 flex flex-col gap-3 border-t border-[var(--border)] pt-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="max-w-xl">
@@ -684,11 +717,13 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                   onChange={event => setNewCryptoAsset(current => ({ ...current, buyMarginNgnPerUsd: Number(event.target.value) }))}
                 />
                 <MoneyField
-                  label="Sell profit only (per $1)"
-                  min={0}
+                  label="Sell rate adjustment (per $1)"
+                  min={MIN_SELL_ADJUSTMENT_NGN}
+                  max={MAX_SELL_ADJUSTMENT_NGN}
                   step="0.01"
                   value={newCryptoAsset.sellMarginNgnPerUsd}
                   onChange={event => setNewCryptoAsset(current => ({ ...current, sellMarginNgnPerUsd: Number(event.target.value) }))}
+                  hint="Negative values pay customers more than the market reference. Range: −₦500 to +₦500."
                 />
                 <MoneyField
                   label="Buy network fee only"
@@ -1058,19 +1093,21 @@ export function AdminCatalogsSection({ workspace, submodule }: { workspace: Admi
                       }))}
                     />
                     <MoneyField
-                      label="Sell profit only (per $1)"
-                      min={0}
+                      label="Sell rate adjustment (per $1)"
+                      min={MIN_SELL_ADJUSTMENT_NGN}
+                      max={MAX_SELL_ADJUSTMENT_NGN}
                       step="0.01"
                       value={item.sellMarginNgnPerUsd ?? DEFAULT_USD_MARGIN_NGN}
                       onChange={event => setCryptoPricing(current => current.map(asset => {
                         if (asset.id !== item.id) return asset
-                        const margin = Math.max(0, Number(event.target.value) || 0)
+                        const margin = normalizeSellAdjustmentNgn(Number(event.target.value), 0)
                         return {
                           ...asset,
                           sellMarginNgnPerUsd: margin,
                           sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, margin),
                         }
                       }))}
+                      hint="Negative values pay customers more than the market reference. Range: −₦500 to +₦500."
                     />
                     <MoneyField
                       label="Buy network fee only"

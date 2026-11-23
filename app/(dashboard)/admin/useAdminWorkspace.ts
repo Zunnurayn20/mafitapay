@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { refreshCryptoAssets } from '@/lib/client/catalogs'
-import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId } from '@/lib/crypto-market'
+import { computeBuyRate, computeSellRate, DEFAULT_USD_MARGIN_NGN, getDefaultCryptoMarketSourceId, normalizeSellAdjustmentNgn } from '@/lib/crypto-market'
 import { buildCryptoPairId } from '@/lib/routed-assets'
 import { useAppStore } from '@/store'
 import type { TokenLookupResult } from '@/lib/crypto-contract-lookup'
@@ -661,6 +661,8 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       name: asset.name.trim(),
       icon: asset.icon.trim(),
       marketSourceId: asset.marketSourceId.trim(),
+      buyMarginNgnPerUsd: Math.max(0, Number(asset.buyMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN),
+      sellMarginNgnPerUsd: normalizeSellAdjustmentNgn(asset.sellMarginNgnPerUsd, DEFAULT_USD_MARGIN_NGN),
       executionRail,
       routedToChain: asset.routedToChain?.trim() || undefined,
       routedToToken: asset.routedToToken?.trim() || undefined,
@@ -700,6 +702,29 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
       showToast('Crypto pricing updated.')
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Crypto pricing update failed.', 'error')
+    } finally {
+      setSavingCryptoPricing(false)
+    }
+  }
+
+  async function applyGlobalCryptoMargins(input: { buyMarginNgnPerUsd: number; sellMarginNgnPerUsd: number }) {
+    const buyMargin = Math.max(0, Number(input.buyMarginNgnPerUsd) || 0)
+    const sellMargin = normalizeSellAdjustmentNgn(input.sellMarginNgnPerUsd, 0)
+    const nextAssets = cryptoPricing.map(asset => ({
+      ...asset,
+      buyMarginNgnPerUsd: buyMargin,
+      sellMarginNgnPerUsd: sellMargin,
+      buyRate: computeBuyRate(asset.marketPriceUsd ?? 0, asset.marketRate, buyMargin),
+      sellRate: computeSellRate(asset.marketPriceUsd ?? 0, asset.marketRate, sellMargin),
+    }))
+    try {
+      setSavingCryptoPricing(true)
+      const persistedAssets = await persistCryptoPricing(nextAssets)
+      adoptPersistedCryptoPricing(persistedAssets)
+      setDrafts(current => ({ ...current, assets: JSON.stringify(persistedAssets, null, 2) }))
+      showToast('Global crypto margins applied to all pairs.')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Global crypto margins could not be saved.', 'error')
     } finally {
       setSavingCryptoPricing(false)
     }
@@ -956,7 +981,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     if (cryptoPricing.some(item => item.id === id)) return showToast(`${id} already exists. Edit the existing pair instead.`, 'error')
 
     const buyMargin = Math.max(0, Number(newCryptoAsset.buyMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN)
-    const sellMargin = Math.max(0, Number(newCryptoAsset.sellMarginNgnPerUsd) || DEFAULT_USD_MARGIN_NGN)
+    const sellMargin = normalizeSellAdjustmentNgn(Number(newCryptoAsset.sellMarginNgnPerUsd), DEFAULT_USD_MARGIN_NGN)
     const asset: CryptoAsset = {
       id: id as CryptoAsset['id'],
       symbol: symbol as CryptoAsset['symbol'],
@@ -1870,6 +1895,7 @@ export function useAdminWorkspace(section: AdminSection, submodule?: AdminSubmod
     setDrafts,
     saveConfig,
     saveCryptoPricing,
+    applyGlobalCryptoMargins,
     saveCryptoPair,
     savingCryptoPairId,
     discardCryptoPairEdits,

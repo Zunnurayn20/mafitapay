@@ -109,6 +109,7 @@ export type PricedAsbdataPlan = AsbdataPlan & {
   costNgn: number
   marginNgn: number
   retailNgn: number
+  manualRetailNgn: number | null
   ruleId: string | null
 }
 
@@ -468,6 +469,7 @@ function applyAsbdataPricing(plans: AsbdataPlan[], rules: PricingRuleRecord[]): 
       costNgn: priced.costNgn,
       marginNgn: priced.marginNgn,
       retailNgn: priced.retailNgn,
+      manualRetailNgn: priced.manualRetailNgn,
       ruleId: priced.ruleId,
     }
   })

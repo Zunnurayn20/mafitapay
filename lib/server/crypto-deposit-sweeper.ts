@@ -90,6 +90,21 @@ const MIN_EVM_GAS_BUFFER_WEI = parseUnits(process.env.MAFITAPAY_SWEEP_MIN_EVM_GA
 const EVM_TREASURY_BATCH_MIN_USDC_UNITS = parseUnits(process.env.MAFITAPAY_EVM_BATCH_CONVERSION_MIN_USDC ?? '20', 6)
 const EVM_TREASURY_BATCH_ENABLED = (process.env.MAFITAPAY_EVM_BATCH_CONVERSION ?? 'on').trim().toLowerCase() !== 'off'
 
+function getSolanaRpcUrl() {
+  const configuredUrls = (process.env.MAFITAPAY_SOLANA_RPC_URLS?.trim() || '')
+    .split(',')
+    .map(url => url.trim())
+    .filter(Boolean)
+  if (configuredUrls[0]) return configuredUrls[0]
+
+  const configuredRpcUrl = process.env.MAFITAPAY_SOLANA_RPC_URL?.trim()
+  if (configuredRpcUrl && !/^https?:\/\/api\.mainnet-beta\.solana\.com\/?$/i.test(configuredRpcUrl)) {
+    return configuredRpcUrl
+  }
+
+  return 'https://solana-rpc.publicnode.com'
+}
+
 async function recordEvmSweepCosts(input: {
   externalEventId: string
   publicClient: any
@@ -402,10 +417,7 @@ export async function getSolanaTreasuryBalances() {
   if (!walletAddress) throw new Error('Solana treasury address is not configured.')
 
   const owner = new PublicKey(walletAddress)
-  const connection = new Connection(
-    process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
-    'confirmed',
-  )
+  const connection = new Connection(getSolanaRpcUrl(), 'confirmed')
   const usdcMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
   const [solLamports, tokenAccounts] = await Promise.all([
     connection.getBalance(owner, 'confirmed'),
@@ -481,7 +493,7 @@ export async function getSolanaTreasuryConversionQuotes() {
 
 async function createSolanaSweepFromSecret(secret: string) {
   const keypair = parseSolanaKeypairSecret(secret)
-  const conn = new Connection(process.env.MAFITAPAY_SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com', 'confirmed')
+  const conn = new Connection(getSolanaRpcUrl(), 'confirmed')
   return {
     keypair,
     connection: conn,
