@@ -331,6 +331,11 @@ async function loadStocksMarket() {
   return stocksFetchPromise
 }
 
+export async function refreshStocksMarket() {
+  await loadStocksMarket()
+  return { stocks: stocksSnapshot, summary: stocksSummarySnapshot, source: stocksSourceSnapshot }
+}
+
 async function loadBankDirectory(country: string) {
   const existing = bankDirectoryInflight.get(country)
   if (existing) return existing

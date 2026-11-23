@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { RefreshCw } from 'lucide-react'
 import { canUseBiometrics } from '@/lib/client/biometric'
-import { refreshCryptoAssets } from '@/lib/client/catalogs'
+import { refreshBillCatalog, refreshCryptoAssets, refreshStocksMarket } from '@/lib/client/catalogs'
 import { applyTheme } from '@/lib/client/native-system-bars'
 import { useAppStore } from '@/store'
 import { isAdminEmail } from '@/lib/admin-access'
@@ -57,6 +58,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [biometricSupported, setBiometricSupported] = useState(false)
   const [biometricSupportResolved, setBiometricSupportResolved] = useState(false)
   const [initialSecuritySetupActive, setInitialSecuritySetupActive] = useState(false)
+  const [pullDistance, setPullDistance] = useState(0)
+  const [pullStatus, setPullStatus] = useState<'idle' | 'pulling' | 'refreshing' | 'done' | 'error'>('idle')
+  const pullStartRef = useRef<{ x: number; y: number } | null>(null)
+  const pullDistanceRef = useRef(0)
+  const pullRefreshingRef = useRef(false)
+  const pullStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fundingProvisionKeyRef = useRef('')
   const cryptoDepositProvisionKeyRef = useRef('')
   const pendingPayoutSyncRef = useRef(false)
@@ -80,6 +87,91 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const title = pathname.startsWith('/admin')
     ? 'Admin'
     : TITLES[pathname] ?? 'Dashboard'
+
+  const handlePullStart = (event: React.TouchEvent<HTMLElement>) => {
+    if (event.touches.length !== 1 || pullRefreshingRef.current || event.currentTarget.scrollTop > 0) {
+      pullStartRef.current = null
+      return
+    }
+
+    const touch = event.touches[0]
+    pullStartRef.current = { x: touch.clientX, y: touch.clientY }
+  }
+
+  const handlePullMove = (event: React.TouchEvent<HTMLElement>) => {
+    const start = pullStartRef.current
+    if (!start || event.touches.length !== 1 || event.currentTarget.scrollTop > 0) return
+
+    const touch = event.touches[0]
+    const deltaY = touch.clientY - start.y
+    const deltaX = Math.abs(touch.clientX - start.x)
+    if (deltaY <= 0 || deltaX > deltaY) return
+
+    const distance = Math.min(96, deltaY * 0.55)
+    pullDistanceRef.current = distance
+    setPullDistance(distance)
+    setPullStatus('pulling')
+  }
+
+  const finishPull = () => {
+    pullStartRef.current = null
+    const shouldRefresh = pullDistanceRef.current >= 68 && !pullRefreshingRef.current
+    pullDistanceRef.current = 0
+    setPullDistance(0)
+    if (!shouldRefresh) {
+      setPullStatus('idle')
+      return
+    }
+
+    pullRefreshingRef.current = true
+    setPullStatus('refreshing')
+    if (pullStatusTimerRef.current) clearTimeout(pullStatusTimerRef.current)
+
+    void (async () => {
+      const syncs: Promise<unknown>[] = []
+      if (pendingCryptoSyncRef.current) {
+        syncs.push(fetch('/api/crypto/orders/routed-sync-pending', { method: 'POST', credentials: 'include' }).catch(() => null))
+      }
+      if (pendingPayoutSyncRef.current) {
+        syncs.push(fetch('/api/wallet/payouts/sync', { method: 'POST', credentials: 'include' }).catch(() => null))
+      }
+      if (pendingBillSyncRef.current) {
+        syncs.push(fetch('/api/wallet/bills/sync', { method: 'POST', credentials: 'include' }).catch(() => null))
+      }
+      await Promise.all(syncs)
+
+      const refreshTasks: Promise<unknown>[] = [
+        refreshSession(),
+        refreshCryptoAssets({ force: true }),
+      ]
+      const isDashboard = pathname === '/dashboard'
+      if (isDashboard || pathname.startsWith('/stocks')) refreshTasks.push(refreshStocksMarket())
+      if (isDashboard || pathname.startsWith('/bills')) refreshTasks.push(refreshBillCatalog({ force: true }))
+
+      const [sessionUpdated] = await Promise.all(refreshTasks)
+      router.refresh()
+      if (sessionUpdated === false) showToast('Could not refresh right now. Check your connection and try again.', 'error')
+      setPullStatus(sessionUpdated === false ? 'error' : 'done')
+      pullStatusTimerRef.current = setTimeout(() => setPullStatus('idle'), sessionUpdated === false ? 1800 : 900)
+    })().catch(() => {
+      showToast('Could not refresh right now. Check your connection and try again.', 'error')
+      setPullStatus('error')
+      pullStatusTimerRef.current = setTimeout(() => setPullStatus('idle'), 1800)
+    }).finally(() => {
+      pullRefreshingRef.current = false
+    })
+  }
+
+  const cancelPull = () => {
+    pullStartRef.current = null
+    pullDistanceRef.current = 0
+    setPullDistance(0)
+    if (!pullRefreshingRef.current) setPullStatus('idle')
+  }
+
+  useEffect(() => () => {
+    if (pullStatusTimerRef.current) clearTimeout(pullStatusTimerRef.current)
+  }, [])
 
   useEffect(() => {
     applyTheme(theme)
@@ -361,7 +453,31 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   <div className="fixed left-0 right-0 top-[var(--app-topbar-height)] z-30 lg:left-64">
                     <Ticker />
                   </div>
-                  <main className="app-scroll min-h-0 flex-1 px-4 pb-[calc(var(--app-mobile-nav-height)+0.75rem)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6">
+                  <main
+                    className="app-scroll min-h-0 flex-1 px-4 pb-[calc(var(--app-mobile-nav-height)+0.75rem)] pt-[calc(var(--app-topbar-height)+var(--app-ticker-height)+1.5rem)] sm:px-6 lg:px-8 lg:pb-6"
+                    onTouchStart={handlePullStart}
+                    onTouchMove={handlePullMove}
+                    onTouchEnd={finishPull}
+                    onTouchCancel={cancelPull}
+                  >
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className={`pointer-events-none absolute left-1/2 top-[calc(var(--app-topbar-height)+var(--app-ticker-height)+0.15rem)] z-20 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--coal)] px-3 py-2 text-xs text-[var(--text2)] shadow-lg transition-[opacity,transform] duration-150 ${pullStatus === 'idle' && pullDistance === 0 ? 'opacity-0' : 'opacity-100'}`}
+                      style={{ transform: `translate(-50%, ${pullDistance > 0 ? Math.max(0, pullDistance - 24) : 28}px)` }}
+                    >
+                      <RefreshCw
+                        size={14}
+                        className={pullStatus === 'refreshing' ? 'animate-spin text-[var(--gold)]' : 'text-[var(--gold)]'}
+                        style={{ transform: pullStatus === 'pulling' ? `rotate(${Math.min(180, pullDistance * 2)}deg)` : undefined }}
+                      />
+                      <span>
+                        {pullStatus === 'refreshing' ? 'Refreshing…'
+                          : pullStatus === 'done' ? 'Updated'
+                            : pullStatus === 'error' ? 'Refresh failed'
+                              : pullDistance >= 68 ? 'Release to refresh' : 'Pull to refresh'}
+                      </span>
+                    </div>
                     <div className="mx-auto w-full max-w-7xl">{children}</div>
                   </main>
                 </div>

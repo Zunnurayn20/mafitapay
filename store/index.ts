@@ -91,7 +91,7 @@ interface AppStore {
   // Wallet
   wallet: Wallet | null
   transactions: Transaction[]
-  refreshSession: () => Promise<void>
+  refreshSession: () => Promise<boolean>
   notifications: SessionData['notifications']
   sessions: SessionData['sessions']
   currentSessionId: string | null
@@ -218,11 +218,13 @@ export const useAppStore = create<AppStore>()(
         try {
           const res = await fetch('/api/auth', { credentials: 'include', cache: 'no-store' })
           applySessionData(set, await readJson<SessionData | null>(res))
+          return true
         } catch {
           // Same reasoning as bootstrap: a throw means the request failed, not that the session
           // ended, so keep the state we already have. This runs every 20s and on every resume and
           // window focus, so clearing it on one blip signed people out mid-flow -- including right
           // after a withdrawal or deposit, where callers refresh to pick up the new balance.
+          return false
         }
       },
       acceptSession: data => applySessionData(set, data),
