@@ -1,13 +1,13 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ClipboardList, LifeBuoy, UserCircle, Users } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, Headphones, UserCircle, Users } from 'lucide-react'
 import { tapFeedback } from '@/lib/client/native-haptics'
 
 const TABS = [
   { href: '/dashboard', label: 'Home',    Icon: LayoutDashboard },
   { href: '/history',   label: 'History', Icon: ClipboardList },
-  { href: '/support',   label: 'Support', Icon: LifeBuoy },
+  { href: '/support',   label: 'Support', Icon: Headphones },
   { href: '/referrals', label: 'Refer',   Icon: Users },
   { href: '/profile',   label: 'Profile', Icon: UserCircle },
 ]
