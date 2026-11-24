@@ -924,7 +924,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                             setShowRecentAccounts(false)
                             setStep('phone')
                           }}
-                          className={`relative border px-3 pb-3 pt-4 text-left transition-all ${
+                          className={`relative rounded-md border px-3 pb-3 pt-4 text-left transition-all ${
                             selectedBundleCode === bundle.itemCode
                         ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)]'
                         : 'border-[var(--border)] bg-[var(--clay2)] hover:border-[var(--gold2)]'
