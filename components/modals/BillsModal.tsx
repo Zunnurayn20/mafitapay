@@ -937,10 +937,13 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                     )}
                     <div className="flex min-h-[64px] items-center gap-2">
                       <div className="min-w-0 flex-1 py-1">
-                        <div className="break-words text-[14px] font-bold leading-tight text-[var(--text)]">{bundle.label}</div>
-                        {validityDisplay && <div className="mt-0.5 text-[11px] font-medium leading-tight text-[var(--muted)]">- {validityDisplay}</div>}
-                        {categoryLabel && (
-                          <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">{categoryLabel}</div>
+                        <div className="break-words text-[16px] font-bold leading-tight text-[var(--text)]">{bundle.label}</div>
+                        {(categoryLabel || validityDisplay) && (
+                          <div className="mt-0.5 text-[10px] font-medium leading-tight text-[var(--muted)]">
+                            {categoryLabel && <span className="font-bold uppercase tracking-[0.5px]">{categoryLabel}</span>}
+                            {categoryLabel && validityDisplay && <span className="mx-1">-</span>}
+                            {validityDisplay && <span>{validityDisplay}</span>}
+                          </div>
                         )}
                         {subtitle && (
                           <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
