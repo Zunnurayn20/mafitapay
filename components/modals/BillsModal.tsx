@@ -935,26 +935,30 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                         {providerBadge.label}
                       </div>
                     )}
-                    <div className="text-[12px] font-bold text-[var(--text)]">
-                      {bundle.label}
-                      {validityDisplay ? ` - ${validityDisplay}` : ''}
-                    </div>
-                    {categoryLabel && (
-                      <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">{categoryLabel}</div>
-                    )}
-                    {subtitle && (
-                      <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
-                    )}
-                    {priceHint && (
-                      <div className="mt-1 text-[9px] font-semibold text-emerald-300">
-                        Save ₦{priceHint.savings.toLocaleString('en-NG')} vs Flutterwave
-                        {priceHint.savingsPercent > 0 ? ` · ${priceHint.savingsPercent}% lower` : ''}
+                    <div className="flex min-h-[64px] items-center gap-2">
+                      <div className="min-w-0 flex-1 py-1">
+                        <div className="break-words text-[14px] font-bold leading-tight text-[var(--text)]">{bundle.label}</div>
+                        {validityDisplay && <div className="mt-0.5 text-[11px] font-medium leading-tight text-[var(--muted)]">- {validityDisplay}</div>}
+                        {categoryLabel && (
+                          <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.8px] text-[var(--muted)]">{categoryLabel}</div>
+                        )}
+                        {subtitle && (
+                          <div className="mt-1 text-[9px] text-[var(--muted)]">{subtitle}</div>
+                        )}
+                        {priceHint && (
+                          <div className="mt-1 text-[9px] font-semibold text-emerald-300">
+                            Save ₦{priceHint.savings.toLocaleString('en-NG')} vs Flutterwave
+                            {priceHint.savingsPercent > 0 ? ` · ${priceHint.savingsPercent}% lower` : ''}
+                          </div>
+                        )}
+                        {specialContext && (
+                          <div className="mt-1 text-[9px] text-[var(--muted)]">{specialContext}</div>
+                        )}
                       </div>
-                    )}
-                    {specialContext && (
-                      <div className="mt-1 text-[9px] text-[var(--muted)]">{specialContext}</div>
-                    )}
-                    <div className="mt-1 text-[10px] font-semibold text-[var(--gold2)]">₦{bundle.amount.toLocaleString('en-NG')}</div>
+                      <div className="flex min-h-[56px] shrink-0 items-center border-l border-[var(--border)] pl-2">
+                        <span className="whitespace-nowrap text-[16px] font-bold text-[var(--gold2)] sm:text-[18px]">₦{bundle.amount.toLocaleString('en-NG')}</span>
+                      </div>
+                    </div>
                   </button>
                 )
               })}
