@@ -924,7 +924,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                             setShowRecentAccounts(false)
                             setStep('phone')
                           }}
-                          className={`relative rounded-md border px-3 pb-3 pt-4 text-left transition-all ${
+                          className={`relative rounded-md border px-3 pb-2 pt-3 text-left transition-all ${
                             selectedBundleCode === bundle.itemCode
                         ? 'border-[var(--gold)] bg-[rgba(79,70,229,.1)]'
                         : 'border-[var(--border)] bg-[var(--clay2)] hover:border-[var(--gold2)]'
@@ -935,8 +935,8 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                         {providerBadge.label}
                       </div>
                     )}
-                    <div className="flex min-h-[64px] items-center gap-2">
-                      <div className="min-w-0 flex-1 py-1">
+                    <div className="flex min-h-[52px] items-center gap-2">
+                      <div className="min-w-0 flex-1">
                         <div className="break-words text-[16px] font-bold leading-tight text-[var(--text)]">{bundle.label}</div>
                         {(categoryLabel || validityDisplay) && (
                           <div className="mt-0.5 text-[10px] font-medium leading-tight text-[var(--muted)]">
@@ -958,7 +958,7 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                           <div className="mt-1 text-[9px] text-[var(--muted)]">{specialContext}</div>
                         )}
                       </div>
-                      <div className="flex min-h-[56px] shrink-0 items-center border-l border-[var(--border)] pl-2">
+                      <div className="flex min-h-[46px] shrink-0 items-center border-l border-[var(--border)] pl-2">
                         <span className="whitespace-nowrap text-[16px] font-bold text-[var(--gold2)] sm:text-[18px]">₦{bundle.amount.toLocaleString('en-NG')}</span>
                       </div>
                     </div>
