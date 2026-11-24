@@ -905,15 +905,19 @@ export function BillsModal({ open, onClose }: BillsModalProps) {
                 const isOneGbWeekly395 = bundle.amount === 395
                   && /^1(?:\.0+)?(?:gb|g)$/.test(normalizedBundleLabel)
                   && getDataBundleGroup(bundle) === 'weekly'
+                const isTwoGbWeekly750 = bundle.amount === 750
+                  && /^2(?:\.0+)?(?:gb|g)$/.test(normalizedBundleLabel)
+                  && getDataBundleGroup(bundle) === 'weekly'
+                const isGradientOffer = isOneGbWeekly395 || isTwoGbWeekly750
                 const blueOfferBadge = 'border-blue-500 bg-blue-500 shadow-[0_6px_18px_rgba(59,130,246,.22)]'
                 const greenOfferBadge = 'border-emerald-500 bg-emerald-500 shadow-[0_6px_18px_rgba(34,197,94,.22)]'
                 const fiveGbOfferBadge = 'border-purple-400 bg-gradient-to-r from-amber-900 via-amber-700 to-purple-700 shadow-[0_6px_18px_rgba(124,58,237,.28)]'
                 const providerBadge = bundle.provider === 'amigo'
-                  ? { label: 'Best offer', className: isOneGbWeekly395 ? fiveGbOfferBadge : greenOfferBadge }
+                  ? { label: 'Best offer', className: isGradientOffer ? fiveGbOfferBadge : greenOfferBadge }
                   : bundle.provider === 'asbdata'
-                    ? { label: 'Best deal', className: isMtnFiveGbException || isOneGbWeekly395 ? fiveGbOfferBadge : blueOfferBadge }
+                    ? { label: 'Best deal', className: isMtnFiveGbException || isGradientOffer ? fiveGbOfferBadge : blueOfferBadge }
                     : bundle.provider === 'bardetech'
-                      ? { label: 'Promo', className: isMtnFiveGbException || isOneGbWeekly395 ? fiveGbOfferBadge : blueOfferBadge }
+                      ? { label: 'Promo', className: isMtnFiveGbException || isGradientOffer ? fiveGbOfferBadge : blueOfferBadge }
                       : null
                 return (
                   <button
