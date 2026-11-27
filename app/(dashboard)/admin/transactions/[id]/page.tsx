@@ -42,7 +42,9 @@ function safeMetadata(transaction: NonNullable<Awaited<ReturnType<typeof getAnyT
   ] as const
 
   return allowed.flatMap(([key, label]) => {
-    const value = metadata[key]
+    const value = key === 'network'
+      ? metadata.network ?? (['data', 'airtime'].includes(transaction.type) ? metadata.provider : undefined)
+      : metadata[key]
     return typeof value === 'string' && value.trim() ? [{ key, label, value: value.trim() }] : []
   })
 }

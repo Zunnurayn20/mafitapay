@@ -12,7 +12,7 @@ export function formatDate(value?: string | null) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('en-NG')
+  return date.toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })
 }
 
 export function statusClass(status: string) {
