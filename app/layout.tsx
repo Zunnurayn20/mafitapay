@@ -15,6 +15,13 @@ export const metadata: Metadata = {
   title: 'MafitaPay | Digital Finance',
   description: 'Secure NGN wallet, NGX stocks watchlist, crypto, and bills — built for Nigerians.',
   manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/mafitapay-tab-icon.svg?brand=mafitapay-20261127', type: 'image/svg+xml', sizes: 'any' },
+      { url: '/favicon.ico?brand=mafitapay-20261127', type: 'image/x-icon' },
+    ],
+    apple: '/mafitapay-logo.png',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
