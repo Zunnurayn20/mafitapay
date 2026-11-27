@@ -143,7 +143,7 @@ export default async function AdminOverviewPage() {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-20 rounded-lg border border-[var(--border)] bg-[var(--coal)] px-4 py-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.55)] sm:static sm:px-5">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--coal)] px-4 py-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.55)] sm:px-5">
         <h2 className="text-xl font-bold text-[var(--text)]">Overview</h2>
         <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">
           High-level operational health across customers, wallets, transactions, and funding providers.

@@ -41,7 +41,7 @@ export function AdminShell({
         </header>
 
         <AdminPullRefreshScroll className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-y-contain xl:grid xl:grid-cols-[16rem_minmax(0,1fr)] xl:gap-4 xl:overflow-hidden">
-          <div className="shrink-0 xl:hidden">
+          <div className="sticky top-0 z-30 shrink-0 bg-[var(--bg)] py-1 xl:static xl:hidden xl:bg-transparent xl:py-0">
             <AdminMobileNav />
           </div>
 
