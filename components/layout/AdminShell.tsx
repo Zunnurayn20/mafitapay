@@ -1,6 +1,7 @@
 import { AdminMobileNav, AdminNav } from '@/components/admin/AdminNav'
 import { AdminBreadcrumbs } from '@/components/admin/AdminBreadcrumbs'
 import { AdminShellActions } from '@/components/layout/AdminShellActions'
+import { AdminPullRefreshScroll } from '@/components/layout/AdminPullRefreshScroll'
 
 export function AdminShell({
   children,
@@ -39,7 +40,7 @@ export function AdminShell({
           </div>
         </header>
 
-        <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto xl:grid xl:grid-cols-[16rem_minmax(0,1fr)] xl:gap-4 xl:overflow-hidden">
+        <AdminPullRefreshScroll className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-y-contain xl:grid xl:grid-cols-[16rem_minmax(0,1fr)] xl:gap-4 xl:overflow-hidden">
           <div className="shrink-0 xl:hidden">
             <AdminMobileNav />
           </div>
@@ -52,7 +53,7 @@ export function AdminShell({
           </aside>
 
           <section className="min-w-0 pb-6 xl:min-h-0 xl:overflow-y-auto">{children}</section>
-        </div>
+        </AdminPullRefreshScroll>
       </div>
     </main>
   )
