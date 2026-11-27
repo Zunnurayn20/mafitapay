@@ -7,25 +7,25 @@ import Image from 'next/image'
 const SLIDES = [
   {
     href: '/downloads/mafitapay-android.apk',
-    image: '/download-banner.jpg',
+    image: '/download-banner-trimmed.jpg',
     alt: 'Download the MafitaPay app',
     label: 'Download the MafitaPay Android app',
   },
   {
     href: '/stocks',
-    image: '/ngx-banner.jpg',
+    image: '/ngx-banner-trimmed.jpg',
     alt: 'NGX stocks watchlist',
     label: 'Explore the NGX stocks watchlist',
   },
   {
     href: '/referrals',
-    image: '/referral-banner.jpg',
+    image: '/referral-banner-trimmed.jpg',
     alt: 'Refer a friend and earn rewards',
     label: 'Explore referral rewards',
   },
   {
     href: '/crypto',
-    image: '/crypo-banner.jpg',
+    image: '/crypo-banner-trimmed.jpg',
     alt: 'Buy and sell crypto assets',
     label: 'Buy and sell crypto assets',
   },
@@ -49,7 +49,7 @@ export function GoldBanner() {
     <section
       aria-label="Featured"
       aria-roledescription="carousel"
-      className="relative overflow-hidden rounded-2xl border border-[#2a2418] shadow-[0_4px_18px_-8px_rgba(0,0,0,0.35)]"
+      className="relative mx-auto max-w-[1040px] overflow-hidden"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
@@ -70,9 +70,9 @@ export function GoldBanner() {
             aria-label={label}
             aria-hidden={activeSlide !== index}
             tabIndex={activeSlide === index ? 0 : -1}
-            className="relative block aspect-[1280/450] min-w-full transition-transform active:scale-[0.995]"
+            className="relative block min-w-full overflow-hidden rounded-xl transition-transform active:scale-[0.995]"
           >
-            <Image src={image} alt={alt} fill sizes="(max-width: 640px) 100vw, 1280px" className="object-cover" priority={index === 0} />
+            <Image src={image} alt={alt} width={1276} height={455} sizes="(max-width: 640px) 100vw, 1040px" className="block h-auto w-full" priority={index === 0} />
           </Link>
         ))}
       </div>
