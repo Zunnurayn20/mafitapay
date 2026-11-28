@@ -7,25 +7,25 @@ import Image from 'next/image'
 const SLIDES = [
   {
     href: '/downloads/mafitapay-android.apk',
-    image: '/download-banner-trimmed.jpg',
+    image: '/banners/download-banner-trimmed.webp',
     alt: 'Download the MafitaPay app',
     label: 'Download the MafitaPay Android app',
   },
   {
     href: '/stocks',
-    image: '/ngx-banner-trimmed.jpg',
+    image: '/banners/ngx-banner-trimmed.webp',
     alt: 'NGX stocks watchlist',
     label: 'Explore the NGX stocks watchlist',
   },
   {
-    href: '/referrals',
-    image: '/referral-banner-trimmed.jpg',
-    alt: 'Refer a friend and earn rewards',
-    label: 'Explore referral rewards',
+    href: '/bills',
+    image: '/banners/bills-banner-trimmed.webp',
+    alt: 'Pay your bills with MafitaPay',
+    label: 'Explore bill payments',
   },
   {
     href: '/crypto',
-    image: '/crypo-banner-trimmed.jpg',
+    image: '/banners/crypto-banner-trimmed.webp',
     alt: 'Buy and sell crypto assets',
     label: 'Buy and sell crypto assets',
   },
@@ -49,7 +49,7 @@ export function GoldBanner() {
     <section
       aria-label="Featured"
       aria-roledescription="carousel"
-      className="relative mx-auto max-w-[1040px] overflow-hidden"
+      className="relative mx-auto max-w-[900px] overflow-hidden"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
@@ -72,7 +72,7 @@ export function GoldBanner() {
             tabIndex={activeSlide === index ? 0 : -1}
             className="relative block min-w-full overflow-hidden rounded-xl transition-transform active:scale-[0.995]"
           >
-            <Image src={image} alt={alt} width={1276} height={455} sizes="(max-width: 640px) 100vw, 1040px" className="block h-auto w-full" priority={index === 0} />
+            <Image src={image} alt={alt} width={2048} height={605} sizes="(max-width: 640px) 100vw, 900px" className="block h-auto w-full" priority={index === 0} />
           </Link>
         ))}
       </div>
