@@ -49,7 +49,7 @@ export function GoldBanner() {
     <section
       aria-label="Featured"
       aria-roledescription="carousel"
-      className="relative mx-auto max-w-[900px] overflow-hidden"
+      className="relative mx-auto max-w-[900px] overflow-hidden md:hidden"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
